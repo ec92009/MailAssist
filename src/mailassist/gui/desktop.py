@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import json
+import sys
 from functools import partial
+from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QProcess, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
     QFormLayout,
-    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -17,7 +19,6 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
-    QMessageBox,
     QPushButton,
     QPlainTextEdit,
     QSplitter,
@@ -31,18 +32,16 @@ from mailassist.gui.server import (
     FILTER_LABELS,
     SORT_LABELS,
     STATUS_FILTER_LABELS,
-    ensure_review_state,
     filtered_and_sorted_threads,
     find_thread_state,
     list_available_models,
+    load_review_state,
     load_visible_version,
     normalize_classification,
     payload_to_thread,
-    regenerate_thread_candidates,
     save_review_state,
     update_candidate,
 )
-from mailassist.llm.ollama import OllamaClient
 
 
 def _humanize(token: str) -> str:
@@ -92,19 +91,21 @@ class MailAssistDesktopWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.settings = load_settings()
-        self.review_state = ensure_review_state(
-            self.settings.root_dir,
-            base_url=self.settings.ollama_url,
-            selected_model=self.settings.ollama_model,
-        )
+        self.review_state = load_review_state(self.settings.root_dir)
         self.current_thread_id = ""
+        self.bot_process: QProcess | None = None
+        self.bot_stdout_buffer = ""
+        self.latest_bot_log_path: Path | None = None
 
         self.setWindowTitle(f"MailAssist v{load_visible_version(self.settings.root_dir)}")
         self.resize(1380, 920)
 
         self._build_ui()
         self.refresh_models()
+        self.refresh_bot_logs()
         self.refresh_queue()
+        if self._review_state_needs_sync():
+            self.run_bot_action("sync-review-state")
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -229,6 +230,33 @@ class MailAssistDesktopWindow(QMainWindow):
         settings_tabs.addTab(self._build_provider_settings_panel(), "Providers")
         settings_layout.addWidget(settings_tabs)
         right_layout.addWidget(settings_group)
+
+        bot_group = QGroupBox("Bot Console")
+        bot_layout = QVBoxLayout(bot_group)
+        bot_actions = QHBoxLayout()
+        refresh_logs_button = QPushButton("Refresh log list")
+        refresh_logs_button.clicked.connect(self.refresh_bot_logs)
+        bot_actions.addWidget(refresh_logs_button)
+        self.bot_log_selector = QComboBox()
+        self.bot_log_selector.currentIndexChanged.connect(self.load_selected_bot_log)
+        bot_actions.addWidget(self.bot_log_selector, 1)
+        bot_actions.addStretch(1)
+        bot_layout.addLayout(bot_actions)
+        stdout_label = QLabel("Live stdout")
+        stdout_label.setStyleSheet("font-size: 13px; color: #5e6978;")
+        bot_layout.addWidget(stdout_label)
+        self.bot_console = QPlainTextEdit()
+        self.bot_console.setReadOnly(True)
+        self.bot_console.setMinimumHeight(120)
+        bot_layout.addWidget(self.bot_console)
+        log_label = QLabel("Selected log")
+        log_label.setStyleSheet("font-size: 13px; color: #5e6978;")
+        bot_layout.addWidget(log_label)
+        self.bot_log_viewer = QPlainTextEdit()
+        self.bot_log_viewer.setReadOnly(True)
+        self.bot_log_viewer.setMinimumHeight(120)
+        bot_layout.addWidget(self.bot_log_viewer)
+        right_layout.addWidget(bot_group)
         splitter.addWidget(right_panel)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 3)
@@ -311,6 +339,42 @@ class MailAssistDesktopWindow(QMainWindow):
         self.banner.setStyleSheet(style)
         self.banner.setText(message)
         self.banner.show()
+
+    def _append_bot_console(self, line: str) -> None:
+        self.bot_console.appendPlainText(line)
+        cursor = self.bot_console.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+        self.bot_console.setTextCursor(cursor)
+
+    def _review_state_needs_sync(self) -> bool:
+        return any(not thread_state.get("candidates") for thread_state in self.review_state.get("threads", []))
+
+    def _current_bot_ollama_settings(self) -> tuple[str, str]:
+        base_url = self.ollama_url_input.text().strip() or self.settings.ollama_url
+        selected_model = str(self.ollama_model_combo.currentData() or self.settings.ollama_model)
+        return base_url, selected_model
+
+    def refresh_bot_logs(self) -> None:
+        self.bot_log_selector.blockSignals(True)
+        self.bot_log_selector.clear()
+        log_paths = sorted(
+            self.settings.bot_logs_dir.glob("*.jsonl"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        for path in log_paths:
+            self.bot_log_selector.addItem(path.name, str(path))
+        self.bot_log_selector.blockSignals(False)
+
+        if self.latest_bot_log_path is not None:
+            index = self.bot_log_selector.findData(str(self.latest_bot_log_path))
+            if index >= 0:
+                self.bot_log_selector.setCurrentIndex(index)
+                return
+        if self.bot_log_selector.count():
+            self.bot_log_selector.setCurrentIndex(0)
+        else:
+            self.bot_log_viewer.clear()
 
     def refresh_models(self) -> None:
         models, model_error = list_available_models(
@@ -469,21 +533,7 @@ class MailAssistDesktopWindow(QMainWindow):
     def regenerate_current_thread(self) -> None:
         if not self.current_thread_id:
             return
-        self.settings = load_settings()
-        try:
-            regenerate_thread_candidates(
-                self.review_state,
-                self.current_thread_id,
-                base_url=self.settings.ollama_url,
-                selected_model=self.settings.ollama_model,
-            )
-            save_review_state(self.settings.root_dir, self.review_state)
-        except Exception as exc:
-            self._set_banner(f"Could not regenerate drafts: {exc}", level="error")
-            return
-        self._set_banner("Draft options refreshed.", level="info")
-        self.render_current_thread()
-        self.refresh_queue()
+        self.run_bot_action("regenerate-thread", thread_id=self.current_thread_id)
 
     def save_settings(self) -> None:
         env_file = self.settings.root_dir / ".env"
@@ -518,17 +568,99 @@ class MailAssistDesktopWindow(QMainWindow):
         if not prompt:
             self._set_banner("Enter a prompt before testing Ollama.", level="error")
             return
-        try:
-            result = OllamaClient(
-                self.ollama_url_input.text().strip() or self.settings.ollama_url,
-                str(self.ollama_model_combo.currentData() or self.settings.ollama_model),
-            ).compose_reply(prompt)
-        except RuntimeError as exc:
-            self.ollama_result.setPlainText(str(exc))
-            self._set_banner("Ollama check failed.", level="error")
+        self.run_bot_action("ollama-check", prompt=prompt)
+
+    def run_bot_action(self, action: str, *, thread_id: str = "", prompt: str = "") -> None:
+        if self.bot_process is not None:
+            self._set_banner("A bot action is already running.", level="error")
             return
-        self.ollama_result.setPlainText(result or "Ollama responded with an empty body.")
-        self._set_banner("Ollama check completed.", level="info")
+
+        base_url, selected_model = self._current_bot_ollama_settings()
+        self.bot_stdout_buffer = ""
+        self.bot_process = QProcess(self)
+        self.bot_process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        self.bot_process.setWorkingDirectory(str(self.settings.root_dir))
+        self.bot_process.readyReadStandardOutput.connect(self._handle_bot_stdout)
+        self.bot_process.finished.connect(self._handle_bot_finished)
+
+        args = [
+            "-u",
+            "-m",
+            "mailassist.cli.main",
+            "review-bot",
+            "--action",
+            action,
+            "--base-url",
+            base_url,
+            "--selected-model",
+            selected_model,
+        ]
+        if thread_id:
+            args.extend(["--thread-id", thread_id])
+        if prompt:
+            args.extend(["--prompt", prompt])
+
+        self._append_bot_console(f"$ {sys.executable} {' '.join(args)}")
+        self._set_banner(f"Starting bot action: {action}", level="info")
+        self.bot_process.start(sys.executable, args)
+
+    def _handle_bot_stdout(self) -> None:
+        if self.bot_process is None:
+            return
+        chunk = bytes(self.bot_process.readAllStandardOutput()).decode("utf-8", errors="replace")
+        self.bot_stdout_buffer += chunk
+        while "\n" in self.bot_stdout_buffer:
+            line, self.bot_stdout_buffer = self.bot_stdout_buffer.split("\n", 1)
+            line = line.strip()
+            if not line:
+                continue
+            self._append_bot_console(line)
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            self._handle_bot_event(event)
+
+    def _handle_bot_event(self, event: dict[str, Any]) -> None:
+        event_type = event.get("type")
+        if event_type == "log_file":
+            self.latest_bot_log_path = Path(str(event.get("path")))
+            self.refresh_bot_logs()
+        elif event_type == "ollama_result":
+            self.ollama_result.setPlainText(str(event.get("result", "")))
+        elif event_type == "completed":
+            self._set_banner(str(event.get("message", "Bot action completed.")), level="info")
+            self.settings = load_settings()
+            self.review_state = load_review_state(self.settings.root_dir)
+            self.refresh_models()
+            self.refresh_bot_logs()
+            self.refresh_queue()
+            self.render_current_thread()
+        elif event_type == "error":
+            self._set_banner(str(event.get("message", "Bot action failed.")), level="error")
+        elif event_type == "info":
+            self._set_banner(str(event.get("message", "")), level="info")
+
+    def _handle_bot_finished(self, exit_code: int, _exit_status) -> None:
+        if self.bot_stdout_buffer.strip():
+            self._append_bot_console(self.bot_stdout_buffer.strip())
+            self.bot_stdout_buffer = ""
+        if exit_code != 0:
+            self._set_banner(f"Bot action exited with code {exit_code}.", level="error")
+        self.bot_process = None
+        self.refresh_bot_logs()
+
+    def load_selected_bot_log(self, *_args: object) -> None:
+        log_path_value = self.bot_log_selector.currentData()
+        if not log_path_value:
+            self.bot_log_viewer.clear()
+            return
+        log_path = Path(str(log_path_value))
+        if not log_path.exists():
+            self.bot_log_viewer.clear()
+            self._set_banner("The selected bot log no longer exists.", level="error")
+            return
+        self.bot_log_viewer.setPlainText(log_path.read_text(encoding="utf-8"))
 
 
 def run_desktop_gui() -> int:

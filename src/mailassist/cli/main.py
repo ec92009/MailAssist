@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
+from mailassist.bot_runtime import build_review_bot_parser, command_review_bot
 from mailassist.config import load_settings
 from mailassist.core.orchestrator import DraftOrchestrator
 from mailassist.gui.server import serve_config_gui
@@ -42,6 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "desktop-gui", help="Run the native PySide6 desktop review app."
     )
+    build_review_bot_parser(subparsers)
     return parser
 
 
@@ -119,6 +121,8 @@ def main() -> int:
         return command_serve_config(args)
     if args.command == "desktop-gui":
         return command_desktop_gui()
+    if args.command == "review-bot":
+        return command_review_bot(args)
 
     parser.error(f"Unknown command {args.command}")
     return 2

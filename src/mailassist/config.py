@@ -12,6 +12,7 @@ class Settings:
     data_dir: Path
     drafts_dir: Path
     logs_dir: Path
+    bot_logs_dir: Path
     ollama_url: str
     ollama_model: str
     default_provider: str
@@ -69,12 +70,14 @@ def load_settings() -> Settings:
     data_dir = root_dir / "data"
     drafts_dir = data_dir / "drafts"
     logs_dir = data_dir / "logs"
+    bot_logs_dir = data_dir / "bot-logs"
 
     return Settings(
         root_dir=root_dir,
         data_dir=data_dir,
         drafts_dir=drafts_dir,
         logs_dir=logs_dir,
+        bot_logs_dir=bot_logs_dir,
         ollama_url=os.getenv("MAILASSIST_OLLAMA_URL", "http://localhost:11434"),
         ollama_model=os.getenv("MAILASSIST_OLLAMA_MODEL", "llama3.1:8b"),
         default_provider=os.getenv("MAILASSIST_DEFAULT_PROVIDER", "gmail"),

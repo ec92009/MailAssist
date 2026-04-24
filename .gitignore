@@ -10,6 +10,8 @@ build/
 *.egg-info/
 
 data/logs/*.json
+data/bot-logs/*.json
+data/bot-logs/*.jsonl
 data/drafts/*.json
 data/review-inbox.json
 
