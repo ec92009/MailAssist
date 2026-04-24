@@ -1,31 +1,85 @@
 # Research
 
-## Provider research
+## Provider Watching
 
-- Decide how thread ingestion should work for Gmail:
-- direct API fetch
-- IMAP fallback
-- exported JSON/import pipeline
-- Decide whether Outlook support should target Microsoft Graph draft creation first or a more generic IMAP/SMTP compatibility layer.
-- Confirm what metadata must be preserved for provider-native drafts:
-- recipients
-- cc/bcc
-- thread references
-- quoted history
-- labels or categories
+Open questions:
 
-## Prompting research
+- Gmail: polling interval vs push notifications.
+- Gmail: which query best finds actionable new mail without reprocessing old threads.
+- Gmail: how to preserve thread reply metadata when creating a draft.
+- Gmail: how to detect whether the user already replied manually.
+- Outlook: Microsoft Graph delta queries vs periodic polling.
+- Outlook: required permissions for read + draft creation.
+- Mock provider: how closely it should mimic provider IDs, thread updates, and duplicates.
 
-- Compare prompt formats for short transactional replies versus longer relationship-heavy email.
-- Evaluate whether the local model should return plain body text only or a structured JSON output with subject/body/reasoning fields.
-- Test whether revision instructions work better as an appended note or as a separate system-style section.
+## Deduplication
 
-## Review-flow research
+The bot needs a small durable record of provider work already handled.
 
-- Define the minimal local state machine for draft review:
-- pending_review
-- accepted
-- rejected
-- needs_revision
-- Decide whether revisions create a new sibling draft or overwrite the previous draft record.
-- Decide whether accepting a draft should eventually trigger provider-draft creation automatically or remain a separate action.
+Research decisions:
+
+- Use provider thread ID as the primary key where possible.
+- Include latest message ID or history ID so changed threads can be reconsidered.
+- Store draft-created provider IDs to avoid duplicate drafts.
+- Detect user-sent replies so future versions can mark items complete without watching our own GUI state.
+
+## Classification
+
+The classification only needs to answer product questions:
+
+- Should MailAssist draft a reply?
+- Is it urgent enough to process first?
+- Should it be ignored as automated, spam, newsletter, digest, or no-response?
+
+Candidate labels:
+
+- `urgent`
+- `reply_needed`
+- `no_response`
+- `automated`
+- `spam`
+
+Only `urgent` and `reply_needed` create drafts.
+
+## Draft Generation
+
+Research should compare one-draft prompts across the configured tone options:
+
+- `Direct and concise`
+- `Warm and collaborative`
+- `Formal and polished`
+- `Brief and casual`
+
+Questions to answer:
+
+- Should classification and drafting happen in one prompt or two?
+- Is one prompt cheaper and reliable enough?
+- Does the model produce better drafts if tone, signature, and provider context are separated into clear sections?
+- How often does the model invent facts under each tone?
+
+## GUI Scope
+
+The GUI should be a control panel, not a review inbox.
+
+Useful views to test:
+
+- connection status
+- bot running/paused
+- last acquisition pass
+- recent drafts created
+- skipped counts by classification
+- error list
+- logs window
+- settings modal
+
+Avoid large empty descriptions; the app is an operational tool.
+
+## Success Criteria
+
+MailAssist is useful if:
+
+- drafts are waiting in Gmail/Outlook before the user gets to the thread
+- the drafts are usually grounded and editable
+- the bot skips non-response mail quietly
+- the user trusts that nothing is sent automatically
+- the GUI makes status and failures easy to inspect

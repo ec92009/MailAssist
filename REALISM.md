@@ -1,29 +1,76 @@
 # Realism
 
-## Non-negotiable constraints
+## The Real Problem
 
-- The model may draft messages, but it must not send them autonomously.
-- Provider writes should default to draft creation, not delivery.
-- Local artifacts can contain sensitive email content, so the repo should never commit private draft/log files by accident.
-- Prompting must avoid inventing commitments, dates, facts, or attachments that do not exist in the source thread.
+Local models can take about a minute to draft a useful email. That is too slow for an on-click workflow, but acceptable for a background workflow.
 
-## Operational reality
+MailAssist should therefore do slow work ahead of time. The bot earns its keep by making drafts available before the user opens the thread.
 
-- Ollama quality will vary by local model size and machine resources.
-- Gmail and Outlook APIs will impose auth, token, and quota constraints that do not exist in local-only testing.
-- Real inboxes include signatures, forwarded chains, formatting noise, and ambiguous requests; the normalized thread format needs to handle that cleanly.
-- A useful audit trail matters as much as raw generation quality because the user needs to understand why a draft exists.
+## Non-Negotiables
 
-## Approval posture
+- The bot may create provider drafts.
+- The bot must not send email.
+- The user remains in Gmail or Outlook for final review, edits, and sending.
+- The model must stay grounded in the provider thread.
+- Generated drafts and logs may contain sensitive content and must stay out of git.
+- Provider credentials and tokens must stay under ignored local paths.
 
-- Draft locally first.
-- Let the user review every proposed response.
-- Record revision instructions explicitly so later draft iterations stay explainable.
-- Treat acceptance as permission to create a provider draft, not permission to send.
+## What We Should Not Build Yet
 
-## Privacy posture
+- A second inbox.
+- A multi-stage review queue.
+- Multiple draft candidates per message.
+- A GUI email editor.
+- A large file-moving workflow engine.
+- A send automation path.
 
-- Assume local logs and drafts may contain personal or confidential information.
-- Keep secrets under a non-committed path such as `secrets/`.
-- Keep generated local content out of git unless the user explicitly wants to publish a sanitized snapshot.
-- Keep approval decisions and readable draft bodies in the local UI because public static hosting is the wrong place for live operational email review.
+Each of those adds weight before the core value is proven.
+
+## Provider Reality
+
+Gmail and Outlook drafts are the correct user-facing artifact because:
+
+- they preserve the user's normal review habit
+- they allow rich editing without us rebuilding an editor
+- they keep final send authority in the provider
+- they make MailAssist useful even when the GUI is closed
+
+The hard provider work is not the visual review loop. The hard provider work is reliable ingestion, deduplication, reply metadata, draft creation, auth refresh, and error handling.
+
+## LLM Reality
+
+Model behavior will vary by local machine and model. Some models may not stream partial output promptly, even when the HTTP API is technically streaming.
+
+The UI should avoid pretending progress is exact. Use honest statuses:
+
+- waiting for Ollama
+- drafting
+- draft created
+- skipped because no reply is needed
+- failed with retryable/non-retryable error
+
+## Privacy Reality
+
+Local state will contain email content. Default posture:
+
+- keep generated artifacts under `data/`
+- ignore runtime JSON/log/draft files
+- commit only sanitized samples and empty folder placeholders
+- show logs locally, not through public hosting
+
+## Audit Reality
+
+The user does not need a heavy review queue, but they do need to understand what the bot did.
+
+Keep a small activity trail:
+
+- source provider
+- subject/sender
+- classification
+- whether a draft was created
+- provider draft ID
+- model used
+- error if any
+- timestamps
+
+That is enough to debug and trust the bot without turning the product into a case-management system.

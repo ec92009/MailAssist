@@ -1,65 +1,38 @@
 # MailAssist
 
-Local AI-assisted email drafting bot using Ollama and local models. `MailAssist` ingests email threads, composes proposed replies, saves drafts and execution logs locally, can optionally submit drafts to Gmail, and keeps approval decisions inside the local desktop UI.
+MailAssist is a local background email drafting assistant. It watches connected inboxes, uses a local Ollama model to decide whether a message needs a reply, and creates a draft directly in Gmail or Outlook when useful.
 
-## Current docs
+The user reviews, edits, sends, or deletes drafts in the normal mail client. MailAssist does not send email.
 
-- [STRATEGY.md](~/Dev/MailAssist/STRATEGY.md): current product shape, workflow, and architecture
-- [RESULTS.md](~/Dev/MailAssist/RESULTS.md): current implementation status, known gaps, and short-term conclusions
-- [TODO.md](~/Dev/MailAssist/TODO.md): active follow-up work
-- [REALISM.md](~/Dev/MailAssist/REALISM.md): safety, privacy, and provider-reality constraints
-- [RESEARCH.md](~/Dev/MailAssist/RESEARCH.md): integration and product research backlog
-- [SUMMARY.md](~/Dev/MailAssist/SUMMARY.md): high-level snapshot of where the project stands
-- [ENVIRONMENT_SOP.md](~/Dev/MailAssist/ENVIRONMENT_SOP.md): workspace Python and package-management preferences
-- [VERSIONING_SOP.md](~/Dev/MailAssist/VERSIONING_SOP.md): bot/local-UI visible versioning rules
-- [SHOW_ME_SOP.md](~/Dev/MailAssist/SHOW_ME_SOP.md): local UI show-and-report workflow
+## Current Product Direction
 
-Use this `README` for setup and operational scripts. For decisions about workflow, safety, rollout, and product direction, prefer the docs above.
+- Bot runs continuously.
+- Bot watches Gmail, Outlook, or mock input.
+- Bot classifies new mail.
+- Bot skips mail that does not need a response.
+- Bot creates one provider draft for mail that needs a response.
+- GUI configures and supervises the bot.
+- Gmail/Outlook remain the review and editing surfaces.
 
-Project shorthand:
+## Current Docs
 
-- `rscp` means: refresh docs, summarize the current conversation to `SUMMARY.md`, commit, and push.
+- [STRATEGY.md](~/Dev/MailAssist/STRATEGY.md): product direction and architecture
+- [REALISM.md](~/Dev/MailAssist/REALISM.md): constraints and safety posture
+- [RESEARCH.md](~/Dev/MailAssist/RESEARCH.md): provider, prompt, and GUI questions
+- [RESULTS.md](~/Dev/MailAssist/RESULTS.md): current implementation status
+- [TODO.md](~/Dev/MailAssist/TODO.md): active implementation list
+- [SUMMARY.md](~/Dev/MailAssist/SUMMARY.md): latest project snapshot
+- [ENVIRONMENT_SOP.md](~/Dev/MailAssist/ENVIRONMENT_SOP.md): local Python workflow
+- [VERSIONING_SOP.md](~/Dev/MailAssist/VERSIONING_SOP.md): visible version rules
+- [SHOW_ME_SOP.md](~/Dev/MailAssist/SHOW_ME_SOP.md): local UI launch workflow
 
----
-
-## What this project does
-
-- Accepts a normalized email thread payload from a local file or future provider sync
-- Builds a response prompt for a local model running through Ollama
-- Saves generated reply drafts to `data/drafts/`
-- Saves execution logs to `data/logs/`
-- Keeps the human in control of every draft: compare options, edit them locally, then green-light or red-light one
-- Optionally submits approved drafts to Gmail from the CLI or the local UI
-- Includes a native `PySide6` desktop app for provider settings, Ollama configuration, mock inbox review, and bot log inspection
-
----
-
-## Project structure
+Historical docs from the heavier review-queue direction are archived under:
 
 ```text
-MailAssist/
-├── .env.example                  # Local config template
-├── AGENTS.md                     # Repo working preferences
-├── STRATEGY.md                   # Product and architecture strategy
-├── REALISM.md                    # Constraints and safety guardrails
-├── RESULTS.md                    # Current implementation state
-├── RESEARCH.md                   # Open research questions
-├── TODO.md                       # Near-term work list
-├── SUMMARY.md                    # Executive snapshot
-├── VERSIONING_SOP.md             # Visible versioning guidance
-├── SHOW_ME_SOP.md                # Local UI show/share workflow
-├── data/
-│   ├── threads/                  # Source email thread JSON files
-│   ├── drafts/                   # Saved generated draft JSON files
-│   └── logs/                     # Saved execution log JSON files
-├── src/mailassist/               # Bot package
+archived/2026-04-24-pre-background-bot/
 ```
 
----
-
 ## Setup
-
-### 1. Clone and create the repo environment
 
 ```bash
 cd ~/Dev/MailAssist
@@ -68,66 +41,55 @@ source .venv/bin/activate
 uv pip install --python .venv/bin/python -e .
 ```
 
-### 2. Configure local settings
+For Gmail support:
 
 ```bash
-cp .env.example .env
+uv pip install --python .venv/bin/python -e ".[gmail]"
 ```
 
-Set the Ollama endpoint and model you want to use. Add Gmail OAuth paths when you are ready to enable Gmail drafts.
-
-You can also configure the app through the native desktop GUI:
+## Run The Desktop App
 
 ```bash
 ./.venv/bin/mailassist desktop-gui
 ```
 
-### 3. Create a sample draft locally
+The desktop app is being redesigned as a compact bot control panel. The current code still includes the earlier review prototype while the simplified direction is implemented.
+
+## Bot Commands
+
+Check local queue status:
+
+```bash
+./.venv/bin/mailassist review-bot --action queue-status
+```
+
+Process mock input into a draft-processing artifact:
+
+```bash
+./.venv/bin/mailassist review-bot --action process-mock-inbox --thread-id thread-008
+```
+
+Older local draft command, still useful for testing:
 
 ```bash
 ./.venv/bin/mailassist draft-thread --thread-file data/threads/sample-thread.json
 ```
 
-### 4. Open the local UI
+## Runtime Data
 
-```bash
-./.venv/bin/mailassist desktop-gui
-```
+Runtime files live under `data/` and should generally stay out of git:
 
-The desktop app is the preferred review surface going forward.
+- `data/logs/`
+- `data/bot-logs/`
+- `data/drafts/`
+- `data/bot_processed/`
+- `data/gui_acquired/`
+- `data/user_reviewed/`
+- `data/provider_drafted/`
+- `data/user_replied/`
 
-The local GUI now opens into a review-first workspace with:
+Only sanitized examples and empty placeholders should be committed.
 
-- a sortable inbox table with classification, received date, and sender
-- side-by-side thread review and candidate drafting
-- explicit `Use this`, `Ignore`, and `Close` actions in the detail view
-- Ollama-generated classifications so urgent mail can be surfaced and automated or spammy threads can be set aside
-- a modal settings dialog for Ollama, provider config, and the user signature
-- a separate logs window for bot stdout and saved JSONL logs
+## Project Shorthand
 
-For a macOS app bundle in the current LeadLight-style launcher pattern:
-
-```bash
-./build_mailassist_app.sh
-```
-
----
-
-## Gmail draft support
-
-Gmail is the first provider target. The integration is optional until you install the Gmail extras and set up OAuth credentials.
-
-```bash
-uv pip install --python .venv/bin/python -e ".[gmail]"
-./.venv/bin/mailassist gmail-auth
-```
-
-Once authenticated, you can ask the bot to submit the draft upstream while still saving the local copy:
-
-```bash
-./.venv/bin/mailassist draft-thread \
-  --thread-file data/threads/sample-thread.json \
-  --submit-provider-draft
-```
-
-The local desktop UI is now the place where draft approvals happen, and accepted Gmail drafts can be created upstream with one click from that review panel. GitHub remains useful for source control, but not as the approval surface for live drafts.
+`rscp` means: refresh docs, summarize the current conversation to `SUMMARY.md`, commit, and push.

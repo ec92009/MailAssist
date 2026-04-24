@@ -1,41 +1,54 @@
 # Results
 
-## Current state
+## Current Direction
 
-- Project scaffold is in place.
-- Local drafting flow exists for normalized thread JSON input.
-- Ollama integration exists through a simple HTTP client.
-- Local draft and execution log persistence exists under `data/`.
-- A native `PySide6` desktop GUI is now the primary local review surface.
-- Gmail draft submission is wired as an optional integration path.
-- Outlook support is intentionally still a stub.
+MailAssist is being simplified into a background draft creator.
 
-## What is working
+The bot should continuously watch Gmail, Outlook, or mock input; use the local LLM to classify new threads; create one provider-native draft when a reply is needed; and otherwise stay quiet. The GUI should configure the bot and show status/logs, not act as a second inbox or draft editor.
 
-- Thread JSON can be loaded from disk.
-- Prompt assembly includes full message history and optional revision notes.
-- Draft generation and execution logging are both captured locally.
-- The project can query available Ollama models and keep the chosen model in shared settings.
-- The desktop app now provides a review-first inbox with a sortable table, explicit detail open/close flow, modal settings, and a separate logs window.
-- The review UI now supports classification-driven triage, editable candidate replies, archive checkboxes, and explicit `Use this`, `Ignore`, and `Close` actions.
-- Candidate labels now reflect tone instead of abstract `Option A` / `Option B` names.
-- Signature capture is now part of settings, and prompts tell the local model to use the exact saved signature block.
-- GUI-side alternate generation can now talk directly to Ollama instead of routing through the bot subprocess.
-- Alternate generation now uses a background worker, a shared banner/progress strip, and incremental chunk delivery into the editor.
-- Accepted Gmail drafts can now be submitted upstream from the local UI, with provider IDs saved back into the local draft record.
-- The mock inbox now contains a broader sample set, including urgent, reply-needed, automated, and action-needed threads for end-to-end GUI testing.
-- The bot now has a first folder-queue slice: it can create lifecycle directories and process mock inbox threads into one JSON file per thread under `data/bot_processed/`.
+## Current Implementation
 
-## Known gaps
+- Python package and CLI scaffold are in place.
+- Ollama integration exists through a local HTTP client.
+- Gmail draft creation exists as an optional provider path.
+- Outlook remains a stub.
+- A native `PySide6` desktop app exists.
+- The current desktop app still contains the earlier review-table prototype.
+- The bot has JSONL stdout/log event reporting.
+- The bot has a first queue experiment with `process-mock-inbox` and `queue-status`.
+- Runtime queue folders exist with `.gitkeep` placeholders.
+- Generated runtime artifacts are ignored by git.
 
-- No inbox sync yet; threads are still local JSON inputs.
-- Gmail auth has not been validated in this repo with real credentials yet.
-- Gmail draft submission currently creates a simple draft body without richer metadata like recipients from the thread.
-- The five-folder lifecycle (`bot_processed`, `gui_acquired`, `user_reviewed`, `provider_drafted`, `user_replied`) is only partially implemented. The bot can write `bot_processed`, but the desktop app still uses `data/review-inbox.json` as the shared review-state file.
-- The desktop app still needs proof that all local models truly flush streamed alternate generations token-by-token in the live editor.
-- There is no draft-history comparison view yet.
-- No Outlook implementation yet.
+## Working Pieces To Keep
 
-## Current conclusion
+- Local-first execution.
+- Explicit provider draft creation rather than send automation.
+- Ollama model discovery.
+- User signature setting.
+- Bot stdout/log events.
+- Separate logs window.
+- Native desktop app entrypoint.
+- Mock email data for testing.
+- Versioning SOP and environment SOP.
 
-The MVP direction is now much clearer: a native local desktop review loop, explicit human approval, optional provider draft creation, and direct local-model assistance through Ollama. The next valuable step is to move the desktop app from the single shared review JSON file to the new folder-based handoff lifecycle.
+## Pieces To Simplify Or Retire
+
+- Two candidate drafts per email.
+- GUI draft editor as a central workflow.
+- `Use this` / `Ignore` as the main product loop.
+- Large inbox review table as the default UI.
+- Five-folder lifecycle as the primary architecture.
+- Detailed local review state as the source of truth.
+
+These were useful experiments, but the lighter product should not build on them as core assumptions.
+
+## Latest Verified State
+
+- Latest visible version before this planning reset: `v55.33`.
+- Latest test run before this rewrite: 32 passing tests.
+- Current code still includes the review prototype and the queue scaffold.
+- The next code phase should intentionally reshape the app, not incrementally patch the old review workflow.
+
+## Conclusion
+
+The product has become clearer: the bot exists to hide local LLM latency. The GUI exists to configure and supervise the bot. The mail provider is where users review, edit, and send drafts.

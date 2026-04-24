@@ -1,49 +1,101 @@
 # Strategy
 
-## Product goal
+## Product Thesis
 
-Build a local-first email drafting assistant that helps the user respond faster without giving the model autonomous send authority.
+MailAssist exists because local LLMs are useful but slow.
 
-## Core workflow
+The bot's job is to spend that minute before the user needs the answer. It should watch the inbox continuously, classify new mail, and pre-create provider-native draft replies for messages that need a response. The user's normal mail client remains the review and editing surface.
 
-1. Ingest an email thread from a provider sync or a normalized local JSON file.
-2. Build a drafting prompt that includes the latest thread context and any user revision guidance.
-3. Ask a local model through Ollama to compose the reply.
-4. Save the proposed draft and the execution log locally.
-5. Let the user accept, reject, or request revisions.
-6. On approval, create a provider-native draft in Gmail first and Outlook later.
-7. Review and disposition drafts in the local GUI.
+MailAssist should feel like a quiet local assistant that keeps Gmail or Outlook prepared, not like a second inbox the user has to manage.
 
-## Architecture direction
+## Core Workflow
 
-### Local-first orchestration
+1. The bot runs continuously on the user's machine.
+2. It polls or watches connected providers: Gmail first, Outlook later, mock while developing.
+3. It detects new or changed threads that have not already been handled.
+4. It sends each candidate thread to the local LLM for classification.
+5. If the thread does not need a response, the bot records that decision locally and does nothing else.
+6. If the thread needs a response, the bot asks the local LLM for one draft in the user's selected tone.
+7. The bot creates a draft in the source mail provider.
+8. The user reviews, edits, sends, or deletes that draft in Gmail or Outlook.
+9. The GUI shows configuration, bot health, recent activity, and logs.
 
-- Keep the orchestration process local.
-- Treat Ollama as the default model gateway.
-- Preserve thread payloads, prompts, draft bodies, and run metadata on disk in a simple inspectable format.
+## What The Bot Owns
 
-### Provider boundary
+- Provider polling or watching.
+- Deduplication of already-seen provider threads.
+- Classification.
+- Draft generation.
+- Provider draft creation.
+- Local logs and lightweight activity history.
+- Retry/backoff for provider and Ollama failures.
 
-- Use a provider interface so Gmail and Outlook can share the same orchestration flow.
-- Keep provider-specific auth and draft-write logic out of the core drafting path.
-- Start with Gmail draft creation only; do not send messages automatically.
+The bot should be boring, persistent, and focused. It should not become a general workflow engine.
 
-### Human review loop
+## What The GUI Owns
 
-- The assistant proposes drafts.
-- The user decides whether to accept, reject, or revise.
-- Revision requests should become first-class inputs, not ad hoc prompt edits.
+- Provider configuration and connection status.
+- Ollama URL and local model selection.
+- User signature.
+- Preferred writing tone.
+- Polling interval and run/pause controls.
+- Bot logs, recent draft-created activity, and error visibility.
 
-### Local operator UI
+The GUI should not be a full email editor. Gmail and Outlook already do that well, and the user can edit drafts there before sending.
 
-- Provide a local GUI for configuring Gmail, Outlook, and Ollama settings.
-- Make available Ollama models visible before the user chooses one.
-- Treat the local GUI as the operator control surface for configuration and draft approval.
-- Green-light and red-light decisions belong in the local app because they directly affect operational email flow.
+## Drafting Policy
 
-## Near-term implementation posture
+- Generate one draft, not multiple options.
+- Use the user's configured tone as the base style.
+- Include the user's exact configured signature when appropriate.
+- Stay grounded in the source thread.
+- Never invent attachments, commitments, dates, approvals, prices, or prior context.
+- Do not draft for automated, spam, newsletter, digest, or no-response messages.
+- Treat `urgent` as a priority signal, not as a separate user workflow.
 
-- Normalize around JSON input/output before adding provider-sync complexity.
-- Keep dependencies light while the architecture is still moving.
-- Prefer explicit files and small modules over framework-heavy abstractions.
-- Delay Outlook implementation until the Gmail draft path is stable.
+## Tone Settings
+
+The user should choose one default tone in settings. Initial tone options:
+
+- `Direct and concise`
+- `Warm and collaborative`
+- `Formal and polished`
+- `Brief and casual`
+
+This replaces generating two candidate replies. If the draft is not quite right, the user edits it in the provider draft editor.
+
+## Provider Boundary
+
+MailAssist creates provider drafts. It does not send mail.
+
+Provider writes should preserve:
+
+- recipients
+- cc/bcc when available
+- thread/reply metadata
+- subject
+- provider draft ID
+- provider thread/message IDs
+
+Gmail is first. Outlook follows once the Gmail loop is stable.
+
+## Local State
+
+Keep local state small and explainable:
+
+- provider cursor or last-seen IDs
+- per-thread processing status
+- classification result
+- provider draft reference
+- run logs
+- recent activity summary for the GUI
+
+Avoid a complex folder state machine unless real provider behavior forces it. A simple local state file plus logs is enough until proven otherwise.
+
+## Design Posture
+
+- Optimize for low cognitive load.
+- Prefer settings, status, and logs over a second inbox.
+- Keep the UI dense and operational: little empty space, few subtitles, no decorative panels.
+- Put generated drafts where the user already works: Gmail or Outlook.
+- Make slow local LLM work visible but non-blocking.
