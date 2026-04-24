@@ -6,7 +6,7 @@
 - Local drafting flow exists for normalized thread JSON input.
 - Ollama integration exists through a simple HTTP client.
 - Local draft and execution log persistence exists under `data/`.
-- A local GUI exists for provider settings, Ollama model selection, and draft review actions.
+- A native `PySide6` desktop GUI is now the primary local review surface.
 - Gmail draft submission is wired as an optional integration path.
 - Outlook support is intentionally still a stub.
 
@@ -15,22 +15,26 @@
 - Thread JSON can be loaded from disk.
 - Prompt assembly includes full message history and optional revision notes.
 - Draft generation and execution logging are both captured locally.
-- The project can serve a local settings UI and query available Ollama models.
-- The project can review drafts locally with green-light, red-light, reset, and needs-revision actions.
+- The project can query available Ollama models and keep the chosen model in shared settings.
+- The desktop app now provides a review-first inbox with a sortable table, explicit detail open/close flow, modal settings, and a separate logs window.
+- The review UI now supports classification-driven triage, editable candidate replies, archive checkboxes, and explicit `Use this`, `Ignore`, and `Close` actions.
+- Candidate labels now reflect tone instead of abstract `Option A` / `Option B` names.
+- Signature capture is now part of settings, and prompts tell the local model to use the exact saved signature block.
+- GUI-side alternate generation can now talk directly to Ollama instead of routing through the bot subprocess.
+- Alternate generation now uses a background worker, a shared banner/progress strip, and incremental chunk delivery into the editor.
 - Accepted Gmail drafts can now be submitted upstream from the local UI, with provider IDs saved back into the local draft record.
-- The local GUI now has a review-first mock inbox with subject-only queue navigation, revealable email bodies, editable candidate drafts, and per-candidate green-light actions.
-- The review queue now supports classification-driven filtering and ordering, including a set-aside view for automated or no-response threads.
-- A native `PySide6` desktop review app entrypoint now exists for mac-first testing without opening a browser manually.
+- The mock inbox now contains a broader sample set, including urgent, reply-needed, automated, and action-needed threads for end-to-end GUI testing.
 
 ## Known gaps
 
 - No inbox sync yet; threads are still local JSON inputs.
-- No regenerate-from-revision flow yet; revision notes are stored but do not automatically produce a new draft.
 - Gmail auth has not been validated in this repo with real credentials yet.
 - Gmail draft submission currently creates a simple draft body without richer metadata like recipients from the thread.
-- The local review panel does not yet offer filtering or draft-history comparisons.
+- The five-folder lifecycle (`bot_processed`, `gui_acquired`, `user_reviewed`, `provider_drafted`, `user_replied`) is a planned architecture, not the current implementation. Today the desktop app still uses `data/review-inbox.json` as the shared review-state file.
+- The desktop app still needs proof that all local models truly flush streamed alternate generations token-by-token in the live editor.
+- There is no draft-history comparison view yet.
 - No Outlook implementation yet.
 
 ## Current conclusion
 
-The MVP direction is clearer now: local-first orchestration, explicit artifact persistence, optional provider draft creation, and local review actions in the GUI. The next valuable step is finishing the Gmail-first review loop so approval actions can feed real provider draft workflows.
+The MVP direction is now much clearer: a native local desktop review loop, explicit human approval, optional provider draft creation, and direct local-model assistance through Ollama. The next valuable step is to replace the single shared review JSON file with the planned folder-based handoff lifecycle and then wire real provider ingestion on top of that.

@@ -15,6 +15,7 @@ class Settings:
     bot_logs_dir: Path
     ollama_url: str
     ollama_model: str
+    user_signature: str
     default_provider: str
     gmail_enabled: bool
     outlook_enabled: bool
@@ -80,6 +81,7 @@ def load_settings() -> Settings:
         bot_logs_dir=bot_logs_dir,
         ollama_url=os.getenv("MAILASSIST_OLLAMA_URL", "http://localhost:11434"),
         ollama_model=os.getenv("MAILASSIST_OLLAMA_MODEL", "llama3.1:8b"),
+        user_signature=os.getenv("MAILASSIST_USER_SIGNATURE", "").replace("\\n", "\n"),
         default_provider=os.getenv("MAILASSIST_DEFAULT_PROVIDER", "gmail"),
         gmail_enabled=parse_bool(os.getenv("MAILASSIST_GMAIL_ENABLED"), default=True),
         outlook_enabled=parse_bool(os.getenv("MAILASSIST_OUTLOOK_ENABLED"), default=False),

@@ -35,8 +35,9 @@ CLASSIFICATION_PRIORITY = {
 }
 STATUS_PRIORITY = {
     "pending_review": 0,
-    "green_lit": 1,
-    "red_lit": 2,
+    "use_draft": 1,
+    "ignored": 2,
+    "user_replied": 3,
 }
 FILTER_LABELS = {
     "all": "All mail",
@@ -51,14 +52,14 @@ FILTER_LABELS = {
 STATUS_FILTER_LABELS = {
     "all": "Any status",
     "pending_review": "Pending review",
-    "green_lit": "Green lit",
-    "red_lit": "Red lit",
+    "use_draft": "Draft selected",
+    "ignored": "Ignored",
+    "user_replied": "User replied",
 }
 SORT_LABELS = {
-    "priority": "Priority first",
-    "recent_activity": "Recent activity",
-    "subject": "Subject A-Z",
-    "status": "Review status",
+    "classification": "Classification",
+    "received_at": "Received date",
+    "sender": "Sender",
 }
 CANDIDATE_BLUEPRINTS = [
     (
@@ -74,6 +75,31 @@ CANDIDATE_BLUEPRINTS = [
         "Sound thoughtful and calm. Acknowledge the ask, explain any nuance briefly, and keep the tone encouraging.",
     ),
 ]
+OPTION_A_SEPARATOR = "-- END OPTION A --"
+OPTION_B_SEPARATOR = "-- END OPTION B --"
+
+
+def candidate_display_label(tone: str) -> str:
+    cleaned = tone.strip()
+    if not cleaned:
+        return "Draft"
+    return cleaned[0].upper() + cleaned[1:]
+
+
+def signature_prompt_block(signature: str) -> str:
+    cleaned = signature.strip()
+    if not cleaned:
+        return (
+            "- Do not add placeholders like `[Your Name]`, `[Name]`, or any made-up signature block.\n"
+            "- If you include a sign-off, keep it natural and do not invent a sender name."
+        )
+    return (
+        "- End the email body with exactly the signature block shown below.\n"
+        "- Preserve the same text, punctuation, and line breaks.\n"
+        "- Do not substitute names or invent any alternate sign-off.\n\n"
+        "Signature block to use exactly:\n"
+        f"{cleaned}"
+    )
 
 
 def build_mock_threads() -> list[EmailThread]:
@@ -157,6 +183,121 @@ def build_mock_threads() -> list[EmailThread]:
                 ),
             ],
         ),
+        EmailThread(
+            thread_id="thread-004",
+            subject="Contract redlines before tomorrow",
+            participants=["jordan@elmlegal.com", "you@example.com"],
+            messages=[
+                EmailMessage(
+                    message_id="msg-301",
+                    sender="jordan@elmlegal.com",
+                    to=["you@example.com"],
+                    sent_at="2026-04-24T09:12:00Z",
+                    text=(
+                        "I just sent the latest contract redlines. If we want to get this signed tomorrow, "
+                        "I need your call on the indemnity clause by 10am."
+                    ),
+                ),
+                EmailMessage(
+                    message_id="msg-302",
+                    sender="jordan@elmlegal.com",
+                    to=["you@example.com"],
+                    sent_at="2026-04-24T09:18:00Z",
+                    text=(
+                        "If you are okay with the fallback language, I can finalize the clean copy right away."
+                    ),
+                ),
+            ],
+        ),
+        EmailThread(
+            thread_id="thread-005",
+            subject="Team lunch headcount",
+            participants=["nina@example.com", "you@example.com"],
+            messages=[
+                EmailMessage(
+                    message_id="msg-401",
+                    sender="nina@example.com",
+                    to=["you@example.com"],
+                    sent_at="2026-04-24T10:05:00Z",
+                    text=(
+                        "Quick one: can you confirm whether you are in for the team lunch on Thursday? "
+                        "I am locking the reservation this afternoon."
+                    ),
+                ),
+            ],
+        ),
+        EmailThread(
+            thread_id="thread-006",
+            subject="Security awareness training reminder",
+            participants=["it-ops@example.com", "you@example.com"],
+            messages=[
+                EmailMessage(
+                    message_id="msg-501",
+                    sender="it-ops@example.com",
+                    to=["you@example.com"],
+                    sent_at="2026-04-24T06:15:00Z",
+                    text=(
+                        "Reminder: your annual security awareness training is due next week. "
+                        "This is an automated notification. Please complete the course in the portal."
+                    ),
+                ),
+            ],
+        ),
+        EmailThread(
+            thread_id="thread-007",
+            subject="Customer quote follow-up",
+            participants=["samira@brightforge.ai", "you@example.com"],
+            messages=[
+                EmailMessage(
+                    message_id="msg-601",
+                    sender="samira@brightforge.ai",
+                    to=["you@example.com"],
+                    sent_at="2026-04-24T11:02:00Z",
+                    text=(
+                        "Checking whether you had a chance to look at the updated quote. "
+                        "If we can align on scope this week, I can keep the implementation window open."
+                    ),
+                ),
+                EmailMessage(
+                    message_id="msg-602",
+                    sender="samira@brightforge.ai",
+                    to=["you@example.com"],
+                    sent_at="2026-04-24T11:09:00Z",
+                    text=(
+                        "The only item I still need clarity on is whether onboarding stays in phase one "
+                        "or moves to a separate workstream."
+                    ),
+                ),
+            ],
+        ),
+        EmailThread(
+            thread_id="thread-008",
+            subject="Action needed: approve vendor access",
+            participants=["ops@harborhq.com", "you@example.com"],
+            messages=[
+                EmailMessage(
+                    message_id="msg-701",
+                    sender="ops@harborhq.com",
+                    to=["you@example.com"],
+                    sent_at="2026-04-24T11:26:00Z",
+                    text=(
+                        "Action needed: can you confirm whether BrightForge should receive temporary "
+                        "workspace access for next week's onboarding? I need your approval before 3pm "
+                        "so I can finish provisioning."
+                    ),
+                ),
+                EmailMessage(
+                    message_id="msg-702",
+                    sender="ops@harborhq.com",
+                    to=["you@example.com"],
+                    sent_at="2026-04-24T11:31:00Z",
+                    text=(
+                        "If you want me to limit access to the shared project folder only, I can set it "
+                        "up that way instead."
+                    ),
+                ),
+            ],
+        ),
     ]
 
 
@@ -204,20 +345,24 @@ def format_thread_context(thread: EmailThread) -> str:
     return "\n".join(lines).strip()
 
 
-def build_review_candidate_prompt(
+def build_review_candidates_prompt(
     thread: EmailThread,
     *,
-    option_label: str,
-    tone: str,
-    guidance: str,
+    signature: str = "",
 ) -> str:
+    option_instructions = "\n".join(
+        [
+            f"- {label}: use a {tone} style. {guidance}"
+            for _, label, tone, guidance in CANDIDATE_BLUEPRINTS
+        ]
+    )
     return f"""You are MailAssist, a local-first email drafting assistant.
 
 You have no hidden context beyond the thread shown below. Do not assume facts, attachments, commitments, permissions, or prior conversations that are not explicitly present in the provided thread.
 
 Your job for this single thread:
 1. Classify the thread for review triage.
-2. Draft one candidate reply only if a reply is actually appropriate.
+2. Draft 2 candidate replies only if a reply is actually appropriate.
 
 Classification rules:
 - Use `urgent` when the sender is asking for a quick turnaround, a deadline is near, or the message clearly needs immediate attention.
@@ -232,8 +377,72 @@ Drafting rules:
 - Stay grounded in the thread. Do not invent status updates, dates, approvals, pricing, timelines, or deliverables.
 - If information is missing, say so plainly instead of guessing.
 - Keep the draft under 140 words.
-- Tone target for this option: {option_label} with a {tone} style.
-- Additional style guidance: {guidance}
+- Produce both candidate replies in one response so each option uses the full thread context.
+- Signature rules:
+{signature_prompt_block(signature)}
+- Candidate instructions:
+{option_instructions}
+
+Output format requirements:
+- First line must be exactly: `Classification: <value>`
+- `<value>` must be one of: `urgent`, `reply_needed`, `automated`, `no_response`, `spam`
+- Second line must be blank.
+- After the blank line, write only the Option A body.
+- End Option A with a line that is exactly: `{OPTION_A_SEPARATOR}`
+- Then write only the Option B body.
+- End Option B with a line that is exactly: `{OPTION_B_SEPARATOR}`
+- If classification is `automated`, `no_response`, or `spam`, keep both option bodies empty but still include both separator lines.
+- Do not use markdown fences.
+- Do not add analysis, explanations, bullets, labels, or alternative options beyond the required separators.
+
+Thread context:
+{format_thread_context(thread)}
+""".strip()
+
+
+def build_single_review_candidate_prompt(
+    thread: EmailThread,
+    *,
+    tone: str,
+    guidance: str,
+    existing_body: str = "",
+    signature: str = "",
+) -> str:
+    alternative_instruction = ""
+    if existing_body.strip():
+        alternative_instruction = f"""
+
+Existing draft in this same tone:
+{existing_body.strip()}
+
+Write a meaningfully different alternative. Do not copy phrases or sentence structure from the existing draft unless the thread requires it.
+""".rstrip()
+
+    return f"""You are MailAssist, a local-first email drafting assistant.
+
+You have no hidden context beyond the thread shown below. Do not assume facts, attachments, commitments, permissions, or prior conversations that are not explicitly present in the provided thread.
+
+Your job for this single thread:
+1. Classify the thread for review triage.
+2. Draft 1 candidate reply only if a reply is actually appropriate.
+
+Classification rules:
+- Use `urgent` when the sender is asking for a quick turnaround, a deadline is near, or the message clearly needs immediate attention.
+- Use `reply_needed` when a human reply is appropriate but the thread is not obviously urgent.
+- Use `automated` when the message is clearly machine-generated, newsletter-like, digest-like, or from a no-reply workflow.
+- Use `no_response` when a human technically could respond but no response is actually appropriate.
+- Use `spam` when the message is junk, deceptive, or obviously irrelevant.
+
+Drafting rules:
+- If classification is `automated`, `no_response`, or `spam`, return an empty email body.
+- If a reply is appropriate, write as the recipient of the thread.
+- Stay grounded in the thread. Do not invent status updates, dates, approvals, pricing, timelines, or deliverables.
+- If information is missing, say so plainly instead of guessing.
+- Keep the draft under 140 words.
+- Signature rules:
+{signature_prompt_block(signature)}
+- Tone target: {tone}.
+- Additional style guidance: {guidance}.{alternative_instruction}
 
 Output format requirements:
 - First line must be exactly: `Classification: <value>`
@@ -242,6 +451,51 @@ Output format requirements:
 - After the blank line, write only the candidate email body.
 - Do not use markdown fences.
 - Do not add analysis, explanations, bullets, or alternative options.
+
+Thread context:
+{format_thread_context(thread)}
+""".strip()
+
+
+def build_single_review_candidate_body_prompt(
+    thread: EmailThread,
+    *,
+    tone: str,
+    guidance: str,
+    existing_body: str = "",
+    signature: str = "",
+) -> str:
+    alternative_instruction = ""
+    if existing_body.strip():
+        alternative_instruction = f"""
+
+Existing draft in this same tone:
+{existing_body.strip()}
+
+Write a meaningfully different alternative. Do not copy phrases or sentence structure from the existing draft unless the thread requires it.
+""".rstrip()
+
+    return f"""You are MailAssist, a local-first email drafting assistant.
+
+You have no hidden context beyond the thread shown below. Do not assume facts, attachments, commitments, permissions, or prior conversations that are not explicitly present in the provided thread.
+
+Your job for this single thread:
+- Draft 1 replacement candidate reply only.
+
+Drafting rules:
+- Write only the email body. Do not include a classification line, heading, bullets, or explanation.
+- Stay grounded in the thread. Do not invent status updates, dates, approvals, pricing, timelines, or deliverables.
+- If information is missing, say so plainly instead of guessing.
+- Keep the draft under 140 words.
+- Signature rules:
+{signature_prompt_block(signature)}
+- Tone target: {tone}.
+- Additional style guidance: {guidance}.{alternative_instruction}
+
+Output format requirements:
+- Return only the candidate email body.
+- Do not use markdown fences.
+- Do not add analysis or any preamble.
 
 Thread context:
 {format_thread_context(thread)}
@@ -263,6 +517,17 @@ def normalize_classification(value: str | None) -> str:
     if cleaned in {"ignore", "skip"}:
         return "no_response"
     return "unclassified"
+
+
+def normalize_review_status(value: str | None) -> str:
+    cleaned = (value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if cleaned in {"use_draft", "ready", "green_lit", "approved", "done"}:
+        return "use_draft"
+    if cleaned in {"ignored", "red_lit"}:
+        return "ignored"
+    if cleaned == "user_replied":
+        return "user_replied"
+    return "pending_review"
 
 
 def fallback_classification_for_thread(thread: EmailThread) -> str:
@@ -299,6 +564,32 @@ def extract_classification_and_body(response: str) -> tuple[str, str]:
         if label.strip().lower() == "classification":
             return normalize_classification(value), remainder.strip()
     return "unclassified", text
+
+
+def extract_streaming_candidate_body(response: str) -> str:
+    normalized = response.replace("\r\n", "\n")
+    if not normalized.startswith("Classification:"):
+        return ""
+    first_break = normalized.find("\n")
+    if first_break < 0:
+        return ""
+    remainder = normalized[first_break + 1 :]
+    if not remainder.startswith("\n"):
+        return ""
+    return remainder[1:]
+
+
+def extract_classification_and_bodies(response: str) -> tuple[str, list[str]]:
+    classification, body = extract_classification_and_body(response)
+    option_one, separator, remainder = body.partition(OPTION_A_SEPARATOR)
+    if not separator:
+        raise ValueError(f"Missing separator: {OPTION_A_SEPARATOR}")
+    option_two, separator, trailing = remainder.partition(OPTION_B_SEPARATOR)
+    if not separator:
+        raise ValueError(f"Missing separator: {OPTION_B_SEPARATOR}")
+    if trailing.strip():
+        raise ValueError("Unexpected trailing content after the final option separator.")
+    return classification, [option_one.strip(), option_two.strip()]
 
 
 def resolve_thread_classification(candidates: list[dict[str, Any]], thread: EmailThread) -> str:
@@ -356,10 +647,15 @@ def resolve_generation_model(selected_model: str, models: list[str]) -> str:
     raise RuntimeError("No Ollama models were available for review draft generation.")
 
 
-def build_fallback_candidates(thread: EmailThread) -> tuple[list[dict[str, Any]], str]:
+def build_fallback_candidates(
+    thread: EmailThread,
+    *,
+    signature: str = "",
+) -> tuple[list[dict[str, Any]], str]:
     classification = fallback_classification_for_thread(thread)
     latest = thread.messages[-1].text
     preview = textwrap.shorten(latest, width=120, placeholder="...")
+    signature_block = f"\n{signature.strip()}\n" if signature.strip() else ""
     fallback = []
     for candidate_id, label, tone, _ in CANDIDATE_BLUEPRINTS:
         if classification in SET_ASIDE_CLASSIFICATIONS:
@@ -367,18 +663,20 @@ def build_fallback_candidates(thread: EmailThread) -> tuple[list[dict[str, Any]]
         elif tone == "direct and executive":
             body = (
                 f"Hi,\n\nI can take this forward. Based on your note, the main point to address is: "
-                f"{preview}\n\nI will send a clearer update today with the next steps called out.\n"
+                f"{preview}\n\nI will send a clearer update today with the next steps called out."
+                f"{signature_block}"
             )
         else:
             body = (
                 f"Hi,\n\nThanks for the follow-up. I am pulling this together now and will send "
                 f"an updated reply shortly. The key item I am addressing is: {preview}\n\n"
-                f"I will make sure the response is clear on what changed and what happens next.\n"
+                f"I will make sure the response is clear on what changed and what happens next."
+                f"{signature_block}"
             )
         fallback.append(
             {
                 "candidate_id": candidate_id,
-                "label": label,
+                "label": candidate_display_label(tone),
                 "tone": tone,
                 "classification": classification,
                 "body": body,
@@ -392,14 +690,34 @@ def build_fallback_candidates(thread: EmailThread) -> tuple[list[dict[str, Any]]
     return fallback, classification
 
 
+def build_fallback_candidate(
+    thread: EmailThread,
+    *,
+    candidate_id: str,
+    tone: str,
+    signature: str = "",
+) -> tuple[dict[str, Any], str]:
+    candidates, classification = build_fallback_candidates(thread, signature=signature)
+    fallback = next((item for item in candidates if item["candidate_id"] == candidate_id), None)
+    if fallback is None:
+        raise ValueError("Fallback candidate blueprint not found.")
+    fallback["label"] = candidate_display_label(tone)
+    fallback["tone"] = tone
+    return fallback, classification
+
+
 def generate_candidates_for_thread(
     thread: EmailThread,
     base_url: str,
     selected_model: str,
 ) -> tuple[list[dict[str, Any]], Optional[str], Optional[str], str]:
+    signature = load_settings().user_signature
     models, model_error = list_available_models(base_url, selected_model)
     if model_error:
-        fallback_candidates, fallback_classification = build_fallback_candidates(thread)
+        fallback_candidates, fallback_classification = build_fallback_candidates(
+            thread,
+            signature=signature,
+        )
         return fallback_candidates, None, model_error, fallback_classification
 
     generation_model = resolve_generation_model(selected_model, models)
@@ -408,20 +726,18 @@ def generate_candidates_for_thread(
     heuristic_classification = fallback_classification_for_thread(thread)
 
     try:
-        for candidate_id, label, tone, guidance in CANDIDATE_BLUEPRINTS:
-            prompt = build_review_candidate_prompt(
-                thread,
-                option_label=label,
-                tone=tone,
-                guidance=guidance,
-            )
-            response = llm.compose_reply(prompt)
-            classification, body = extract_classification_and_body(response)
-            classification = merge_classification(classification, heuristic_classification)
+        prompt = build_review_candidates_prompt(thread, signature=signature)
+        response = llm.compose_reply(prompt)
+        classification, bodies = extract_classification_and_bodies(response)
+        classification = merge_classification(classification, heuristic_classification)
+        if len(bodies) != len(CANDIDATE_BLUEPRINTS):
+            raise RuntimeError("The local model did not return the expected number of draft options.")
+
+        for (candidate_id, label, tone, _), body in zip(CANDIDATE_BLUEPRINTS, bodies):
             candidates.append(
                 {
                     "candidate_id": candidate_id,
-                    "label": label,
+                    "label": candidate_display_label(tone),
                     "tone": tone,
                     "classification": classification,
                     "body": body,
@@ -432,11 +748,138 @@ def generate_candidates_for_thread(
                     "edited_at": None,
                 }
             )
-    except RuntimeError as exc:
-        fallback_candidates, fallback_classification = build_fallback_candidates(thread)
+    except (RuntimeError, ValueError) as exc:
+        fallback_candidates, fallback_classification = build_fallback_candidates(
+            thread,
+            signature=signature,
+        )
         return fallback_candidates, generation_model, str(exc), fallback_classification
 
     return candidates, generation_model, None, resolve_thread_classification(candidates, thread)
+
+
+def generate_candidate_for_tone(
+    thread: EmailThread,
+    *,
+    candidate_id: str,
+    tone: str,
+    guidance: str,
+    base_url: str,
+    selected_model: str,
+    existing_body: str = "",
+) -> tuple[dict[str, Any], Optional[str], Optional[str], str]:
+    signature = load_settings().user_signature
+    models, model_error = list_available_models(base_url, selected_model)
+    if model_error:
+        fallback_candidate, fallback_classification = build_fallback_candidate(
+            thread,
+            candidate_id=candidate_id,
+            tone=tone,
+            signature=signature,
+        )
+        return fallback_candidate, None, model_error, fallback_classification
+
+    generation_model = resolve_generation_model(selected_model, models)
+    llm = OllamaClient(base_url, generation_model)
+    heuristic_classification = fallback_classification_for_thread(thread)
+
+    try:
+        prompt = build_single_review_candidate_prompt(
+            thread,
+            tone=tone,
+            guidance=guidance,
+            existing_body=existing_body,
+            signature=signature,
+        )
+        response = llm.compose_reply(prompt)
+        classification, body = extract_classification_and_body(response)
+        classification = merge_classification(classification, heuristic_classification)
+        candidate = {
+            "candidate_id": candidate_id,
+            "label": candidate_display_label(tone),
+            "tone": tone,
+            "classification": classification,
+            "body": body,
+            "original_body": body,
+            "status": "pending_review",
+            "generated_by": generation_model,
+            "generated_at": utc_now_iso(),
+            "edited_at": None,
+        }
+    except (RuntimeError, ValueError) as exc:
+        fallback_candidate, fallback_classification = build_fallback_candidate(
+            thread,
+            candidate_id=candidate_id,
+            tone=tone,
+            signature=signature,
+        )
+        return fallback_candidate, generation_model, str(exc), fallback_classification
+
+    return candidate, generation_model, None, classification
+
+
+def stream_candidate_for_tone(
+    thread: EmailThread,
+    *,
+    candidate_id: str,
+    tone: str,
+    guidance: str,
+    base_url: str,
+    selected_model: str,
+    existing_body: str = "",
+    on_body_update=None,
+) -> tuple[dict[str, Any], Optional[str], Optional[str], str]:
+    signature = load_settings().user_signature
+    models, model_error = list_available_models(base_url, selected_model)
+    if model_error:
+        fallback_candidate, fallback_classification = build_fallback_candidate(
+            thread,
+            candidate_id=candidate_id,
+            tone=tone,
+            signature=signature,
+        )
+        return fallback_candidate, None, model_error, fallback_classification
+
+    generation_model = resolve_generation_model(selected_model, models)
+    llm = OllamaClient(base_url, generation_model)
+    classification = fallback_classification_for_thread(thread)
+
+    try:
+        prompt = build_single_review_candidate_body_prompt(
+            thread,
+            tone=tone,
+            guidance=guidance,
+            existing_body=existing_body,
+            signature=signature,
+        )
+        raw_response = ""
+        for chunk in llm.compose_reply_stream(prompt):
+            raw_response += chunk
+            if on_body_update is not None:
+                on_body_update(chunk)
+        body = raw_response.strip()
+        candidate = {
+            "candidate_id": candidate_id,
+            "label": candidate_display_label(tone),
+            "tone": tone,
+            "classification": classification,
+            "body": body,
+            "original_body": body,
+            "status": "pending_review",
+            "generated_by": generation_model,
+            "generated_at": utc_now_iso(),
+            "edited_at": None,
+        }
+    except (RuntimeError, ValueError) as exc:
+        fallback_candidate, fallback_classification = build_fallback_candidate(
+            thread,
+            candidate_id=candidate_id,
+            tone=tone,
+            signature=signature,
+        )
+        return fallback_candidate, generation_model, str(exc), fallback_classification
+
+    return candidate, generation_model, None, classification
 
 
 def load_review_state(root_dir: Path) -> dict[str, Any]:
@@ -451,6 +894,26 @@ def load_review_state(root_dir: Path) -> dict[str, Any]:
         state = default_review_state()
         save_review_state(root_dir, state)
         return state
+    for thread_state in payload.get("threads", []):
+        thread_state["status"] = normalize_review_status(thread_state.get("status"))
+        thread_state["archived"] = bool(thread_state.get("archived", False))
+        if "archive_selected" not in thread_state:
+            thread_state["archive_selected"] = thread_state["status"] in {
+                "use_draft",
+                "ignored",
+                "user_replied",
+            }
+        for candidate in thread_state.get("candidates", []):
+            candidate["label"] = candidate_display_label(candidate.get("tone", candidate.get("label", "")))
+            candidate_status = normalize_review_status(candidate.get("status"))
+            if candidate_status == "use_draft":
+                candidate["status"] = "use_draft"
+            elif candidate.get("status") == "edited":
+                candidate["status"] = "edited"
+            elif candidate_status == "ignored":
+                candidate["status"] = "ignored"
+            else:
+                candidate["status"] = "pending_review"
     return payload
 
 
@@ -482,6 +945,14 @@ def thread_last_sent_at(thread_state: dict[str, Any]) -> str:
     return max(message.get("sent_at", "") for message in messages)
 
 
+def thread_latest_sender(thread_state: dict[str, Any]) -> str:
+    messages = thread_state.get("thread", {}).get("messages", [])
+    if not messages:
+        return ""
+    latest = max(messages, key=lambda message: message.get("sent_at", ""))
+    return str(latest.get("from", "")).lower()
+
+
 def matches_classification_filter(thread_state: dict[str, Any], filter_classification: str) -> bool:
     classification = normalize_classification(thread_state.get("classification"))
     if filter_classification == "all":
@@ -496,7 +967,7 @@ def matches_classification_filter(thread_state: dict[str, Any], filter_classific
 def matches_status_filter(thread_state: dict[str, Any], filter_status: str) -> bool:
     if filter_status == "all":
         return True
-    return thread_state.get("status") == filter_status
+    return normalize_review_status(thread_state.get("status")) == normalize_review_status(filter_status)
 
 
 def filtered_and_sorted_threads(
@@ -505,36 +976,37 @@ def filtered_and_sorted_threads(
     filter_classification: str,
     filter_status: str,
     sort_order: str,
+    show_archived: bool = False,
 ) -> list[dict[str, Any]]:
     filtered = [
         item
         for item in threads
+        if (show_archived or not item.get("archived", False))
         if matches_classification_filter(item, filter_classification)
         and matches_status_filter(item, filter_status)
     ]
 
-    if sort_order == "subject":
-        return sorted(filtered, key=lambda item: item["subject"].lower())
-    if sort_order == "status":
+    if sort_order == "received_at":
         return sorted(
             filtered,
             key=lambda item: (
-                STATUS_PRIORITY.get(item.get("status", "pending_review"), 99),
-                CLASSIFICATION_PRIORITY.get(normalize_classification(item.get("classification")), 99),
+                thread_last_sent_at(item),
                 item["subject"].lower(),
             ),
+            reverse=True,
         )
-    if sort_order == "recent_activity":
+    if sort_order == "sender":
         return sorted(
             filtered,
-            key=lambda item: (thread_last_sent_at(item), item["subject"].lower()),
-            reverse=True,
+            key=lambda item: (
+                thread_latest_sender(item),
+                item["subject"].lower(),
+            ),
         )
     return sorted(
         filtered,
         key=lambda item: (
             CLASSIFICATION_PRIORITY.get(normalize_classification(item.get("classification")), 99),
-            STATUS_PRIORITY.get(item.get("status", "pending_review"), 99),
             item["subject"].lower(),
         ),
     )
@@ -562,6 +1034,64 @@ def regenerate_thread_candidates(
     thread_state["classification_updated_at"] = utc_now_iso()
     thread_state["selected_candidate_id"] = None
     thread_state["status"] = "pending_review"
+    state["generated_at"] = utc_now_iso()
+    return thread_state
+
+
+def regenerate_candidate_for_thread(
+    state: dict[str, Any],
+    thread_id: str,
+    candidate_id: str,
+    *,
+    base_url: str,
+    selected_model: str,
+) -> dict[str, Any]:
+    thread_state, _ = find_thread_state(state, thread_id)
+    thread = payload_to_thread(thread_state["thread"])
+    blueprint = next((item for item in CANDIDATE_BLUEPRINTS if item[0] == candidate_id), None)
+    if blueprint is None:
+        raise ValueError("Candidate blueprint not found.")
+
+    _, _, tone, guidance = blueprint
+    existing_candidate = next(
+        (item for item in thread_state.get("candidates", []) if item.get("candidate_id") == candidate_id),
+        None,
+    )
+    existing_body = ""
+    if existing_candidate is not None:
+        existing_body = str(existing_candidate.get("body", ""))
+
+    candidate, generation_model, generation_error, classification = generate_candidate_for_tone(
+        thread,
+        candidate_id=candidate_id,
+        tone=tone,
+        guidance=guidance,
+        base_url=base_url,
+        selected_model=selected_model,
+        existing_body=existing_body,
+    )
+
+    replaced = False
+    for index, current in enumerate(thread_state.get("candidates", [])):
+        if current.get("candidate_id") == candidate_id:
+            thread_state["candidates"][index] = candidate
+            replaced = True
+            break
+    if not replaced:
+        thread_state.setdefault("candidates", []).append(candidate)
+
+    thread_state["candidate_generation_model"] = generation_model
+    thread_state["candidate_generation_error"] = generation_error
+    thread_state["classification"] = classification
+    thread_state["classification_source"] = generation_model or "fallback"
+    thread_state["classification_updated_at"] = utc_now_iso()
+    if thread_state.get("status") != "ignored":
+        if thread_state.get("selected_candidate_id") == candidate_id:
+            thread_state["selected_candidate_id"] = None
+        for item in thread_state.get("candidates", []):
+            if item.get("candidate_id") != candidate_id and normalize_review_status(item.get("status")) != "ignored":
+                item["status"] = "pending_review"
+        thread_state["status"] = "pending_review"
     state["generated_at"] = utc_now_iso()
     return thread_state
 
@@ -597,34 +1127,74 @@ def update_candidate(
         raise ValueError("Candidate not found.")
 
     cleaned = body.strip()
-    candidate["body"] = cleaned
-    candidate["edited_at"] = utc_now_iso()
 
     if action == "save":
-        if candidate["status"] != "green_lit":
+        candidate["body"] = cleaned
+        candidate["edited_at"] = utc_now_iso()
+        if normalize_review_status(candidate["status"]) != "use_draft":
             candidate["status"] = "edited"
         return candidate
 
-    if action == "green_light":
-        thread_state["selected_candidate_id"] = candidate_id
-        thread_state["status"] = "green_lit"
-        for item in thread_state.get("candidates", []):
-            item["status"] = "green_lit" if item["candidate_id"] == candidate_id else "pending_review"
+    if action == "reset":
+        candidate["body"] = candidate.get("original_body", "")
+        candidate["edited_at"] = None
+        if thread_state.get("selected_candidate_id") == candidate_id:
+            candidate["status"] = "use_draft"
+        else:
+            candidate["status"] = "pending_review"
         return candidate
 
-    if action == "red_light":
-        candidate["status"] = "red_lit"
-        if thread_state.get("selected_candidate_id") == candidate_id:
-            thread_state["selected_candidate_id"] = None
-        if any(item["status"] == "green_lit" for item in thread_state.get("candidates", [])):
-            thread_state["status"] = "green_lit"
-        elif all(item["status"] == "red_lit" for item in thread_state.get("candidates", [])):
-            thread_state["status"] = "red_lit"
-        else:
-            thread_state["status"] = "pending_review"
+    if action in {"green_light", "use_this"}:
+        candidate["body"] = cleaned
+        candidate["edited_at"] = utc_now_iso()
+        thread_state["selected_candidate_id"] = candidate_id
+        thread_state["status"] = "use_draft"
+        thread_state["archive_selected"] = True
+        for item in thread_state.get("candidates", []):
+            item["status"] = "use_draft" if item["candidate_id"] == candidate_id else "pending_review"
+        return candidate
+
+    if action in {"red_light", "ignore"}:
+        candidate["body"] = cleaned
+        candidate["edited_at"] = utc_now_iso()
+        candidate["status"] = "ignored"
+        thread_state["selected_candidate_id"] = None
+        thread_state["status"] = "ignored"
+        thread_state["archive_selected"] = True
+        for item in thread_state.get("candidates", []):
+            item["status"] = "ignored" if item["candidate_id"] == candidate_id else "pending_review"
         return candidate
 
     raise ValueError("Unsupported candidate action.")
+
+
+def update_thread_status(thread_state: dict[str, Any], action: str) -> dict[str, Any]:
+    if action == "ignore":
+        thread_state["status"] = "ignored"
+        thread_state["selected_candidate_id"] = None
+        thread_state["archive_selected"] = True
+        for candidate in thread_state.get("candidates", []):
+            candidate["status"] = "pending_review"
+        return thread_state
+
+    if action == "close":
+        return thread_state
+
+    if action == "mark_user_replied":
+        thread_state["status"] = "user_replied"
+        thread_state["archive_selected"] = True
+        return thread_state
+
+    if action == "archive":
+        thread_state["archived"] = True
+        thread_state["archive_selected"] = True
+        return thread_state
+
+    if action == "unarchive":
+        thread_state["archived"] = False
+        return thread_state
+
+    raise ValueError("Unsupported thread action.")
 
 
 def load_visible_version(root_dir: Path) -> str:
@@ -1363,6 +1933,8 @@ def render_page(
                   <input id="gmail_credentials_file" name="MAILASSIST_GMAIL_CREDENTIALS_FILE" value="{html.escape(str(settings.gmail_credentials_file))}" />
                   <label for="gmail_token_file">Gmail token file</label>
                   <input id="gmail_token_file" name="MAILASSIST_GMAIL_TOKEN_FILE" value="{html.escape(str(settings.gmail_token_file))}" />
+                  <label for="user_signature">Signature</label>
+                  <textarea id="user_signature" name="MAILASSIST_USER_SIGNATURE" placeholder="Best regards,&#10;Your Name">{html.escape(settings.user_signature)}</textarea>
                   <p class="hint">Gmail status: {html.escape(gmail_status)}. Provider submission stays separate from review.</p>
                   <div class="actions">
                     <button type="submit">Save provider settings</button>
@@ -1460,6 +2032,10 @@ class ConfigRequestHandler(BaseHTTPRequestHandler):
                 "MAILASSIST_OLLAMA_MODEL",
                 [current.get("MAILASSIST_OLLAMA_MODEL", "qwen3.6:latest")],
             )[0],
+            "MAILASSIST_USER_SIGNATURE": form.get(
+                "MAILASSIST_USER_SIGNATURE",
+                [current.get("MAILASSIST_USER_SIGNATURE", "")],
+            )[0].replace("\r\n", "\n").replace("\n", "\\n"),
             "MAILASSIST_DEFAULT_PROVIDER": form.get(
                 "MAILASSIST_DEFAULT_PROVIDER",
                 [current.get("MAILASSIST_DEFAULT_PROVIDER", "gmail")],

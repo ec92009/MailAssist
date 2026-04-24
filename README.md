@@ -1,6 +1,6 @@
 # MailAssist
 
-Local AI-assisted email drafting bot using Ollama and local models. `MailAssist` ingests email threads, composes proposed replies, saves drafts and execution logs locally, can optionally submit drafts to Gmail, and keeps approval decisions inside the local UI.
+Local AI-assisted email drafting bot using Ollama and local models. `MailAssist` ingests email threads, composes proposed replies, saves drafts and execution logs locally, can optionally submit drafts to Gmail, and keeps approval decisions inside the local desktop UI.
 
 ## Current docs
 
@@ -30,8 +30,7 @@ Project shorthand:
 - Saves execution logs to `data/logs/`
 - Keeps the human in control of every draft: compare options, edit them locally, then green-light or red-light one
 - Optionally submits approved drafts to Gmail from the CLI or the local UI
-- Includes a local GUI for mail providers, Ollama settings, and draft review actions
-- Now includes a native `PySide6` desktop app entrypoint so mac-first testing can move off the browser/server loop
+- Includes a native `PySide6` desktop app for provider settings, Ollama configuration, mock inbox review, and bot log inspection
 
 ---
 
@@ -95,20 +94,16 @@ You can also configure the app through the native desktop GUI:
 ./.venv/bin/mailassist desktop-gui
 ```
 
-The desktop app is the preferred review surface going forward. The browser-served UI remains available as a transitional path:
+The desktop app is the preferred review surface going forward.
 
-```bash
-./.venv/bin/mailassist serve-config --port 8765
-```
+The local GUI now opens into a review-first workspace with:
 
-The local GUI now opens into a review-first workspace:
-
-- a queue of email subjects on the left
-- filter and ordering controls for queue triage
-- the selected email thread in the main reading area
-- multiple Ollama-generated draft candidates that can each be edited before a green light
+- a sortable inbox table with classification, received date, and sender
+- side-by-side thread review and candidate drafting
+- explicit `Use this`, `Ignore`, and `Close` actions in the detail view
 - Ollama-generated classifications so urgent mail can be surfaced and automated or spammy threads can be set aside
-- a de-emphasized settings tray for Ollama and provider configuration
+- a modal settings dialog for Ollama, provider config, and the user signature
+- a separate logs window for bot stdout and saved JSONL logs
 
 For a macOS app bundle in the current LeadLight-style launcher pattern:
 
@@ -135,4 +130,4 @@ Once authenticated, you can ask the bot to submit the draft upstream while still
   --submit-provider-draft
 ```
 
-The local UI is now the place where draft approvals happen, and accepted Gmail drafts can be created upstream with one click from that review panel. GitHub remains useful for source control, but not as the approval surface for live drafts.
+The local desktop UI is now the place where draft approvals happen, and accepted Gmail drafts can be created upstream with one click from that review panel. GitHub remains useful for source control, but not as the approval surface for live drafts.

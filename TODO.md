@@ -2,11 +2,12 @@
 
 ## Core bot
 
-- Add a shared `VERSION` source and wire it into both CLI output and the local UI.
 - Extend the thread schema to include `cc`, `bcc`, reply-to metadata, and quoted-history markers.
+- Replace the single shared `data/review-inbox.json` flow with the folder-based queue lifecycle:
+  `bot_processed`, `gui_acquired`, `user_reviewed`, `provider_drafted`, `user_replied`.
+- Define the per-email JSON contract for that lifecycle, including review outcome, selected candidate, edited body, provider IDs, and archive state.
 - Replace the mock review inbox with provider-backed thread ingestion once Gmail fetch is ready.
 - Make Gmail draft creation preserve recipients and reply threading metadata from the source thread.
-- Decide whether revision notes should trigger in-place editing or full draft regeneration.
 - Add authenticated actions to the local GUI, starting with Gmail OAuth launch and connection-status checks.
 
 ## Gmail
@@ -24,10 +25,11 @@
 
 ## Local UI
 
-- Extend queue filtering beyond the mock inbox so provider-fetched threads can be triaged the same way.
-- Let the operator request another set of alternative drafts without losing the currently edited candidate.
+- Verify live incremental streaming behavior across the local Ollama models we expect to support, and add lightweight instrumentation if a model still flushes in one chunk.
+- Add a clearer in-app status/state explanation for `urgent` vs `reply_needed`, since triage meaning now matters in the inbox table.
+- Add a real archive/hidden-items workflow around checked rows so ignored and user-replied mail can be cleared efficiently without losing auditability.
 - Add a draft-history view so revised versions can be compared locally.
-- Replace the transitional browser-served UI once the PySide6 desktop workflow reaches feature parity.
+- Decide whether the browser-served UI should stay as a fallback or be removed entirely now that the native desktop path is the main surface.
 
 ## Packaging
 
