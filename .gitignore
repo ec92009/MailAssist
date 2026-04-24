@@ -1,0 +1,17 @@
+.DS_Store
+.env
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+dist/
+build/
+*.egg-info/
+
+data/logs/*.json
+data/drafts/*.json
+site/
+!site/.gitkeep
+
+.pytest_cache/

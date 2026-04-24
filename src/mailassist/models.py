@@ -1,0 +1,80 @@
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+@dataclass
+class EmailMessage:
+    message_id: str
+    sender: str
+    to: List[str]
+    sent_at: str
+    text: str
+
+    @classmethod
+    def from_dict(cls, payload: Dict[str, Any]) -> "EmailMessage":
+        return cls(
+            message_id=payload["message_id"],
+            sender=payload["from"],
+            to=list(payload.get("to", [])),
+            sent_at=payload["sent_at"],
+            text=payload["text"],
+        )
+
+
+@dataclass
+class EmailThread:
+    thread_id: str
+    subject: str
+    participants: List[str]
+    messages: List[EmailMessage]
+
+    @classmethod
+    def from_dict(cls, payload: Dict[str, Any]) -> "EmailThread":
+        return cls(
+            thread_id=payload["thread_id"],
+            subject=payload["subject"],
+            participants=list(payload.get("participants", [])),
+            messages=[EmailMessage.from_dict(item) for item in payload.get("messages", [])],
+        )
+
+
+@dataclass
+class DraftRecord:
+    draft_id: str
+    thread_id: str
+    provider: str
+    subject: str
+    body: str
+    model: str
+    status: str = "pending_review"
+    created_at: str = field(default_factory=utc_now_iso)
+    provider_draft_id: Optional[str] = None
+    revision_notes: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class ExecutionLog:
+    run_id: str
+    thread_id: str
+    provider: str
+    model: str
+    status: str
+    started_at: str
+    completed_at: str
+    prompt_preview: str
+    response_preview: str
+    provider_draft_id: Optional[str] = None
+    error: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)

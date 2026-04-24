@@ -1,0 +1,37 @@
+{
+  "thread_id": "thread-001",
+  "subject": "Project kickoff follow-up",
+  "participants": [
+    "alex@example.com",
+    "you@example.com"
+  ],
+  "messages": [
+    {
+      "message_id": "msg-001",
+      "from": "alex@example.com",
+      "to": [
+        "you@example.com"
+      ],
+      "sent_at": "2026-04-24T08:30:00Z",
+      "text": "Can you send the kickoff notes by end of day? I also want to confirm whether the draft timeline still looks realistic."
+    },
+    {
+      "message_id": "msg-002",
+      "from": "you@example.com",
+      "to": [
+        "alex@example.com"
+      ],
+      "sent_at": "2026-04-24T08:42:00Z",
+      "text": "I can send the notes shortly. I am still reviewing the timeline."
+    },
+    {
+      "message_id": "msg-003",
+      "from": "alex@example.com",
+      "to": [
+        "you@example.com"
+      ],
+      "sent_at": "2026-04-24T08:55:00Z",
+      "text": "Perfect. If the timeline has slipped, just tell me what changed and what you need."
+    }
+  ]
+}

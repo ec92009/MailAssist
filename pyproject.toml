@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mailassist"
+version = "0.1.0"
+description = "Local AI-assisted email drafting bot with Gmail-first provider support."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "ecohen" }]
+dependencies = []
+
+[project.optional-dependencies]
+gmail = [
+  "google-api-python-client>=2.170.0",
+  "google-auth>=2.40.0",
+  "google-auth-oauthlib>=1.2.2",
+]
+
+[project.scripts]
+mailassist = "mailassist.cli.main:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
