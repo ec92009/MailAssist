@@ -12,6 +12,7 @@ from mailassist.gui.server import (
     extract_classification_and_bodies,
     extract_classification_and_body,
     extract_streaming_candidate_body,
+    fallback_classification_for_thread,
     filtered_and_sorted_threads,
     load_review_state,
     merge_classification,
@@ -147,6 +148,12 @@ def test_extract_streaming_candidate_body_waits_for_blank_line() -> None:
 
 def test_merge_classification_prefers_set_aside_heuristics_for_obvious_automation() -> None:
     assert merge_classification("reply_needed", "automated") == "automated"
+
+
+def test_fallback_classification_marks_action_needed_deadline_as_urgent() -> None:
+    thread = next(item for item in default_review_state()["threads"] if item["thread_id"] == "thread-008")
+
+    assert fallback_classification_for_thread(payload_to_thread(thread["thread"])) == "urgent"
 
 
 def test_build_review_candidates_prompt_includes_full_contract() -> None:

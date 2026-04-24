@@ -538,7 +538,19 @@ def fallback_classification_for_thread(thread: EmailThread) -> str:
         return "automated"
     if any(token in haystack for token in ("lottery", "crypto", "wire money", "act now")):
         return "spam"
-    if any(token in haystack for token in ("end of day", "urgent", "asap", "friday morning")):
+    if any(
+        token in haystack
+        for token in (
+            "action needed",
+            "end of day",
+            "urgent",
+            "asap",
+            "friday morning",
+            "before 3pm",
+            "before tomorrow",
+            "this afternoon",
+        )
+    ):
         return "urgent"
     return "reply_needed"
 

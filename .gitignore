@@ -10,9 +10,16 @@ build/
 *.egg-info/
 
 data/logs/*.json
+data/logs/*.txt
 data/bot-logs/*.json
 data/bot-logs/*.jsonl
 data/drafts/*.json
 data/review-inbox.json
+data/bot_processed/*.json
+data/gui_acquired/*.json
+data/user_reviewed/*.json
+data/provider_drafted/*.json
+data/user_replied/*.json
+data/previews/
 
 .pytest_cache/

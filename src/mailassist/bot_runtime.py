@@ -5,8 +5,20 @@ import json
 from pathlib import Path
 from uuid import uuid4
 
+from mailassist.bot_queue import (
+    build_bot_processed_item,
+    ensure_queue_dirs,
+    existing_phase_for_thread,
+    list_phase_items,
+    write_queue_item,
+)
 from mailassist.config import load_settings
-from mailassist.gui.server import load_review_state, regenerate_thread_candidates, save_review_state
+from mailassist.gui.server import (
+    build_mock_threads,
+    load_review_state,
+    regenerate_thread_candidates,
+    save_review_state,
+)
 from mailassist.llm.ollama import OllamaClient
 from mailassist.models import utc_now_iso
 
@@ -40,13 +52,24 @@ def build_review_bot_parser(subparsers: argparse._SubParsersAction[argparse.Argu
     parser.add_argument(
         "--action",
         required=True,
-        choices=("sync-review-state", "regenerate-thread", "ollama-check"),
+        choices=(
+            "sync-review-state",
+            "regenerate-thread",
+            "ollama-check",
+            "process-mock-inbox",
+            "queue-status",
+        ),
         help="Bot action to run.",
     )
     parser.add_argument("--thread-id", help="Thread ID for review-state actions.")
     parser.add_argument("--prompt", help="Prompt for Ollama check actions.")
     parser.add_argument("--base-url", help="Ollama base URL for bot actions.")
     parser.add_argument("--selected-model", help="Ollama model for bot actions.")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Reprocess mock inbox items even if they already exist in a queue phase.",
+    )
 
 
 def command_review_bot(args: argparse.Namespace) -> int:
@@ -63,6 +86,7 @@ def command_review_bot(args: argparse.Namespace) -> int:
             "prompt": args.prompt,
             "base_url": base_url,
             "selected_model": selected_model,
+            "force": bool(getattr(args, "force", False)),
         },
     )
     reporter.emit("log_file", path=str(reporter.log_path))
@@ -117,6 +141,77 @@ def command_review_bot(args: argparse.Namespace) -> int:
                 base_url=base_url,
                 selected_model=selected_model,
             )
+            return 0
+
+        if args.action == "process-mock-inbox":
+            queue_dirs = ensure_queue_dirs(settings.root_dir)
+            reporter.emit(
+                "queue_ready",
+                phases={phase: str(path) for phase, path in queue_dirs.items()},
+            )
+            processed_count = 0
+            skipped_count = 0
+            for thread in build_mock_threads():
+                if args.thread_id and thread.thread_id != args.thread_id:
+                    continue
+                existing_phase = existing_phase_for_thread(settings.root_dir, "mock", thread.thread_id)
+                if existing_phase and not getattr(args, "force", False):
+                    skipped_count += 1
+                    reporter.emit(
+                        "skipped_email",
+                        message=f"{thread.thread_id} already exists in {existing_phase}.",
+                        thread_id=thread.thread_id,
+                        subject=thread.subject,
+                        phase=existing_phase,
+                    )
+                    continue
+
+                reporter.emit(
+                    "info",
+                    message=f"Processing mock email {thread.thread_id}.",
+                    thread_id=thread.thread_id,
+                    subject=thread.subject,
+                )
+                item = build_bot_processed_item(
+                    thread=thread,
+                    provider="mock",
+                    source="mock",
+                    base_url=base_url,
+                    selected_model=selected_model,
+                )
+                path = write_queue_item(settings.root_dir, "bot_processed", item)
+                processed_count += 1
+                reporter.emit(
+                    "processed_email",
+                    message="Mock email processed for GUI acquisition.",
+                    thread_id=thread.thread_id,
+                    subject=thread.subject,
+                    classification=item["classification"],
+                    candidate_count=len(item.get("candidates", [])),
+                    path=str(path),
+                )
+            reporter.emit(
+                "completed",
+                message="Mock inbox acquisition pass completed.",
+                processed_count=processed_count,
+                skipped_count=skipped_count,
+            )
+            return 0
+
+        if args.action == "queue-status":
+            ensure_queue_dirs(settings.root_dir)
+            counts = {
+                phase: len(list_phase_items(settings.root_dir, phase))
+                for phase in (
+                    "bot_processed",
+                    "gui_acquired",
+                    "user_reviewed",
+                    "provider_drafted",
+                    "user_replied",
+                )
+            }
+            reporter.emit("queue_status", counts=counts)
+            reporter.emit("completed", message="Queue status ready.", counts=counts)
             return 0
 
         if args.action == "ollama-check":

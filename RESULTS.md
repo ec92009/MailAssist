@@ -24,17 +24,18 @@
 - Alternate generation now uses a background worker, a shared banner/progress strip, and incremental chunk delivery into the editor.
 - Accepted Gmail drafts can now be submitted upstream from the local UI, with provider IDs saved back into the local draft record.
 - The mock inbox now contains a broader sample set, including urgent, reply-needed, automated, and action-needed threads for end-to-end GUI testing.
+- The bot now has a first folder-queue slice: it can create lifecycle directories and process mock inbox threads into one JSON file per thread under `data/bot_processed/`.
 
 ## Known gaps
 
 - No inbox sync yet; threads are still local JSON inputs.
 - Gmail auth has not been validated in this repo with real credentials yet.
 - Gmail draft submission currently creates a simple draft body without richer metadata like recipients from the thread.
-- The five-folder lifecycle (`bot_processed`, `gui_acquired`, `user_reviewed`, `provider_drafted`, `user_replied`) is a planned architecture, not the current implementation. Today the desktop app still uses `data/review-inbox.json` as the shared review-state file.
+- The five-folder lifecycle (`bot_processed`, `gui_acquired`, `user_reviewed`, `provider_drafted`, `user_replied`) is only partially implemented. The bot can write `bot_processed`, but the desktop app still uses `data/review-inbox.json` as the shared review-state file.
 - The desktop app still needs proof that all local models truly flush streamed alternate generations token-by-token in the live editor.
 - There is no draft-history comparison view yet.
 - No Outlook implementation yet.
 
 ## Current conclusion
 
-The MVP direction is now much clearer: a native local desktop review loop, explicit human approval, optional provider draft creation, and direct local-model assistance through Ollama. The next valuable step is to replace the single shared review JSON file with the planned folder-based handoff lifecycle and then wire real provider ingestion on top of that.
+The MVP direction is now much clearer: a native local desktop review loop, explicit human approval, optional provider draft creation, and direct local-model assistance through Ollama. The next valuable step is to move the desktop app from the single shared review JSON file to the new folder-based handoff lifecycle.

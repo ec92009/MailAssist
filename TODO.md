@@ -3,9 +3,10 @@
 ## Core bot
 
 - Extend the thread schema to include `cc`, `bcc`, reply-to metadata, and quoted-history markers.
-- Replace the single shared `data/review-inbox.json` flow with the folder-based queue lifecycle:
+- Move the desktop GUI from `data/review-inbox.json` to the folder-based queue lifecycle:
   `bot_processed`, `gui_acquired`, `user_reviewed`, `provider_drafted`, `user_replied`.
 - Define the per-email JSON contract for that lifecycle, including review outcome, selected candidate, edited body, provider IDs, and archive state.
+- Add bot processing for `user_reviewed` items so selected drafts become provider drafts and move into `provider_drafted`.
 - Replace the mock review inbox with provider-backed thread ingestion once Gmail fetch is ready.
 - Make Gmail draft creation preserve recipients and reply threading metadata from the source thread.
 - Add authenticated actions to the local GUI, starting with Gmail OAuth launch and connection-status checks.

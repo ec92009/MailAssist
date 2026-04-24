@@ -23,7 +23,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
-    QGridLayout,
     QProgressBar,
     QPushButton,
     QPlainTextEdit,
@@ -71,6 +70,9 @@ SUBJECT_COLUMN = 1
 CLASSIFICATION_COLUMN = 2
 RECEIVED_COLUMN = 3
 SENDER_COLUMN = 4
+INBOX_ROW_HEIGHT = 30
+INBOX_INITIAL_VISIBLE_ROWS = 6
+INBOX_INITIAL_HEIGHT = 34 + (INBOX_ROW_HEIGHT * INBOX_INITIAL_VISIBLE_ROWS)
 
 
 def _humanize(token: str) -> str:
@@ -225,17 +227,7 @@ class CandidateEditor(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
-
-        meta = QLabel(
-            f"{candidate['tone']} | {_humanize(candidate.get('classification', 'unclassified'))}"
-        )
-        meta.setStyleSheet("color: #5e6978; font-size: 13px;")
-        layout.addWidget(meta)
-
-        hint = QLabel("Changes auto-save. Reset returns to the original proposal.")
-        hint.setStyleSheet("color: #8a7666; font-size: 12px;")
-        layout.addWidget(hint)
+        layout.setSpacing(0)
 
         self.editor = QPlainTextEdit(candidate.get("body", ""))
         self.editor.setPlaceholderText("No response recommended for this classification.")
@@ -298,6 +290,11 @@ class MailAssistDesktopWindow(QMainWindow):
         self.active_regeneration_editor: CandidateEditor | None = None
         self.active_regeneration_thread_id = ""
         self.active_regeneration_candidate_id = ""
+        self.active_progress_label = ""
+        self.candidate_regeneration_active = False
+        self.candidate_regeneration_seen_chunk = False
+        self.candidate_regeneration_char_count = 0
+        self.candidate_regeneration_body = ""
         self.progress_timer = QTimer(self)
         self.progress_timer.setInterval(180)
         self.progress_timer.timeout.connect(self._advance_fake_progress)
@@ -325,13 +322,7 @@ class MailAssistDesktopWindow(QMainWindow):
         title_box = QVBoxLayout()
         title = QLabel("MailAssist Desktop Review")
         title.setStyleSheet("font-size: 34px; font-weight: 700; color: #1d2430;")
-        subtitle = QLabel(
-            "One inbox list, color-coded triage, and side-by-side review when you open a thread."
-        )
-        subtitle.setWordWrap(True)
-        subtitle.setStyleSheet("font-size: 15px; color: #5e6978;")
         title_box.addWidget(title)
-        title_box.addWidget(subtitle)
         hero.addLayout(title_box, 1)
 
         self.version_label = QLabel(f"v{load_visible_version(self.settings.root_dir)}")
@@ -357,28 +348,28 @@ class MailAssistDesktopWindow(QMainWindow):
 
         self.status_overlay = QWidget()
         self.status_overlay.hide()
-        status_layout = QGridLayout(self.status_overlay)
+        status_layout = QVBoxLayout(self.status_overlay)
         status_layout.setContentsMargins(0, 0, 0, 0)
         status_layout.setSpacing(0)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
-        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setTextVisible(True)
         self.progress_bar.hide()
         self.progress_bar.setMinimumHeight(44)
         self.progress_bar.setStyleSheet(
             "QProgressBar { border: 1px solid #dccbbb; border-radius: 12px; background: #fffaf4; padding: 2px; }"
             "QProgressBar::chunk { background: #2f6da3; border-radius: 10px; }"
         )
-        status_layout.addWidget(self.progress_bar, 0, 0)
+        status_layout.addWidget(self.progress_bar)
 
         self.banner = QLabel("")
         self.banner.hide()
         self.banner.setStyleSheet(
             "padding: 10px 12px; border-radius: 12px; background: rgba(33,95,74,0.12); color: #215f4a;"
         )
-        status_layout.addWidget(self.banner, 0, 0)
+        status_layout.addWidget(self.banner)
         shell.addWidget(self.status_overlay)
 
         controls = QHBoxLayout()
@@ -441,10 +432,10 @@ class MailAssistDesktopWindow(QMainWindow):
         self.thread_table.setStyleSheet(
             "QTableWidget { border: 1px solid #dccbbb; border-radius: 14px; background: #fffaf4; "
             "alternate-background-color: #ecdcca; gridline-color: #dccbbb; }"
-            "QTableWidget::item { padding: 8px 10px; }"
+            "QTableWidget::item { padding: 5px 10px; }"
             "QTableWidget::item:selected { background: #dbe7f2; color: #1d2430; }"
-            "QTableWidget::indicator { width: 21px; height: 21px; }"
-            "QHeaderView::section { background: #efe4d6; color: #5e6978; padding: 8px 10px; "
+            "QTableWidget::indicator { width: 18px; height: 18px; }"
+            "QHeaderView::section { background: #efe4d6; color: #5e6978; padding: 5px 10px; "
             "border: 0; border-bottom: 1px solid #dccbbb; font-weight: 700; }"
         )
         self.queue_detail_splitter = QSplitter(Qt.Vertical)
@@ -476,11 +467,7 @@ class MailAssistDesktopWindow(QMainWindow):
         header_text = QVBoxLayout()
         self.thread_title = QLabel("")
         self.thread_title.setStyleSheet("font-size: 28px; font-weight: 700; color: #1d2430;")
-        self.thread_guidance = QLabel("")
-        self.thread_guidance.setWordWrap(True)
-        self.thread_guidance.setStyleSheet("font-size: 13px; color: #7b6e63;")
         header_text.addWidget(self.thread_title)
-        header_text.addWidget(self.thread_guidance)
         header.addLayout(header_text, 1)
         detail_layout.addLayout(header)
 
@@ -499,6 +486,7 @@ class MailAssistDesktopWindow(QMainWindow):
         candidates_layout = QVBoxLayout(self.candidates_group)
         self.candidate_tabs = QTabWidget()
         self.candidate_tabs.setMinimumHeight(140)
+        self.candidate_tabs.currentChanged.connect(lambda _index: self._refresh_candidate_action_state())
         candidates_layout.addWidget(self.candidate_tabs)
 
         self.candidate_actions_panel = QWidget()
@@ -535,7 +523,22 @@ class MailAssistDesktopWindow(QMainWindow):
         ):
             button.setMinimumWidth(190)
             button.setMinimumHeight(44)
-            candidate_actions_layout.addWidget(button)
+        candidate_actions_layout.addWidget(self.reset_candidate_button)
+        candidate_actions_layout.addWidget(self.regenerate_candidate_button)
+
+        self.candidate_action_status = QLabel("")
+        self.candidate_action_status.setWordWrap(True)
+        self.candidate_action_status.setMinimumHeight(74)
+        self.candidate_action_status.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.candidate_action_status.setStyleSheet(
+            "background: #edf5fb; border: 1px solid #b8d0e4; color: #4e6276; "
+            "font-size: 12px; padding: 8px 10px;"
+        )
+        self.candidate_action_status.hide()
+        candidate_actions_layout.addWidget(self.candidate_action_status)
+        candidate_actions_layout.addWidget(self.use_candidate_button)
+        candidate_actions_layout.addWidget(self.ignore_thread_button)
+        candidate_actions_layout.addWidget(self.close_thread_button)
         candidate_actions_layout.addStretch(1)
 
         candidate_area = QWidget()
@@ -555,7 +558,7 @@ class MailAssistDesktopWindow(QMainWindow):
         self.queue_detail_splitter.addWidget(self.detail_container)
         self.queue_detail_splitter.setStretchFactor(0, 1)
         self.queue_detail_splitter.setStretchFactor(1, 1)
-        self.queue_detail_splitter.setSizes([460, 380])
+        self.queue_detail_splitter.setSizes([INBOX_INITIAL_HEIGHT, 620])
         shell.addWidget(self.queue_detail_splitter, 1)
         self.detail_panel.hide()
 
@@ -758,8 +761,6 @@ class MailAssistDesktopWindow(QMainWindow):
     def _refresh_status_overlay_visibility(self) -> None:
         visible = self.banner.isVisible() or self.progress_bar.isVisible()
         self.status_overlay.setVisible(visible)
-        if self.banner.isVisible():
-            self.banner.raise_()
 
     def _set_banner(self, message: str, level: str = "info") -> None:
         if not message:
@@ -776,6 +777,8 @@ class MailAssistDesktopWindow(QMainWindow):
         )
         self.banner.setStyleSheet(style)
         self.banner.setText(message)
+        self.progress_bar.hide()
+        self.active_progress_label = ""
         self.banner.show()
         self._refresh_status_overlay_visibility()
 
@@ -785,26 +788,92 @@ class MailAssistDesktopWindow(QMainWindow):
         cursor.movePosition(cursor.MoveOperation.End)
         self.bot_console.setTextCursor(cursor)
 
+    def _current_view_is_regenerating_candidate(self) -> bool:
+        editor = self._current_candidate_editor()
+        return (
+            self.candidate_regeneration_active
+            and editor is not None
+            and editor.thread_id == self.active_regeneration_thread_id
+            and editor.candidate_id == self.active_regeneration_candidate_id
+        )
+
+    def _refresh_candidate_action_state(self) -> None:
+        editor = self._current_candidate_editor()
+        running = self._current_view_is_regenerating_candidate()
+        if editor is not None:
+            editor.setEnabled(not running)
+        self.reset_candidate_button.setEnabled(not running)
+        self.use_candidate_button.setEnabled(not running)
+        self.ignore_thread_button.setEnabled(not running)
+        self.close_thread_button.setEnabled(not running)
+        self.regenerate_candidate_button.setEnabled(not self.candidate_regeneration_active or running)
+        self.use_candidate_button.setVisible(not running)
+        self.ignore_thread_button.setVisible(not running)
+        self.close_thread_button.setVisible(not running)
+        if running:
+            if self.candidate_regeneration_seen_chunk:
+                self.regenerate_candidate_button.setText("Streaming from Ollama...")
+                self.candidate_action_status.setText(
+                    "Streaming response from Ollama.\n"
+                    f"{self.candidate_regeneration_char_count} characters received. "
+                    "You can click another email and keep working while this finishes."
+                )
+            else:
+                self.regenerate_candidate_button.setText("Waiting for Ollama...")
+                self.candidate_action_status.setText(
+                    "Waiting for Ollama to return the first chunk.\n"
+                    "This can take a couple of minutes. You can click another email and keep working."
+                )
+            self.regenerate_candidate_button.setStyleSheet(
+                "background: #d7e6f4; color: #1d2430; border: 1px solid #9fbad3; padding: 8px 16px;"
+            )
+            self.candidate_action_status.show()
+        else:
+            self.regenerate_candidate_button.setText("Regenerate with Ollama")
+            self.regenerate_candidate_button.setStyleSheet("")
+            self.candidate_action_status.hide()
+            self.candidate_action_status.setText("")
+
     def _start_fake_progress(self, label: str) -> None:
-        self.fake_progress_value = 6
-        self.progress_bar.setValue(self.fake_progress_value)
+        self.active_progress_label = label
+        self.fake_progress_value = 0
+        self.candidate_regeneration_active = True
+        self.candidate_regeneration_seen_chunk = False
+        self.candidate_regeneration_char_count = 0
+        self.candidate_regeneration_body = ""
+        self.banner.hide()
+        self.progress_bar.setRange(0, 0)
+        self.progress_bar.setFormat(self.active_progress_label)
+        self.progress_bar.setValue(0)
         self.progress_bar.show()
         self._refresh_status_overlay_visibility()
+        self._refresh_candidate_action_state()
         self.progress_timer.start()
 
     def _advance_fake_progress(self) -> None:
-        if self.fake_progress_value < 88:
-            self.fake_progress_value += 4
-        elif self.fake_progress_value < 96:
-            self.fake_progress_value += 1
-        self.progress_bar.setValue(self.fake_progress_value)
+        if self.candidate_regeneration_seen_chunk:
+            self.progress_bar.setFormat(
+                f"{self.active_progress_label} Streaming... {self.candidate_regeneration_char_count} chars"
+            )
+        else:
+            self.progress_bar.setFormat(
+                f"{self.active_progress_label} Waiting for first chunk..."
+            )
+        self._refresh_candidate_action_state()
 
     def _finish_fake_progress(self) -> None:
         self.progress_timer.stop()
-        self.fake_progress_value = 100
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setFormat(self.active_progress_label)
         self.progress_bar.setValue(100)
         self.progress_bar.hide()
+        self.active_progress_label = ""
+        self.candidate_regeneration_active = False
+        self.candidate_regeneration_seen_chunk = False
+        self.candidate_regeneration_char_count = 0
+        self.candidate_regeneration_body = ""
         self._refresh_status_overlay_visibility()
+        self._refresh_candidate_action_state()
 
     def _review_state_needs_sync(self) -> bool:
         return any(not thread_state.get("candidates") for thread_state in self.review_state.get("threads", []))
@@ -988,7 +1057,7 @@ class MailAssistDesktopWindow(QMainWindow):
         self.thread_table.setRowCount(len(visible))
         for index, thread_state in enumerate(visible):
             self._populate_thread_row(index, thread_state)
-            self.thread_table.setRowHeight(index, 38)
+            self.thread_table.setRowHeight(index, INBOX_ROW_HEIGHT)
         self.thread_table.setSortingEnabled(True)
         self.thread_table.sortByColumn(self.table_sort_column, self.table_sort_order)
         self.thread_table.blockSignals(False)
@@ -1052,22 +1121,9 @@ class MailAssistDesktopWindow(QMainWindow):
 
         self.thread_title.setText(thread.subject)
         if classification in SET_ASIDE_CLASSIFICATIONS:
-            self.thread_guidance.setText(
-                f"{_humanize(classification)} means this message is set aside. Review the original email, then ignore or archive it if that still looks right."
-            )
             self.candidates_group.hide()
             self.candidate_actions_panel.hide()
         else:
-            if classification == "urgent":
-                self.thread_guidance.setText(
-                    "Urgent means the sender is asking for a quick turnaround or there is a near deadline."
-                )
-            elif classification == "reply_needed":
-                self.thread_guidance.setText(
-                    "Reply needed means a human response is appropriate, but it is not obviously time-critical."
-                )
-            else:
-                self.thread_guidance.setText("")
             self.candidates_group.show()
             self.candidate_actions_panel.show()
 
@@ -1102,11 +1158,18 @@ class MailAssistDesktopWindow(QMainWindow):
                     self.close_current_thread,
                     self.regenerate_candidate_from_editor,
                 )
+                if (
+                    self.candidate_regeneration_active
+                    and self.current_thread_id == self.active_regeneration_thread_id
+                    and candidate["candidate_id"] == self.active_regeneration_candidate_id
+                ):
+                    editor.replace_text(self.candidate_regeneration_body)
                 self.candidate_tabs.addTab(editor, candidate["label"])
                 if candidate["candidate_id"] == selected_candidate_id:
                     selected_index = index
             if self.candidate_tabs.count():
                 self.candidate_tabs.setCurrentIndex(selected_index)
+            self._refresh_candidate_action_state()
 
         self._show_detail_panel()
 
@@ -1205,6 +1268,7 @@ class MailAssistDesktopWindow(QMainWindow):
         self.active_regeneration_editor = editor
         self.active_regeneration_thread_id = thread_id
         self.active_regeneration_candidate_id = candidate_id
+        self.candidate_regeneration_body = ""
         self.active_regeneration_editor.setEnabled(False)
         self.active_regeneration_editor.replace_text("")
         save_review_state(self.settings.root_dir, self.review_state)
@@ -1226,15 +1290,9 @@ class MailAssistDesktopWindow(QMainWindow):
         self.candidate_regeneration_worker.failed.connect(self.candidate_regeneration_thread.quit)
         self.candidate_regeneration_thread.finished.connect(self._cleanup_candidate_regeneration)
 
-        try:
-            QApplication.setOverrideCursor(Qt.CursorShape.BusyCursor)
-        except Exception:
-            pass
-        self._set_banner(
-            "Generating a new alternate with Ollama. This can take 1-2 minutes, but the window should stay responsive.",
-            level="info",
+        self._start_fake_progress(
+            "Generating a new alternate with Ollama. This can take 1-2 minutes, but the window should stay responsive."
         )
-        self._start_fake_progress("Generating a new alternate with Ollama")
         self.candidate_regeneration_thread.start()
 
     def _handle_candidate_regeneration_stream(
@@ -1244,12 +1302,17 @@ class MailAssistDesktopWindow(QMainWindow):
         chunk: str,
     ) -> None:
         if (
-            self.active_regeneration_editor is None
-            or thread_id != self.active_regeneration_thread_id
+            thread_id != self.active_regeneration_thread_id
             or candidate_id != self.active_regeneration_candidate_id
         ):
             return
-        self.active_regeneration_editor.append_text(chunk)
+        self.candidate_regeneration_seen_chunk = True
+        self.candidate_regeneration_char_count += len(chunk)
+        self.candidate_regeneration_body += chunk
+        self._refresh_candidate_action_state()
+        editor = self._current_candidate_editor()
+        if self._current_view_is_regenerating_candidate() and editor is not None:
+            editor.append_text(chunk)
         QApplication.processEvents()
 
     def _handle_candidate_regeneration_finished(
@@ -1259,8 +1322,6 @@ class MailAssistDesktopWindow(QMainWindow):
         label: str,
     ) -> None:
         self._finish_fake_progress()
-        if self.active_regeneration_editor is not None:
-            self.active_regeneration_editor.setEnabled(True)
         self.settings = load_settings()
         self.review_state = load_review_state(self.settings.root_dir)
         self.current_thread_id = thread_id
@@ -1271,18 +1332,12 @@ class MailAssistDesktopWindow(QMainWindow):
 
     def _handle_candidate_regeneration_failed(self, message: str) -> None:
         self._finish_fake_progress()
-        if self.active_regeneration_editor is not None:
-            self.active_regeneration_editor.setEnabled(True)
         self.review_state = load_review_state(self.settings.root_dir)
         self.refresh_queue()
         self.render_current_thread()
         self._set_banner(message, level="error")
 
     def _cleanup_candidate_regeneration(self) -> None:
-        try:
-            QApplication.restoreOverrideCursor()
-        except Exception:
-            pass
         if self.candidate_regeneration_worker is not None:
             self.candidate_regeneration_worker.deleteLater()
         if self.candidate_regeneration_thread is not None:
@@ -1292,6 +1347,9 @@ class MailAssistDesktopWindow(QMainWindow):
         self.active_regeneration_editor = None
         self.active_regeneration_thread_id = ""
         self.active_regeneration_candidate_id = ""
+        self.candidate_regeneration_active = False
+        self.candidate_regeneration_body = ""
+        self._refresh_candidate_action_state()
 
     def close_current_thread(self) -> None:
         self.current_thread_id = ""
