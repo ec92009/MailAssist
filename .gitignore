@@ -11,5 +11,6 @@ build/
 
 data/logs/*.json
 data/drafts/*.json
+data/review-inbox.json
 
 .pytest_cache/

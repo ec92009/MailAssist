@@ -17,6 +17,10 @@
 - Draft generation and execution logging are both captured locally.
 - The project can serve a local settings UI and query available Ollama models.
 - The project can review drafts locally with green-light, red-light, reset, and needs-revision actions.
+- Accepted Gmail drafts can now be submitted upstream from the local UI, with provider IDs saved back into the local draft record.
+- The local GUI now has a review-first mock inbox with subject-only queue navigation, revealable email bodies, editable candidate drafts, and per-candidate green-light actions.
+- The review queue now supports classification-driven filtering and ordering, including a set-aside view for automated or no-response threads.
+- A native `PySide6` desktop review app entrypoint now exists for mac-first testing without opening a browser manually.
 
 ## Known gaps
 
@@ -24,6 +28,7 @@
 - No regenerate-from-revision flow yet; revision notes are stored but do not automatically produce a new draft.
 - Gmail auth has not been validated in this repo with real credentials yet.
 - Gmail draft submission currently creates a simple draft body without richer metadata like recipients from the thread.
+- The local review panel does not yet offer filtering or draft-history comparisons.
 - No Outlook implementation yet.
 
 ## Current conclusion

@@ -4,7 +4,7 @@ import base64
 from email.mime.text import MIMEText
 from pathlib import Path
 
-from mailassist.models import DraftRecord
+from mailassist.models import DraftRecord, ProviderDraftReference
 from mailassist.providers.base import DraftProvider
 
 
@@ -15,7 +15,7 @@ class GmailProvider(DraftProvider):
         self.credentials_file = credentials_file
         self.token_file = token_file
 
-    def create_draft(self, draft: DraftRecord) -> str:
+    def create_draft(self, draft: DraftRecord) -> ProviderDraftReference:
         try:
             from google.auth.transport.requests import Request
             from google.oauth2.credentials import Credentials
@@ -56,7 +56,12 @@ class GmailProvider(DraftProvider):
             .create(userId="me", body={"message": {"raw": encoded}})
             .execute()
         )
-        return created["id"]
+        message = created.get("message", {})
+        return ProviderDraftReference(
+            draft_id=created["id"],
+            thread_id=message.get("threadId"),
+            message_id=message.get("id"),
+        )
 
     def ensure_authenticated(self) -> str:
         placeholder = DraftRecord(

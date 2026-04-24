@@ -7,6 +7,8 @@ from typing import List, Optional
 
 from mailassist.models import DraftRecord, EmailThread, ExecutionLog
 
+MISSING = object()
+
 
 class FileStorage:
     def __init__(self, drafts_dir: Path, logs_dir: Path) -> None:
@@ -36,13 +38,39 @@ class FileStorage:
         return DraftRecord.from_dict(payload)
 
     def update_draft(
-        self, draft_id: str, *, status: Optional[str] = None, revision_notes: Optional[str] = None
+        self,
+        draft_id: str,
+        *,
+        status: Optional[str] | object = MISSING,
+        revision_notes: Optional[str] | object = MISSING,
+        provider_submission_status: Optional[str] | object = MISSING,
+        provider_draft_id: Optional[str] | object = MISSING,
+        provider_thread_id: Optional[str] | object = MISSING,
+        provider_message_id: Optional[str] | object = MISSING,
+        provider_synced_at: Optional[str] | object = MISSING,
+        provider_error: Optional[str] | object = MISSING,
     ) -> Path:
         draft = self.load_draft(draft_id)
         updated = replace(
             draft,
-            status=status if status is not None else draft.status,
-            revision_notes=revision_notes if revision_notes is not None else draft.revision_notes,
+            status=draft.status if status is MISSING else status,
+            revision_notes=draft.revision_notes if revision_notes is MISSING else revision_notes,
+            provider_submission_status=(
+                draft.provider_submission_status
+                if provider_submission_status is MISSING
+                else provider_submission_status
+            ),
+            provider_draft_id=draft.provider_draft_id if provider_draft_id is MISSING else provider_draft_id,
+            provider_thread_id=(
+                draft.provider_thread_id if provider_thread_id is MISSING else provider_thread_id
+            ),
+            provider_message_id=(
+                draft.provider_message_id if provider_message_id is MISSING else provider_message_id
+            ),
+            provider_synced_at=(
+                draft.provider_synced_at if provider_synced_at is MISSING else provider_synced_at
+            ),
+            provider_error=draft.provider_error if provider_error is MISSING else provider_error,
         )
         return self.save_draft(updated)
 

@@ -1,15 +1,15 @@
 # Versioning SOP
 
-- This versioning scheme is for the MailAssist bot and its static viewer.
-- Apply it when either the drafting flow, provider integrations, review UX, or GitHub Pages viewer changes in a user-visible way.
+- This versioning scheme is for the MailAssist bot, local GUI, and any future packaged desktop build.
+- Apply it when the drafting flow, provider integrations, review UX, or any other user-visible MailAssist surface changes.
 - Do not treat local experiment runs, sample thread changes, or one-off generated draft/log files as automatic version bumps by themselves.
 - Use visible app versions in the form `vX.Y`.
 - Use bare `X.Y` in repo metadata such as a top-level `VERSION` file.
-- `X` is the number of days since `2026-04-24`.
+- `X` is the number of days since `2026-02-28`.
 - `Y` increments with each user-visible build on that same day.
-- The CLI and the viewer should read from the same shared version source once version wiring is added.
+- The CLI and GUI should read from the same shared version source.
 - At the end of each bot/viewer-facing cycle, report:
-- localhost viewer URL
-- LAN viewer URL
-- GitHub Pages viewer URL
-- the exact new version to expect on those surfaces
+- localhost GUI URL
+- LAN GUI URL when available
+- GitHub Pages URL only if a live viewer is actually active
+- the exact new version to expect on those active surfaces

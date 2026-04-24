@@ -7,7 +7,7 @@ from typing import Optional
 from uuid import uuid4
 
 from mailassist.llm.ollama import OllamaClient
-from mailassist.models import DraftRecord, EmailThread, ExecutionLog
+from mailassist.models import DraftRecord, EmailThread, ExecutionLog, utc_now_iso
 from mailassist.providers.base import DraftProvider
 from mailassist.storage.filesystem import FileStorage
 
@@ -84,8 +84,16 @@ class DraftOrchestrator:
             )
 
             if provider is not None:
-                provider_draft_id = provider.create_draft(draft)
-                draft = replace(draft, provider_draft_id=provider_draft_id)
+                provider_reference = provider.create_draft(draft)
+                draft = replace(
+                    draft,
+                    provider_submission_status="submitted",
+                    provider_draft_id=provider_reference.draft_id,
+                    provider_thread_id=provider_reference.thread_id,
+                    provider_message_id=provider_reference.message_id,
+                    provider_synced_at=utc_now_iso(),
+                    provider_error=None,
+                )
 
             self.storage.save_draft(draft)
             log = ExecutionLog(

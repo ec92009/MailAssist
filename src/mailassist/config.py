@@ -39,7 +39,7 @@ def load_dotenv(env_file: Path) -> None:
         if not stripped or stripped.startswith("#") or "=" not in stripped:
             continue
         key, value = stripped.split("=", 1)
-        os.environ.setdefault(key.strip(), value.strip())
+        os.environ[key.strip()] = value.strip()
 
 
 def read_env_file(env_file: Path) -> Dict[str, str]:

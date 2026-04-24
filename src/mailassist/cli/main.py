@@ -9,6 +9,7 @@ from mailassist.core.orchestrator import DraftOrchestrator
 from mailassist.gui.server import serve_config_gui
 from mailassist.llm.ollama import OllamaClient
 from mailassist.models import DraftRecord
+from mailassist.providers.factory import get_provider_for_settings
 from mailassist.providers.gmail import GmailProvider
 from mailassist.storage.filesystem import FileStorage
 
@@ -38,6 +39,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     gui_parser.add_argument("--host", default="127.0.0.1", help="Host to bind the GUI server.")
     gui_parser.add_argument("--port", type=int, default=8765, help="Port to bind the GUI server.")
+    subparsers.add_parser(
+        "desktop-gui", help="Run the native PySide6 desktop review app."
+    )
     return parser
 
 
@@ -51,9 +55,7 @@ def command_draft_thread(args: argparse.Namespace) -> int:
     provider = None
     provider_name = args.provider
     if args.submit_provider_draft:
-        if provider_name != "gmail":
-            raise SystemExit(f"Provider submission is not implemented yet for {provider_name}.")
-        provider = GmailProvider(settings.gmail_credentials_file, settings.gmail_token_file)
+        provider = get_provider_for_settings(settings, provider_name)
 
     draft = orchestrator.draft_thread(
         thread,
@@ -95,6 +97,12 @@ def command_serve_config(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_desktop_gui() -> int:
+    from mailassist.gui.desktop import run_desktop_gui
+
+    return run_desktop_gui()
+
+
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
@@ -109,6 +117,8 @@ def main() -> int:
         return command_gmail_auth()
     if args.command == "serve-config":
         return command_serve_config(args)
+    if args.command == "desktop-gui":
+        return command_desktop_gui()
 
     parser.error(f"Unknown command {args.command}")
     return 2

@@ -28,9 +28,10 @@ Project shorthand:
 - Builds a response prompt for a local model running through Ollama
 - Saves generated reply drafts to `data/drafts/`
 - Saves execution logs to `data/logs/`
-- Keeps the human in control of every draft: accept, reject, or revise
-- Optionally submits approved drafts to Gmail
+- Keeps the human in control of every draft: compare options, edit them locally, then green-light or red-light one
+- Optionally submits approved drafts to Gmail from the CLI or the local UI
 - Includes a local GUI for mail providers, Ollama settings, and draft review actions
+- Now includes a native `PySide6` desktop app entrypoint so mac-first testing can move off the browser/server loop
 
 ---
 
@@ -76,10 +77,10 @@ cp .env.example .env
 
 Set the Ollama endpoint and model you want to use. Add Gmail OAuth paths when you are ready to enable Gmail drafts.
 
-You can also configure the app through the local GUI:
+You can also configure the app through the native desktop GUI:
 
 ```bash
-./.venv/bin/mailassist serve-config
+./.venv/bin/mailassist desktop-gui
 ```
 
 ### 3. Create a sample draft locally
@@ -91,10 +92,29 @@ You can also configure the app through the local GUI:
 ### 4. Open the local UI
 
 ```bash
+./.venv/bin/mailassist desktop-gui
+```
+
+The desktop app is the preferred review surface going forward. The browser-served UI remains available as a transitional path:
+
+```bash
 ./.venv/bin/mailassist serve-config --port 8765
 ```
 
-Then open [http://localhost:8765](http://localhost:8765).
+The local GUI now opens into a review-first workspace:
+
+- a queue of email subjects on the left
+- filter and ordering controls for queue triage
+- the selected email thread in the main reading area
+- multiple Ollama-generated draft candidates that can each be edited before a green light
+- Ollama-generated classifications so urgent mail can be surfaced and automated or spammy threads can be set aside
+- a de-emphasized settings tray for Ollama and provider configuration
+
+For a macOS app bundle in the current LeadLight-style launcher pattern:
+
+```bash
+./build_mailassist_app.sh
+```
 
 ---
 
@@ -115,4 +135,4 @@ Once authenticated, you can ask the bot to submit the draft upstream while still
   --submit-provider-draft
 ```
 
-The local UI is now the place where draft approvals happen. GitHub remains useful for source control, but not as the approval surface for live drafts.
+The local UI is now the place where draft approvals happen, and accepted Gmail drafts can be created upstream with one click from that review panel. GitHub remains useful for source control, but not as the approval surface for live drafts.
