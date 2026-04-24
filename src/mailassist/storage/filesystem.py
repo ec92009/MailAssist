@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
-from typing import Iterable, List
+from typing import List, Optional
 
 from mailassist.models import DraftRecord, EmailThread, ExecutionLog
 
@@ -29,6 +30,22 @@ class FileStorage:
         path.write_text(json.dumps(log.to_dict(), indent=2), encoding="utf-8")
         return path
 
+    def load_draft(self, draft_id: str) -> DraftRecord:
+        path = self.drafts_dir / f"{draft_id}.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return DraftRecord.from_dict(payload)
+
+    def update_draft(
+        self, draft_id: str, *, status: Optional[str] = None, revision_notes: Optional[str] = None
+    ) -> Path:
+        draft = self.load_draft(draft_id)
+        updated = replace(
+            draft,
+            status=status if status is not None else draft.status,
+            revision_notes=revision_notes if revision_notes is not None else draft.revision_notes,
+        )
+        return self.save_draft(updated)
+
     def list_json_records(self, directory: Path) -> List[dict]:
         if not directory.exists():
             return []
@@ -42,3 +59,9 @@ class FileStorage:
 
     def list_logs(self) -> List[dict]:
         return self.list_json_records(self.logs_dir)
+
+    def list_draft_records(self) -> List[DraftRecord]:
+        records = []
+        for item in self.list_drafts():
+            records.append(DraftRecord.from_dict(item))
+        return sorted(records, key=lambda item: item.created_at, reverse=True)

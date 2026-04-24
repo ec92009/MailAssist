@@ -28,10 +28,4 @@
 - rejected
 - needs_revision
 - Decide whether revisions create a new sibling draft or overwrite the previous draft record.
-- Decide what the static viewer should show for rejected or superseded drafts.
-
-## Publishing research
-
-- Decide whether GitHub Pages should publish sanitized summaries only or full draft text.
-- Evaluate adding a build-time redaction pass for emails, names, phone numbers, and signatures.
-- Decide whether generated site artifacts should be committed manually or built automatically in CI from sanitized source bundles.
+- Decide whether accepting a draft should eventually trigger provider-draft creation automatically or remain a separate action.

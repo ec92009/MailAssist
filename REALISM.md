@@ -26,4 +26,4 @@
 - Assume local logs and drafts may contain personal or confidential information.
 - Keep secrets under a non-committed path such as `secrets/`.
 - Keep generated local content out of git unless the user explicitly wants to publish a sanitized snapshot.
-- Prefer a future redaction layer before public GitHub Pages publishing if real email content will be displayed.
+- Keep approval decisions and readable draft bodies in the local UI because public static hosting is the wrong place for live operational email review.

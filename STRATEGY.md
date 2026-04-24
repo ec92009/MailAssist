@@ -12,7 +12,7 @@ Build a local-first email drafting assistant that helps the user respond faster 
 4. Save the proposed draft and the execution log locally.
 5. Let the user accept, reject, or request revisions.
 6. On approval, create a provider-native draft in Gmail first and Outlook later.
-7. Publish local artifacts to a static viewer for auditability and remote visibility.
+7. Review and disposition drafts in the local GUI.
 
 ## Architecture direction
 
@@ -34,11 +34,12 @@ Build a local-first email drafting assistant that helps the user respond faster 
 - The user decides whether to accept, reject, or revise.
 - Revision requests should become first-class inputs, not ad hoc prompt edits.
 
-### Static visibility
+### Local operator UI
 
-- The bot should publish snapshots of local drafts and logs into a static site.
-- GitHub Pages is the simplest first public viewer because it keeps hosting cheap and versioned.
-- The viewer is a reporting surface, not a control plane.
+- Provide a local GUI for configuring Gmail, Outlook, and Ollama settings.
+- Make available Ollama models visible before the user chooses one.
+- Treat the local GUI as the operator control surface for configuration and draft approval.
+- Green-light and red-light decisions belong in the local app because they directly affect operational email flow.
 
 ## Near-term implementation posture
 

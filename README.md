@@ -1,6 +1,6 @@
 # MailAssist
 
-Local AI-assisted email drafting bot using Ollama and local models. `MailAssist` ingests email threads, composes proposed replies, saves drafts and execution logs locally, and can optionally submit drafts to Gmail. The generated artifacts can then be published through a static GitHub Pages viewer.
+Local AI-assisted email drafting bot using Ollama and local models. `MailAssist` ingests email threads, composes proposed replies, saves drafts and execution logs locally, can optionally submit drafts to Gmail, and keeps approval decisions inside the local UI.
 
 ## Current docs
 
@@ -11,9 +11,8 @@ Local AI-assisted email drafting bot using Ollama and local models. `MailAssist`
 - [RESEARCH.md](~/Dev/MailAssist/RESEARCH.md): integration and product research backlog
 - [SUMMARY.md](~/Dev/MailAssist/SUMMARY.md): high-level snapshot of where the project stands
 - [ENVIRONMENT_SOP.md](~/Dev/MailAssist/ENVIRONMENT_SOP.md): workspace Python and package-management preferences
-- [VERSIONING_SOP.md](~/Dev/MailAssist/VERSIONING_SOP.md): bot/viewer visible versioning rules
-- [SHOW_ME_SOP.md](~/Dev/MailAssist/SHOW_ME_SOP.md): local/public viewer show-and-report workflow
-- [docs/README.md](~/Dev/MailAssist/docs/README.md): static viewer notes
+- [VERSIONING_SOP.md](~/Dev/MailAssist/VERSIONING_SOP.md): bot/local-UI visible versioning rules
+- [SHOW_ME_SOP.md](~/Dev/MailAssist/SHOW_ME_SOP.md): local UI show-and-report workflow
 
 Use this `README` for setup and operational scripts. For decisions about workflow, safety, rollout, and product direction, prefer the docs above.
 
@@ -31,7 +30,7 @@ Project shorthand:
 - Saves execution logs to `data/logs/`
 - Keeps the human in control of every draft: accept, reject, or revise
 - Optionally submits approved drafts to Gmail
-- Generates a static site snapshot in `site/` for GitHub Pages publishing
+- Includes a local GUI for mail providers, Ollama settings, and draft review actions
 
 ---
 
@@ -48,15 +47,12 @@ MailAssist/
 ├── TODO.md                       # Near-term work list
 ├── SUMMARY.md                    # Executive snapshot
 ├── VERSIONING_SOP.md             # Visible versioning guidance
-├── SHOW_ME_SOP.md                # Viewer show/share workflow
+├── SHOW_ME_SOP.md                # Local UI show/share workflow
 ├── data/
 │   ├── threads/                  # Source email thread JSON files
 │   ├── drafts/                   # Saved generated draft JSON files
 │   └── logs/                     # Saved execution log JSON files
-├── site/                         # Generated static viewer output
-├── docs/                         # Viewer documentation
 ├── src/mailassist/               # Bot package
-└── .github/workflows/pages.yml   # GitHub Pages deployment
 ```
 
 ---
@@ -80,17 +76,25 @@ cp .env.example .env
 
 Set the Ollama endpoint and model you want to use. Add Gmail OAuth paths when you are ready to enable Gmail drafts.
 
+You can also configure the app through the local GUI:
+
+```bash
+./.venv/bin/mailassist serve-config
+```
+
 ### 3. Create a sample draft locally
 
 ```bash
 ./.venv/bin/mailassist draft-thread --thread-file data/threads/sample-thread.json
 ```
 
-### 4. Build the static viewer
+### 4. Open the local UI
 
 ```bash
-./.venv/bin/mailassist build-site
+./.venv/bin/mailassist serve-config --port 8765
 ```
+
+Then open [http://localhost:8765](http://localhost:8765).
 
 ---
 
@@ -111,18 +115,4 @@ Once authenticated, you can ask the bot to submit the draft upstream while still
   --submit-provider-draft
 ```
 
----
-
-## GitHub setup
-
-When you are ready to sync with GitHub:
-
-```bash
-git remote add origin git@github.com:ec92009/MailAssist.git
-git branch -M main
-git add .
-git commit -m "Initial MailAssist scaffold"
-git push -u origin main
-```
-
-The Pages workflow publishes the generated `site/` directory once the repository exists and GitHub Pages is enabled for Actions.
+The local UI is now the place where draft approvals happen. GitHub remains useful for source control, but not as the approval surface for live drafts.

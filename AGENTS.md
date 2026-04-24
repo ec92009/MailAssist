@@ -15,7 +15,7 @@ Working preferences for `~/Dev/MailAssist`.
 ## "Show Me" SOP
 
 - Full procedure lives in [SHOW_ME_SOP.md](~/Dev/MailAssist/SHOW_ME_SOP.md).
-- Apply `SHOW_ME_SOP.md` whenever the user asks to see the local viewer or the GitHub Pages version.
+- Apply `SHOW_ME_SOP.md` whenever the user asks to see the local UI.
 
 ## `rscp`
 

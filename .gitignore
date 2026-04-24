@@ -11,7 +11,5 @@ build/
 
 data/logs/*.json
 data/drafts/*.json
-site/
-!site/.gitkeep
 
 .pytest_cache/

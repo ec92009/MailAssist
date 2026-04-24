@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Dict
+from typing import List
 from urllib import error, request
 
 
@@ -34,3 +34,20 @@ class OllamaClient:
 
         data = json.loads(body)
         return data.get("response", "").strip()
+
+    def list_models(self) -> List[str]:
+        req = request.Request(
+            f"{self.base_url}/api/tags",
+            headers={"Content-Type": "application/json"},
+            method="GET",
+        )
+        try:
+            with request.urlopen(req, timeout=30) as response:
+                body = response.read().decode("utf-8")
+        except error.URLError as exc:
+            raise RuntimeError(
+                f"Unable to reach Ollama at {self.base_url}. Is the server running?"
+            ) from exc
+
+        data = json.loads(body)
+        return [item["name"] for item in data.get("models", []) if item.get("name")]

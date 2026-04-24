@@ -6,10 +6,11 @@ from pathlib import Path
 
 from mailassist.config import load_settings
 from mailassist.core.orchestrator import DraftOrchestrator
+from mailassist.gui.server import serve_config_gui
 from mailassist.llm.ollama import OllamaClient
+from mailassist.models import DraftRecord
 from mailassist.providers.gmail import GmailProvider
 from mailassist.storage.filesystem import FileStorage
-from mailassist.viewer.generator import build_site
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -29,10 +30,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional instruction for revising the tone or content.",
     )
 
-    subparsers.add_parser("build-site", help="Generate the static viewer in site/.")
     subparsers.add_parser("list-drafts", help="Print saved drafts as JSON.")
     subparsers.add_parser("list-logs", help="Print saved logs as JSON.")
     subparsers.add_parser("gmail-auth", help="Run Gmail OAuth setup and save the token.")
+    gui_parser = subparsers.add_parser(
+        "serve-config", help="Run the local configuration GUI for providers and Ollama."
+    )
+    gui_parser.add_argument("--host", default="127.0.0.1", help="Host to bind the GUI server.")
+    gui_parser.add_argument("--port", type=int, default=8765, help="Port to bind the GUI server.")
     return parser
 
 
@@ -60,14 +65,6 @@ def command_draft_thread(args: argparse.Namespace) -> int:
     return 0
 
 
-def command_build_site() -> int:
-    settings = load_settings()
-    storage = FileStorage(settings.drafts_dir, settings.logs_dir)
-    output = build_site(settings.site_dir, storage.list_drafts(), storage.list_logs())
-    print(output)
-    return 0
-
-
 def command_list_records(kind: str) -> int:
     settings = load_settings()
     storage = FileStorage(settings.drafts_dir, settings.logs_dir)
@@ -80,7 +77,7 @@ def command_gmail_auth() -> int:
     settings = load_settings()
     provider = GmailProvider(settings.gmail_credentials_file, settings.gmail_token_file)
     provider.create_draft(
-        __import__("mailassist.models", fromlist=["DraftRecord"]).DraftRecord(
+        DraftRecord(
             draft_id="gmail-auth-check",
             thread_id="gmail-auth-check",
             provider="gmail",
@@ -93,20 +90,25 @@ def command_gmail_auth() -> int:
     return 0
 
 
+def command_serve_config(args: argparse.Namespace) -> int:
+    serve_config_gui(host=args.host, port=args.port)
+    return 0
+
+
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
 
     if args.command == "draft-thread":
         return command_draft_thread(args)
-    if args.command == "build-site":
-        return command_build_site()
     if args.command == "list-drafts":
         return command_list_records("drafts")
     if args.command == "list-logs":
         return command_list_records("logs")
     if args.command == "gmail-auth":
         return command_gmail_auth()
+    if args.command == "serve-config":
+        return command_serve_config(args)
 
     parser.error(f"Unknown command {args.command}")
     return 2

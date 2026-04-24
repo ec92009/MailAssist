@@ -58,6 +58,21 @@ class DraftRecord:
     provider_draft_id: Optional[str] = None
     revision_notes: Optional[str] = None
 
+    @classmethod
+    def from_dict(cls, payload: Dict[str, Any]) -> "DraftRecord":
+        return cls(
+            draft_id=payload["draft_id"],
+            thread_id=payload["thread_id"],
+            provider=payload["provider"],
+            subject=payload["subject"],
+            body=payload["body"],
+            model=payload["model"],
+            status=payload.get("status", "pending_review"),
+            created_at=payload.get("created_at", utc_now_iso()),
+            provider_draft_id=payload.get("provider_draft_id"),
+            revision_notes=payload.get("revision_notes"),
+        )
+
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
