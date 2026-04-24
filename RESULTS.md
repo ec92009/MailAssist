@@ -16,6 +16,9 @@ The bot should continuously watch Gmail, Outlook, or mock input; use the local L
 - The current desktop app still contains the earlier review-table prototype.
 - The bot has JSONL stdout/log event reporting.
 - The bot has a first queue experiment with `process-mock-inbox` and `queue-status`.
+- The bot now has a simplified `watch-once` mock pass that classifies mock threads, skips non-response mail, and creates one mock provider draft per actionable thread.
+- The desktop app now opens as a compact bot control panel rather than a review table.
+- Settings now include preferred tone and poll interval beside the user signature.
 - Runtime queue folders exist with `.gitkeep` placeholders.
 - Generated runtime artifacts are ignored by git.
 
@@ -44,10 +47,10 @@ These were useful experiments, but the lighter product should not build on them 
 
 ## Latest Verified State
 
-- Latest visible version before this planning reset: `v55.33`.
-- Latest test run before this rewrite: 32 passing tests.
-- Current code still includes the review prototype and the queue scaffold.
-- The next code phase should intentionally reshape the app, not incrementally patch the old review workflow.
+- Latest visible version after the first simplified implementation pass: `v55.34`.
+- Latest test run after the first simplified implementation pass: 34 passing tests.
+- Current code still contains legacy review helpers, but the visible GUI surface is now the compact bot control panel.
+- The next code phase should remove or quarantine legacy review code once the control-panel path is stable.
 
 ## Conclusion
 

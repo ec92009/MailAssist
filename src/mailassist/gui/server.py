@@ -534,7 +534,16 @@ def fallback_classification_for_thread(thread: EmailThread) -> str:
     haystack = " ".join(
         [thread.subject, *thread.participants, *(message.text for message in thread.messages)]
     ).lower()
-    if any(token in haystack for token in ("unsubscribe", "no-reply", "automated email", "digest")):
+    if any(
+        token in haystack
+        for token in (
+            "unsubscribe",
+            "no-reply",
+            "automated email",
+            "automated notification",
+            "digest",
+        )
+    ):
         return "automated"
     if any(token in haystack for token in ("lottery", "crypto", "wire money", "act now")):
         return "spam"

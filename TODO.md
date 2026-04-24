@@ -2,16 +2,15 @@
 
 ## Product Simplification
 
-- Redesign the desktop GUI as a compact control panel.
-- Remove the review-inbox-first layout from the primary screen.
-- Keep settings, bot status, recent activity, and logs.
-- Add one preferred tone setting near the user signature.
-- Stop generating two candidate drafts by default.
+- Remove or quarantine legacy review-table helper code once the compact control panel is stable.
+- Keep refining the control panel around bot status, recent activity, settings, and logs.
+- Keep one preferred tone setting near the user signature.
+- Keep one generated draft per actionable email.
 
 ## Bot
 
 - Define the bot as a continuous watcher/drafter.
-- Add a mock watch loop for development.
+- Turn the current mock `watch-once` pass into a continuous mock watch loop for development.
 - Add polling interval configuration.
 - Track already-seen mock/provider threads.
 - Classify new threads.

@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from uuid import uuid4
 
+from mailassist.background_bot import run_mock_watch_pass
 from mailassist.bot_queue import (
     build_bot_processed_item,
     ensure_queue_dirs,
@@ -21,6 +22,7 @@ from mailassist.gui.server import (
 )
 from mailassist.llm.ollama import OllamaClient
 from mailassist.models import utc_now_iso
+from mailassist.providers.factory import get_provider_for_settings
 
 
 class BotEventReporter:
@@ -58,6 +60,7 @@ def build_review_bot_parser(subparsers: argparse._SubParsersAction[argparse.Argu
             "ollama-check",
             "process-mock-inbox",
             "queue-status",
+            "watch-once",
         ),
         help="Bot action to run.",
     )
@@ -65,6 +68,7 @@ def build_review_bot_parser(subparsers: argparse._SubParsersAction[argparse.Argu
     parser.add_argument("--prompt", help="Prompt for Ollama check actions.")
     parser.add_argument("--base-url", help="Ollama base URL for bot actions.")
     parser.add_argument("--selected-model", help="Ollama model for bot actions.")
+    parser.add_argument("--provider", default="mock", help="Provider to watch for watch-once.")
     parser.add_argument(
         "--force",
         action="store_true",
@@ -87,6 +91,7 @@ def command_review_bot(args: argparse.Namespace) -> int:
             "base_url": base_url,
             "selected_model": selected_model,
             "force": bool(getattr(args, "force", False)),
+            "provider": getattr(args, "provider", "mock"),
         },
     )
     reporter.emit("log_file", path=str(reporter.log_path))
@@ -212,6 +217,45 @@ def command_review_bot(args: argparse.Namespace) -> int:
             }
             reporter.emit("queue_status", counts=counts)
             reporter.emit("completed", message="Queue status ready.", counts=counts)
+            return 0
+
+        if args.action == "watch-once":
+            provider_name = getattr(args, "provider", "mock") or "mock"
+            if provider_name != "mock":
+                raise ValueError("watch-once currently supports --provider mock only.")
+            provider = get_provider_for_settings(settings, provider_name)
+            reporter.emit(
+                "info",
+                message=f"Running one {provider_name} watch pass.",
+                provider=provider_name,
+            )
+            events = run_mock_watch_pass(
+                settings=settings,
+                provider=provider,
+                base_url=base_url,
+                selected_model=selected_model,
+                force=bool(getattr(args, "force", False)),
+            )
+            draft_count = 0
+            skipped_count = 0
+            already_handled_count = 0
+            for event in events:
+                event_type = str(event.pop("type"))
+                if event_type == "draft_created":
+                    draft_count += 1
+                elif event_type == "skipped_email":
+                    skipped_count += 1
+                elif event_type == "already_handled":
+                    already_handled_count += 1
+                reporter.emit(event_type, **event)
+            reporter.emit(
+                "completed",
+                message="Watch pass completed.",
+                provider=provider_name,
+                draft_count=draft_count,
+                skipped_count=skipped_count,
+                already_handled_count=already_handled_count,
+            )
             return 0
 
         if args.action == "ollama-check":

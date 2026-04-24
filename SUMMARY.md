@@ -31,22 +31,24 @@ The lighter model is:
 - The repo has a first bot queue scaffold in `src/mailassist/bot_queue.py`.
 - The bot can run `queue-status`.
 - The bot can run `process-mock-inbox`.
+- The bot can now run `watch-once --provider mock`, which skips automated/no-response mock mail and creates one mock provider draft per actionable thread.
+- The visible desktop app has been reshaped into a compact bot control panel.
+- Settings now include preferred tone and polling interval near the user signature.
 - Runtime lifecycle folders exist, but they are not the intended long-term center unless they prove necessary.
 - Docs from the heavier direction are archived under `archived/2026-04-24-pre-background-bot/`.
 
 ## Desired Next Code Direction
 
-- Redesign the GUI into a dense bot control panel.
-- Add preferred tone selection next to signature settings.
-- Generate one draft per actionable email.
+- Continue simplifying the GUI around bot health, settings, recent activity, and logs.
 - Move draft review/editing out of MailAssist and into Gmail/Outlook.
-- Make the bot loop provider/mock watching, classification, drafting, and provider draft creation.
+- Turn the one-pass mock watcher into a continuous loop with pause/resume.
+- Bring Gmail into the same watch/classify/draft contract.
 - Keep logs and recent activity visible.
 
 ## Current Version And Tests
 
-- Latest version before implementation of the simplified redesign: `v55.33`.
-- Latest verified suite before this docs reset: 32 passing tests.
+- Latest version after the first simplified redesign pass: `v55.34`.
+- Latest verified suite after the first simplified redesign pass: 34 passing tests.
 
 Project workflow shorthand:
 

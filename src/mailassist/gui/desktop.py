@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 )
 
 from mailassist.config import load_settings, read_env_file, write_env_file
+from mailassist.background_bot import TONE_OPTIONS, tone_label
 from mailassist.gui.server import (
     FILTER_LABELS,
     SET_ASIDE_CLASSIFICATIONS,
@@ -301,6 +302,7 @@ class MailAssistDesktopWindow(QMainWindow):
         self.fake_progress_value = 0
         self.table_sort_column = RECEIVED_COLUMN
         self.table_sort_order = Qt.SortOrder.DescendingOrder
+        self.last_activity_summary = "Idle"
 
         self.setWindowTitle(f"MailAssist v{load_visible_version(self.settings.root_dir)}")
         self.resize(1440, 980)
@@ -308,9 +310,7 @@ class MailAssistDesktopWindow(QMainWindow):
         self._build_ui()
         self.refresh_models()
         self.refresh_bot_logs()
-        self.refresh_queue()
-        if self._review_state_needs_sync():
-            self.run_bot_action("sync-review-state")
+        self.refresh_dashboard()
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -372,195 +372,52 @@ class MailAssistDesktopWindow(QMainWindow):
         status_layout.addWidget(self.banner)
         shell.addWidget(self.status_overlay)
 
-        controls = QHBoxLayout()
-        inbox_label = QLabel("Inbox")
-        inbox_label.setStyleSheet("font-size: 22px; font-weight: 700; color: #1d2430;")
-        controls.addWidget(inbox_label)
-        archive_checked_button = QPushButton("Archive Checked")
-        archive_checked_button.clicked.connect(self.archive_checked_threads)
-        controls.addWidget(archive_checked_button)
-        controls.addStretch(1)
+        control_group = QGroupBox("Bot Control")
+        control_layout = QVBoxLayout(control_group)
+        control_layout.setContentsMargins(14, 14, 14, 14)
+        control_layout.setSpacing(10)
 
-        self.classification_filter = QComboBox()
-        for value, label in FILTER_LABELS.items():
-            self.classification_filter.addItem(label, value)
-        self.classification_filter.currentIndexChanged.connect(self.refresh_queue)
-
-        self.status_filter = QComboBox()
-        for value, label in STATUS_FILTER_LABELS.items():
-            self.status_filter.addItem(label, value)
-        self.status_filter.currentIndexChanged.connect(self.refresh_queue)
-
-        self.show_archived = QCheckBox("Show archived")
-        self.show_archived.stateChanged.connect(self.refresh_queue)
-
+        status_grid = QFormLayout()
+        self.bot_status_label = QLabel("Idle")
+        self.provider_status_label = QLabel(self.settings.default_provider)
+        self.ollama_status_label = QLabel(self.settings.ollama_model)
+        self.tone_status_label = QLabel(tone_label(self.settings.user_tone))
+        self.signature_status_label = QLabel("Configured" if self.settings.user_signature.strip() else "Missing")
+        self.last_activity_label = QLabel(self.last_activity_summary)
         for label_text, widget in (
-            ("Filter", self.classification_filter),
-            ("Status", self.status_filter),
+            ("Bot", self.bot_status_label),
+            ("Provider", self.provider_status_label),
+            ("Ollama", self.ollama_status_label),
+            ("Tone", self.tone_status_label),
+            ("Signature", self.signature_status_label),
+            ("Last activity", self.last_activity_label),
         ):
             label = QLabel(label_text)
             label.setStyleSheet("color: #5e6978; font-size: 12px;")
-            controls.addWidget(label)
-            controls.addWidget(widget)
-        controls.addWidget(self.show_archived)
-        shell.addLayout(controls)
+            widget.setStyleSheet("color: #1d2430; font-size: 14px;")
+            status_grid.addRow(label, widget)
+        control_layout.addLayout(status_grid)
 
-        self.thread_table = QTableWidget(0, 5)
-        self.thread_table.setHorizontalHeaderLabels(
-            ["", "Subject", "Classification", "Received", "Sender"]
-        )
-        self.thread_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.thread_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.thread_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.thread_table.setWordWrap(False)
-        self.thread_table.setShowGrid(True)
-        self.thread_table.setAlternatingRowColors(True)
-        self.thread_table.verticalHeader().setVisible(False)
-        self.thread_table.setSortingEnabled(True)
-        self.thread_table.itemSelectionChanged.connect(self._handle_thread_selection)
-        self.thread_table.itemChanged.connect(self._handle_thread_item_changed)
-        self.thread_table.horizontalHeader().sortIndicatorChanged.connect(self._handle_table_sort_changed)
-        header = self.thread_table.horizontalHeader()
-        header.setStretchLastSection(False)
-        header.setSectionsClickable(True)
-        header.setSortIndicatorShown(True)
-        header.setSectionResizeMode(CHECK_COLUMN, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(SUBJECT_COLUMN, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(CLASSIFICATION_COLUMN, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(RECEIVED_COLUMN, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(SENDER_COLUMN, QHeaderView.ResizeMode.Stretch)
-        self.thread_table.setStyleSheet(
-            "QTableWidget { border: 1px solid #dccbbb; border-radius: 14px; background: #fffaf4; "
-            "alternate-background-color: #ecdcca; gridline-color: #dccbbb; }"
-            "QTableWidget::item { padding: 5px 10px; }"
-            "QTableWidget::item:selected { background: #dbe7f2; color: #1d2430; }"
-            "QTableWidget::indicator { width: 18px; height: 18px; }"
-            "QHeaderView::section { background: #efe4d6; color: #5e6978; padding: 5px 10px; "
-            "border: 0; border-bottom: 1px solid #dccbbb; font-weight: 700; }"
-        )
-        self.queue_detail_splitter = QSplitter(Qt.Vertical)
-        self.queue_detail_splitter.setChildrenCollapsible(True)
-        self.queue_detail_splitter.addWidget(self.thread_table)
-        self.thread_table.setMinimumHeight(150)
+        bot_actions = QHBoxLayout()
+        run_mock_pass_button = QPushButton("Run Mock Pass")
+        run_mock_pass_button.clicked.connect(self.run_mock_watch_once)
+        queue_status_button = QPushButton("Queue Status")
+        queue_status_button.clicked.connect(self.run_queue_status)
+        bot_actions.addWidget(run_mock_pass_button)
+        bot_actions.addWidget(queue_status_button)
+        bot_actions.addStretch(1)
+        control_layout.addLayout(bot_actions)
+        shell.addWidget(control_group)
 
-        self.detail_container = QWidget()
-        self.detail_container.setMinimumHeight(140)
-        detail_container_layout = QVBoxLayout(self.detail_container)
-        detail_container_layout.setContentsMargins(0, 0, 0, 0)
-        detail_container_layout.setSpacing(0)
-
-        self.detail_placeholder = QLabel("Select an email to review.")
-        self.detail_placeholder.setAlignment(Qt.AlignCenter)
-        self.detail_placeholder.setStyleSheet(
-            "border: 1px dashed #dccbbb; border-radius: 16px; padding: 28px; color: #7b6e63; font-size: 15px;"
-        )
-        self.detail_placeholder.setMinimumHeight(100)
-        detail_container_layout.addWidget(self.detail_placeholder)
-
-        self.detail_panel = QWidget()
-        self.detail_panel.setMinimumHeight(120)
-        detail_layout = QVBoxLayout(self.detail_panel)
-        detail_layout.setContentsMargins(0, 0, 0, 0)
-        detail_layout.setSpacing(12)
-
-        header = QHBoxLayout()
-        header_text = QVBoxLayout()
-        self.thread_title = QLabel("")
-        self.thread_title.setStyleSheet("font-size: 28px; font-weight: 700; color: #1d2430;")
-        header_text.addWidget(self.thread_title)
-        header.addLayout(header_text, 1)
-        detail_layout.addLayout(header)
-
-        review_splitter = QSplitter(Qt.Horizontal)
-        review_splitter.setChildrenCollapsible(False)
-
-        original_group = QGroupBox("Original Message")
-        original_layout = QVBoxLayout(original_group)
-        self.thread_body = QPlainTextEdit()
-        self.thread_body.setReadOnly(True)
-        self.thread_body.setMinimumHeight(120)
-        original_layout.addWidget(self.thread_body)
-        review_splitter.addWidget(original_group)
-
-        self.candidates_group = QGroupBox("Candidate Replies")
-        candidates_layout = QVBoxLayout(self.candidates_group)
-        self.candidate_tabs = QTabWidget()
-        self.candidate_tabs.setMinimumHeight(140)
-        self.candidate_tabs.currentChanged.connect(lambda _index: self._refresh_candidate_action_state())
-        candidates_layout.addWidget(self.candidate_tabs)
-
-        self.candidate_actions_panel = QWidget()
-        candidate_actions_layout = QVBoxLayout(self.candidate_actions_panel)
-        candidate_actions_layout.setContentsMargins(0, 0, 0, 0)
-        candidate_actions_layout.setSpacing(10)
-
-        self.reset_candidate_button = QPushButton("Reset")
-        self.reset_candidate_button.clicked.connect(self.reset_selected_candidate)
-        self.regenerate_candidate_button = QPushButton("Regenerate with Ollama")
-        self.regenerate_candidate_button.clicked.connect(self.regenerate_selected_candidate)
-        self.use_candidate_button = QPushButton("Use this")
-        self.use_candidate_button.clicked.connect(self.use_selected_candidate)
-        self.use_candidate_button.setStyleSheet(
-            "background: #215f4a; color: white; border: 1px solid #215f4a; padding: 8px 16px;"
-        )
-        self.ignore_thread_button = QPushButton("Ignore")
-        self.ignore_thread_button.clicked.connect(self.ignore_current_thread)
-        self.ignore_thread_button.setStyleSheet(
-            "background: #8c4029; color: white; border: 1px solid #8c4029; padding: 8px 16px;"
-        )
-        self.close_thread_button = QPushButton("Close")
-        self.close_thread_button.clicked.connect(self.close_current_thread)
-        self.close_thread_button.setStyleSheet(
-            "background: #2f6da3; color: white; border: 1px solid #2f6da3; padding: 8px 16px;"
-        )
-
-        for button in (
-            self.reset_candidate_button,
-            self.regenerate_candidate_button,
-            self.use_candidate_button,
-            self.ignore_thread_button,
-            self.close_thread_button,
-        ):
-            button.setMinimumWidth(190)
-            button.setMinimumHeight(44)
-        candidate_actions_layout.addWidget(self.reset_candidate_button)
-        candidate_actions_layout.addWidget(self.regenerate_candidate_button)
-
-        self.candidate_action_status = QLabel("")
-        self.candidate_action_status.setWordWrap(True)
-        self.candidate_action_status.setMinimumHeight(74)
-        self.candidate_action_status.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self.candidate_action_status.setStyleSheet(
-            "background: #edf5fb; border: 1px solid #b8d0e4; color: #4e6276; "
-            "font-size: 12px; padding: 8px 10px;"
-        )
-        self.candidate_action_status.hide()
-        candidate_actions_layout.addWidget(self.candidate_action_status)
-        candidate_actions_layout.addWidget(self.use_candidate_button)
-        candidate_actions_layout.addWidget(self.ignore_thread_button)
-        candidate_actions_layout.addWidget(self.close_thread_button)
-        candidate_actions_layout.addStretch(1)
-
-        candidate_area = QWidget()
-        candidate_area_layout = QHBoxLayout(candidate_area)
-        candidate_area_layout.setContentsMargins(0, 0, 0, 0)
-        candidate_area_layout.setSpacing(14)
-        candidate_area_layout.addWidget(self.candidates_group, 1)
-        candidate_area_layout.addWidget(self.candidate_actions_panel, 0)
-
-        review_splitter.addWidget(candidate_area)
-        review_splitter.setStretchFactor(0, 1)
-        review_splitter.setStretchFactor(1, 1)
-        review_splitter.setSizes([520, 520])
-        detail_layout.addWidget(review_splitter, 1)
-
-        detail_container_layout.addWidget(self.detail_panel)
-        self.queue_detail_splitter.addWidget(self.detail_container)
-        self.queue_detail_splitter.setStretchFactor(0, 1)
-        self.queue_detail_splitter.setStretchFactor(1, 1)
-        self.queue_detail_splitter.setSizes([INBOX_INITIAL_HEIGHT, 620])
-        shell.addWidget(self.queue_detail_splitter, 1)
-        self.detail_panel.hide()
+        activity_group = QGroupBox("Recent Activity")
+        activity_layout = QVBoxLayout(activity_group)
+        activity_layout.setContentsMargins(10, 10, 10, 10)
+        self.recent_activity = QPlainTextEdit()
+        self.recent_activity.setReadOnly(True)
+        self.recent_activity.setMinimumHeight(360)
+        self.recent_activity.setPlainText("No bot activity yet.")
+        activity_layout.addWidget(self.recent_activity)
+        shell.addWidget(activity_group, 1)
 
         self._build_settings_dialog()
         self._build_bot_logs_dialog()
@@ -577,7 +434,7 @@ class MailAssistDesktopWindow(QMainWindow):
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(12)
 
-        intro = QLabel("Adjust Ollama and provider settings without leaving the review queue.")
+        intro = QLabel("Configure the background draft bot.")
         intro.setWordWrap(True)
         intro.setStyleSheet("color: #5e6978; font-size: 14px;")
         layout.addWidget(intro)
@@ -749,8 +606,20 @@ class MailAssistDesktopWindow(QMainWindow):
 
         self.signature_input = QPlainTextEdit(self.settings.user_signature)
         self.signature_input.setPlaceholderText("Best regards,\nYour Name")
-        self.signature_input.setMinimumHeight(180)
+        self.signature_input.setMinimumHeight(120)
         layout.addWidget(self.signature_input)
+
+        form = QFormLayout()
+        self.tone_combo = QComboBox()
+        for value, (label, _guidance) in TONE_OPTIONS.items():
+            self.tone_combo.addItem(label, value)
+        tone_index = self.tone_combo.findData(self.settings.user_tone)
+        if tone_index >= 0:
+            self.tone_combo.setCurrentIndex(tone_index)
+        self.poll_seconds_input = QLineEdit(str(self.settings.bot_poll_seconds))
+        form.addRow("Default tone", self.tone_combo)
+        form.addRow("Poll seconds", self.poll_seconds_input)
+        layout.addLayout(form)
 
         save_button = QPushButton("Save signature")
         save_button.clicked.connect(self.save_settings)
@@ -891,6 +760,26 @@ class MailAssistDesktopWindow(QMainWindow):
     def _show_detail_panel(self) -> None:
         self.detail_placeholder.hide()
         self.detail_panel.show()
+
+    def refresh_dashboard(self) -> None:
+        if hasattr(self, "provider_status_label"):
+            self.provider_status_label.setText(self.settings.default_provider)
+            self.ollama_status_label.setText(self.settings.ollama_model)
+            self.tone_status_label.setText(tone_label(self.settings.user_tone))
+            self.signature_status_label.setText(
+                "Configured" if self.settings.user_signature.strip() else "Missing"
+            )
+            self.last_activity_label.setText(self.last_activity_summary)
+            self.bot_status_label.setText("Running" if self.bot_process is not None else "Idle")
+
+    def _append_recent_activity(self, message: str) -> None:
+        if not hasattr(self, "recent_activity"):
+            return
+        if self.recent_activity.toPlainText().strip() == "No bot activity yet.":
+            self.recent_activity.clear()
+        self.recent_activity.appendPlainText(message)
+        self.last_activity_summary = message
+        self.refresh_dashboard()
 
     def refresh_bot_logs(self) -> None:
         self.bot_log_selector.blockSignals(True)
@@ -1408,11 +1297,14 @@ class MailAssistDesktopWindow(QMainWindow):
         env_file = self.settings.root_dir / ".env"
         current = read_env_file(env_file)
         selected_model = str(self.ollama_model_picker.currentData() or self.settings.ollama_model).strip()
+        poll_seconds = self.poll_seconds_input.text().strip() or "60"
         current.update(
             {
                 "MAILASSIST_OLLAMA_URL": self.ollama_url_input.text().strip() or "http://localhost:11434",
                 "MAILASSIST_OLLAMA_MODEL": selected_model,
                 "MAILASSIST_USER_SIGNATURE": self.signature_input.toPlainText().strip().replace("\n", "\\n"),
+                "MAILASSIST_USER_TONE": str(self.tone_combo.currentData() or "direct_concise"),
+                "MAILASSIST_BOT_POLL_SECONDS": poll_seconds,
                 "MAILASSIST_DEFAULT_PROVIDER": str(self.default_provider_combo.currentData()),
                 "MAILASSIST_GMAIL_ENABLED": "true" if self.gmail_enabled.isChecked() else "false",
                 "MAILASSIST_OUTLOOK_ENABLED": "true" if self.outlook_enabled.isChecked() else "false",
@@ -1429,6 +1321,7 @@ class MailAssistDesktopWindow(QMainWindow):
         write_env_file(env_file, current)
         self.settings = load_settings()
         self.refresh_models()
+        self.refresh_dashboard()
         self._set_banner("Settings saved.", level="info")
 
     def test_ollama(self) -> None:
@@ -1438,7 +1331,20 @@ class MailAssistDesktopWindow(QMainWindow):
             return
         self.run_bot_action("ollama-check", prompt=prompt)
 
-    def run_bot_action(self, action: str, *, thread_id: str = "", prompt: str = "") -> None:
+    def run_mock_watch_once(self) -> None:
+        self.run_bot_action("watch-once", provider="mock")
+
+    def run_queue_status(self) -> None:
+        self.run_bot_action("queue-status")
+
+    def run_bot_action(
+        self,
+        action: str,
+        *,
+        thread_id: str = "",
+        prompt: str = "",
+        provider: str = "",
+    ) -> None:
         if self.bot_process is not None:
             self._set_banner("A bot action is already running.", level="error")
             return
@@ -1467,12 +1373,15 @@ class MailAssistDesktopWindow(QMainWindow):
             args.extend(["--thread-id", thread_id])
         if prompt:
             args.extend(["--prompt", prompt])
+        if provider:
+            args.extend(["--provider", provider])
 
         self._append_bot_console(f"$ {sys.executable} {' '.join(args)}")
         self._set_banner(
             f"Starting bot action: {action}. Ollama work can take 1-2 minutes.",
             level="info",
         )
+        self.bot_status_label.setText("Running")
         self.bot_process.start(sys.executable, args)
 
     def _handle_bot_stdout(self) -> None:
@@ -1499,15 +1408,33 @@ class MailAssistDesktopWindow(QMainWindow):
             self.refresh_bot_logs()
         elif event_type == "ollama_result":
             self.ollama_result.setPlainText(str(event.get("result", "")))
+        elif event_type == "draft_created":
+            self._append_recent_activity(
+                f"Draft created: {event.get('subject', 'Unknown subject')} ({event.get('classification', 'unclassified')})"
+            )
+        elif event_type == "skipped_email":
+            self._append_recent_activity(
+                f"Skipped: {event.get('subject', 'Unknown subject')} ({event.get('classification', 'unclassified')})"
+            )
+        elif event_type == "already_handled":
+            self._append_recent_activity(
+                f"Already handled: {event.get('subject', 'Unknown subject')}"
+            )
+        elif event_type == "queue_status":
+            counts = event.get("counts", {})
+            self._append_recent_activity(f"Queue status: {counts}")
         elif event_type == "completed":
             self._set_banner(str(event.get("message", "Bot action completed.")), level="info")
             self.settings = load_settings()
-            self.review_state = load_review_state(self.settings.root_dir)
             self.refresh_models()
             self.refresh_bot_logs()
-            self.refresh_queue()
-            if self.current_thread_id:
-                self.render_current_thread()
+            self.refresh_dashboard()
+            if "draft_count" in event:
+                self._append_recent_activity(
+                    f"Watch pass: {event.get('draft_count', 0)} drafts, "
+                    f"{event.get('skipped_count', 0)} skipped, "
+                    f"{event.get('already_handled_count', 0)} already handled."
+                )
         elif event_type == "error":
             self._set_banner(str(event.get("message", "Bot action failed.")), level="error")
         elif event_type == "info":
@@ -1520,6 +1447,7 @@ class MailAssistDesktopWindow(QMainWindow):
         if exit_code != 0:
             self._set_banner(f"Bot action exited with code {exit_code}.", level="error")
         self.bot_process = None
+        self.refresh_dashboard()
         self.refresh_bot_logs()
 
     def load_selected_bot_log(self, *_args: object) -> None:

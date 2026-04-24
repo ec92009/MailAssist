@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from mailassist.config import load_settings, parse_bool, read_env_file, write_env_file
+from mailassist.config import load_settings, parse_bool, parse_int, read_env_file, write_env_file
 from mailassist.gui.server import (
     OPTION_A_SEPARATOR,
     OPTION_B_SEPARATOR,
@@ -95,6 +95,12 @@ def test_parse_bool_handles_common_values() -> None:
     assert parse_bool(None, default=True) is True
 
 
+def test_parse_int_falls_back_for_invalid_values() -> None:
+    assert parse_int("90", 60) == 90
+    assert parse_int("not-a-number", 60) == 60
+    assert parse_int(None, 60) == 60
+
+
 def test_read_and_write_env_file_round_trip(tmp_path: Path) -> None:
     env_file = tmp_path / ".env"
     write_env_file(env_file, {"B": "2", "A": "1"})
@@ -109,12 +115,16 @@ def test_load_settings_decodes_multiline_signature(monkeypatch, tmp_path: Path) 
         tmp_path / ".env",
         {
             "MAILASSIST_USER_SIGNATURE": "Best regards,\\nEthan",
+            "MAILASSIST_USER_TONE": "formal_polished",
+            "MAILASSIST_BOT_POLL_SECONDS": "120",
         },
     )
 
     settings = load_settings()
 
     assert settings.user_signature == "Best regards,\nEthan"
+    assert settings.user_tone == "formal_polished"
+    assert settings.bot_poll_seconds == 120
 
 
 def test_extract_classification_and_body_parses_prefix() -> None:
@@ -154,6 +164,12 @@ def test_fallback_classification_marks_action_needed_deadline_as_urgent() -> Non
     thread = next(item for item in default_review_state()["threads"] if item["thread_id"] == "thread-008")
 
     assert fallback_classification_for_thread(payload_to_thread(thread["thread"])) == "urgent"
+
+
+def test_fallback_classification_marks_automated_notifications_as_automated() -> None:
+    thread = next(item for item in default_review_state()["threads"] if item["thread_id"] == "thread-006")
+
+    assert fallback_classification_for_thread(payload_to_thread(thread["thread"])) == "automated"
 
 
 def test_build_review_candidates_prompt_includes_full_contract() -> None:

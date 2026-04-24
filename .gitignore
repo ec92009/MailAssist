@@ -14,6 +14,8 @@ data/logs/*.txt
 data/bot-logs/*.json
 data/bot-logs/*.jsonl
 data/drafts/*.json
+data/mock-provider-drafts/*.json
+data/bot-state.json
 data/review-inbox.json
 data/bot_processed/*.json
 data/gui_acquired/*.json

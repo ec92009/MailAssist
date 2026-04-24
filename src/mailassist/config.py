@@ -13,9 +13,12 @@ class Settings:
     drafts_dir: Path
     logs_dir: Path
     bot_logs_dir: Path
+    mock_provider_drafts_dir: Path
     ollama_url: str
     ollama_model: str
     user_signature: str
+    user_tone: str
+    bot_poll_seconds: int
     default_provider: str
     gmail_enabled: bool
     outlook_enabled: bool
@@ -30,6 +33,15 @@ def parse_bool(value: str | None, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def parse_int(value: str | None, default: int) -> int:
+    if value is None:
+        return default
+    try:
+        return int(value.strip())
+    except ValueError:
+        return default
 
 
 def load_dotenv(env_file: Path) -> None:
@@ -72,6 +84,7 @@ def load_settings() -> Settings:
     drafts_dir = data_dir / "drafts"
     logs_dir = data_dir / "logs"
     bot_logs_dir = data_dir / "bot-logs"
+    mock_provider_drafts_dir = data_dir / "mock-provider-drafts"
 
     return Settings(
         root_dir=root_dir,
@@ -79,9 +92,12 @@ def load_settings() -> Settings:
         drafts_dir=drafts_dir,
         logs_dir=logs_dir,
         bot_logs_dir=bot_logs_dir,
+        mock_provider_drafts_dir=mock_provider_drafts_dir,
         ollama_url=os.getenv("MAILASSIST_OLLAMA_URL", "http://localhost:11434"),
         ollama_model=os.getenv("MAILASSIST_OLLAMA_MODEL", "llama3.1:8b"),
         user_signature=os.getenv("MAILASSIST_USER_SIGNATURE", "").replace("\\n", "\n"),
+        user_tone=os.getenv("MAILASSIST_USER_TONE", "direct_concise"),
+        bot_poll_seconds=parse_int(os.getenv("MAILASSIST_BOT_POLL_SECONDS"), 60),
         default_provider=os.getenv("MAILASSIST_DEFAULT_PROVIDER", "gmail"),
         gmail_enabled=parse_bool(os.getenv("MAILASSIST_GMAIL_ENABLED"), default=True),
         outlook_enabled=parse_bool(os.getenv("MAILASSIST_OUTLOOK_ENABLED"), default=False),
