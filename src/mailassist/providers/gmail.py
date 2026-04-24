@@ -47,6 +47,12 @@ class GmailProvider(DraftProvider):
 
         message = MIMEText(draft.body)
         message["subject"] = draft.subject
+        if draft.to:
+            message["to"] = ", ".join(draft.to)
+        if draft.cc:
+            message["cc"] = ", ".join(draft.cc)
+        if draft.bcc:
+            message["bcc"] = ", ".join(draft.bcc)
         encoded = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
 
         service = build("gmail", "v1", credentials=creds)

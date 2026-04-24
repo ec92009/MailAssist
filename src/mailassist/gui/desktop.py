@@ -401,9 +401,12 @@ class MailAssistDesktopWindow(QMainWindow):
         bot_actions = QHBoxLayout()
         run_mock_pass_button = QPushButton("Run Mock Pass")
         run_mock_pass_button.clicked.connect(self.run_mock_watch_once)
+        gmail_draft_test_button = QPushButton("Create Gmail Test Draft")
+        gmail_draft_test_button.clicked.connect(self.run_gmail_draft_test)
         queue_status_button = QPushButton("Queue Status")
         queue_status_button.clicked.connect(self.run_queue_status)
         bot_actions.addWidget(run_mock_pass_button)
+        bot_actions.addWidget(gmail_draft_test_button)
         bot_actions.addWidget(queue_status_button)
         bot_actions.addStretch(1)
         control_layout.addLayout(bot_actions)
@@ -1334,6 +1337,9 @@ class MailAssistDesktopWindow(QMainWindow):
     def run_mock_watch_once(self) -> None:
         self.run_bot_action("watch-once", provider="mock")
 
+    def run_gmail_draft_test(self) -> None:
+        self.run_bot_action("watch-once", provider="gmail", thread_id="thread-008", force=True)
+
     def run_queue_status(self) -> None:
         self.run_bot_action("queue-status")
 
@@ -1344,6 +1350,7 @@ class MailAssistDesktopWindow(QMainWindow):
         thread_id: str = "",
         prompt: str = "",
         provider: str = "",
+        force: bool = False,
     ) -> None:
         if self.bot_process is not None:
             self._set_banner("A bot action is already running.", level="error")
@@ -1375,6 +1382,8 @@ class MailAssistDesktopWindow(QMainWindow):
             args.extend(["--prompt", prompt])
         if provider:
             args.extend(["--provider", provider])
+        if force:
+            args.append("--force")
 
         self._append_bot_console(f"$ {sys.executable} {' '.join(args)}")
         self._set_banner(

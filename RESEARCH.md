@@ -4,6 +4,7 @@
 
 Open questions:
 
+- Gmail: first validate one controlled draft write from mock input before adding real inbox polling.
 - Gmail: polling interval vs push notifications.
 - Gmail: which query best finds actionable new mail without reprocessing old threads.
 - Gmail: how to preserve thread reply metadata when creating a draft.
@@ -11,6 +12,12 @@ Open questions:
 - Outlook: Microsoft Graph delta queries vs periodic polling.
 - Outlook: required permissions for read + draft creation.
 - Mock provider: how closely it should mimic provider IDs, thread updates, and duplicates.
+
+Current Gmail research checkpoint:
+
+- The first safe Gmail test keeps mock emails as input and creates one Gmail draft for `thread-008`.
+- The test uses the Gmail compose scope and should create a draft only, not send mail.
+- The project now has two setup PDFs for the Google Cloud/OAuth steps because the Google Console is dense enough to need explicit navigation cues.
 
 ## Deduplication
 

@@ -71,13 +71,16 @@ def run_mock_watch_pass(
     provider: DraftProvider,
     base_url: str,
     selected_model: str,
+    thread_id: str = "",
     force: bool = False,
 ) -> list[dict[str, Any]]:
     state = load_bot_state(settings.root_dir)
-    provider_state = state.setdefault("providers", {}).setdefault("mock", {})
+    provider_state = state.setdefault("providers", {}).setdefault(provider.name, {})
     events = []
 
     for thread in build_mock_threads():
+        if thread_id and thread.thread_id != thread_id:
+            continue
         latest_message_id = _latest_message_id(thread)
         previous = provider_state.get(thread.thread_id, {})
         if not force and previous.get("latest_message_id") == latest_message_id:
@@ -149,6 +152,7 @@ def run_mock_watch_pass(
             subject=f"Re: {thread.subject}",
             body=str(candidate["body"]).strip(),
             model=generation_model or candidate.get("generated_by", "fallback"),
+            to=reply_recipients_for_thread(thread),
         )
         provider_reference = provider.create_draft(draft)
 
@@ -183,6 +187,14 @@ def _latest_message_id(thread: EmailThread) -> str:
     if not thread.messages:
         return ""
     return thread.messages[-1].message_id
+
+
+def reply_recipients_for_thread(thread: EmailThread, user_address: str = "you@example.com") -> list[str]:
+    if thread.messages:
+        latest_sender = thread.messages[-1].sender
+        if latest_sender and latest_sender != user_address:
+            return [latest_sender]
+    return [item for item in thread.participants if item != user_address]
 
 
 def _state_record(

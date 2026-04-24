@@ -221,12 +221,10 @@ def command_review_bot(args: argparse.Namespace) -> int:
 
         if args.action == "watch-once":
             provider_name = getattr(args, "provider", "mock") or "mock"
-            if provider_name != "mock":
-                raise ValueError("watch-once currently supports --provider mock only.")
             provider = get_provider_for_settings(settings, provider_name)
             reporter.emit(
                 "info",
-                message=f"Running one {provider_name} watch pass.",
+                message=f"Running one mock-input watch pass for {provider_name} drafts.",
                 provider=provider_name,
             )
             events = run_mock_watch_pass(
@@ -234,6 +232,7 @@ def command_review_bot(args: argparse.Namespace) -> int:
                 provider=provider,
                 base_url=base_url,
                 selected_model=selected_model,
+                thread_id=args.thread_id or "",
                 force=bool(getattr(args, "force", False)),
             )
             draft_count = 0

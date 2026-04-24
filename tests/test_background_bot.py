@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from mailassist.background_bot import load_bot_state, run_mock_watch_pass
+from mailassist.background_bot import load_bot_state, reply_recipients_for_thread, run_mock_watch_pass
 from mailassist.config import load_settings, write_env_file
 from mailassist.providers.mock import MockProvider
 
@@ -62,3 +62,11 @@ def test_mock_watch_pass_creates_one_provider_draft_and_skips_second_run(
     assert (tmp_path / "data" / "mock-provider-drafts" / "thread-008.json").exists()
     state = load_bot_state(tmp_path)
     assert state["providers"]["mock"]["thread-008"]["action"] == "draft_created"
+
+
+def test_reply_recipients_for_thread_targets_latest_sender() -> None:
+    from mailassist.gui.server import build_mock_threads
+
+    thread = next(item for item in build_mock_threads() if item.thread_id == "thread-008")
+
+    assert reply_recipients_for_thread(thread) == ["ops@harborhq.com"]

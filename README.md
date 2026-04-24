@@ -22,6 +22,8 @@ The user reviews, edits, sends, or deletes drafts in the normal mail client. Mai
 - [RESULTS.md](~/Dev/MailAssist/RESULTS.md): current implementation status
 - [TODO.md](~/Dev/MailAssist/TODO.md): active implementation list
 - [SUMMARY.md](~/Dev/MailAssist/SUMMARY.md): latest project snapshot
+- [docs/setting_up_gmail_connection_for_MailAssist.pdf](~/Dev/MailAssist/docs/setting_up_gmail_connection_for_MailAssist.pdf): first-time Gmail setup guide
+- [docs/gmail_oauth_advanced.pdf](~/Dev/MailAssist/docs/gmail_oauth_advanced.pdf): detailed Gmail OAuth setup reference
 - [ENVIRONMENT_SOP.md](~/Dev/MailAssist/ENVIRONMENT_SOP.md): local Python workflow
 - [VERSIONING_SOP.md](~/Dev/MailAssist/VERSIONING_SOP.md): visible version rules
 - [SHOW_ME_SOP.md](~/Dev/MailAssist/SHOW_ME_SOP.md): local UI launch workflow
@@ -47,6 +49,14 @@ For Gmail support:
 uv pip install --python .venv/bin/python -e ".[gmail]"
 ```
 
+Gmail setup requires a local OAuth Desktop client JSON at:
+
+```text
+secrets/gmail-client-secret.json
+```
+
+Use the first-time setup PDF in `docs/` before running the Gmail test.
+
 ## Run The Desktop App
 
 ```bash
@@ -68,6 +78,18 @@ Process mock input into a draft-processing artifact:
 ```bash
 ./.venv/bin/mailassist review-bot --action process-mock-inbox --thread-id thread-008
 ```
+
+Create one Gmail draft from one mock email after Gmail setup is complete:
+
+```bash
+./.venv/bin/mailassist review-bot \
+  --action watch-once \
+  --provider gmail \
+  --thread-id thread-008 \
+  --force
+```
+
+This command is intentionally narrow: it keeps mock input emails, creates one provider draft in Gmail, and should not send mail. Re-running with `--force` can create duplicate drafts.
 
 Older local draft command, still useful for testing:
 
