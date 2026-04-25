@@ -9,6 +9,7 @@ __pycache__/
 dist/
 build/
 *.egg-info/
+MailAssist.spec
 
 data/logs/*.json
 data/logs/*.txt

@@ -4,11 +4,10 @@
 
 Open questions:
 
-- Gmail: first validate one controlled draft write from mock input before adding real inbox polling.
 - Gmail: polling interval vs push notifications.
 - Gmail: which query best finds actionable new mail without reprocessing old threads.
-- Gmail: how to preserve thread reply metadata when creating a draft.
 - Gmail: how to detect whether the user already replied manually.
+- Gmail: how aggressively to import the Gmail send-as signature into MailAssist settings.
 - Outlook: Microsoft Graph delta queries vs periodic polling.
 - Outlook: required permissions for read + draft creation.
 - Mock provider: how closely it should mimic provider IDs, thread updates, and duplicates.
@@ -16,8 +15,11 @@ Open questions:
 Current Gmail research checkpoint:
 
 - Safe Gmail tests keep sanitized mock emails as input and create Gmail drafts only, never sends.
+- Controlled mock-to-Gmail draft creation has been validated.
+- Gmail read-only inbox preview has been validated.
+- Gmail send-as settings can be queried to obtain a signature candidate for the local signature setting.
 - Batch-size 5 and 10 have been tested against Gmail draft creation with `gemma4:31b`.
-- The next real-mail step uses Gmail readonly access for metadata/snippet preview and classification before any real-email drafting.
+- The next real-mail step is a conservative Gmail watcher that deduplicates, classifies, and drafts only when the thread clearly needs a reply.
 - The project now has two setup PDFs for the Google Cloud/OAuth steps because the Google Console is dense enough to need explicit navigation cues.
 
 ## Deduplication
@@ -77,7 +79,7 @@ Latest findings:
 
 The GUI should be a control panel, not a review inbox.
 
-Useful views to test:
+Useful views to keep:
 
 - connection status
 - bot running/paused
@@ -85,10 +87,24 @@ Useful views to test:
 - recent drafts created
 - skipped counts by classification
 - error list
-- logs window
-- settings modal
+- human-readable logs window with raw JSONL fallback
+- first-run setup wizard
+- compact settings reopen path after setup
 
 Avoid large empty descriptions; the app is an operational tool.
+
+## Packaging
+
+Mac/Gmail is the first packaging target.
+
+Research decisions:
+
+- Build a native `.app` with PyInstaller.
+- Wrap the app and setup PDFs in a `.dmg`.
+- Do not commit the `.dmg` to git; `dist/` stays ignored.
+- Upload the `.dmg` as a GitHub Releases asset. GitHub release assets support files under 2 GiB, which is enough for the current roughly 253 MB DMG.
+- The README should link to `releases/latest/download/MailAssist-vX.Y-mac-gmail.dmg` and explain the Releases-page fallback.
+- The preview app is ad-hoc signed but not notarized yet, so README instructions include the current macOS Privacy & Security override path for unsigned apps.
 
 ## Success Criteria
 

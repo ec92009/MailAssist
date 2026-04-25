@@ -54,3 +54,25 @@ def test_compose_reply_stream_disables_thinking(monkeypatch) -> None:
     payload = json.loads(calls[0][0].data.decode("utf-8"))
     assert payload["stream"] is True
     assert payload["think"] is False
+
+
+def test_list_model_details_preserves_ollama_metadata(monkeypatch) -> None:
+    body = {
+        "models": [
+            {
+                "name": "gemma4:31b",
+                "size": 19_500_000_000,
+                "modified_at": "2026-04-20T10:00:00Z",
+            }
+        ]
+    }
+
+    def fake_urlopen(req, timeout):
+        return FakeResponse(json.dumps(body).encode("utf-8"))
+
+    monkeypatch.setattr("mailassist.llm.ollama.request.urlopen", fake_urlopen)
+
+    result = OllamaClient("http://localhost:11434", "gemma4:31b").list_model_details()
+
+    assert result == body["models"]
+    assert OllamaClient("http://localhost:11434", "gemma4:31b").list_models() == ["gemma4:31b"]

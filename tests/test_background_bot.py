@@ -2,8 +2,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from mailassist.background_bot import (
+    append_signature,
     body_with_review_context,
     build_batch_candidate_prompt,
+    build_prompt_preview,
     ensure_substantive_reply_body,
     has_promise_shaped_language,
     has_substantive_reply_text,
@@ -138,6 +140,29 @@ def test_promise_shaped_candidate_gets_conservative_body() -> None:
     assert body == "Thanks for the note. I am reviewing this.\n\nBest,\nElie\ne@example.com"
 
 
+def test_substantive_candidate_gets_configured_signature_appended() -> None:
+    from mailassist.gui.server import build_mock_threads
+
+    thread = next(item for item in build_mock_threads() if item.thread_id == "thread-010")
+    signature = "Best,\nElie\ne@example.com"
+
+    body = ensure_substantive_reply_body(
+        thread,
+        "I am reviewing the open house options.",
+        signature=signature,
+    )
+
+    assert body == "I am reviewing the open house options.\n\nBest,\nElie\ne@example.com"
+
+
+def test_append_signature_replaces_model_supplied_copy() -> None:
+    signature = "Best,\nElie"
+
+    body = append_signature("I am reviewing this.\n\nBest,\nElie", signature=signature)
+
+    assert body == "I am reviewing this.\n\nBest,\nElie"
+
+
 def test_has_promise_shaped_language_detects_common_commitments() -> None:
     assert has_promise_shaped_language("I will let you know if anything changes.")
     assert has_promise_shaped_language("I'll follow up with details.")
@@ -223,7 +248,24 @@ def test_build_batch_candidate_prompt_forbids_domain_company_names() -> None:
     assert "Avoid promise-shaped phrases" in prompt
     assert "do not repeat that timing as a future promise" in prompt
     assert "Never return only a greeting, sign-off, or signature" in prompt
+    assert "MailAssist will append the user's saved signature" in prompt
+    assert "Best,\nTest" not in prompt
     assert "samira@brightforge.ai" in prompt
+
+
+def test_build_prompt_preview_uses_current_tone_and_signature() -> None:
+    prompt = build_prompt_preview(
+        tone_key="formal_polished",
+        signature="Regards,\nElie",
+        sample_thread_id="thread-010",
+    )
+
+    assert "You are MailAssist, a local-first email drafting assistant." in prompt
+    assert "INPUT THREAD thread-010" in prompt
+    assert "Open house this weekend?" in prompt
+    assert "Tone target: Formal and polished." in prompt
+    assert "MailAssist will append the user's saved signature" in prompt
+    assert "Regards,\nElie" not in prompt
 
 
 def test_mock_watch_pass_batches_actionable_threads(monkeypatch, tmp_path: Path) -> None:

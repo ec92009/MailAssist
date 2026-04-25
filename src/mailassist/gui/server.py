@@ -90,16 +90,24 @@ def signature_prompt_block(signature: str) -> str:
     cleaned = signature.strip()
     if not cleaned:
         return (
-            "- Do not add placeholders like `[Your Name]`, `[Name]`, or any made-up signature block.\n"
-            "- If you include a sign-off, keep it natural and do not invent a sender name."
+            "- Do not include a sign-off, sender name, email address, placeholder, or signature block.\n"
+            "- MailAssist will leave the response unsigned unless the user configures a signature."
         )
     return (
-        "- End the email body with exactly the signature block shown below.\n"
-        "- Preserve the same text, punctuation, and line breaks.\n"
-        "- Do not substitute names or invent any alternate sign-off.\n\n"
-        "Signature block to use exactly:\n"
-        f"{cleaned}"
+        "- Do not include a sign-off, sender name, email address, placeholder, or signature block.\n"
+        "- MailAssist will append the user's saved signature after your response.\n"
+        "- The saved signature is configured, but it is intentionally not shown to you."
     )
+
+
+def append_signature_to_body(body: str, *, signature: str = "") -> str:
+    cleaned = body.strip()
+    cleaned_signature = signature.strip()
+    if cleaned_signature and cleaned.lower().endswith(cleaned_signature.lower()):
+        cleaned = cleaned[: -len(cleaned_signature)].rstrip()
+    if cleaned and cleaned_signature:
+        return f"{cleaned}\n\n{cleaned_signature}"
+    return cleaned
 
 
 def build_mock_threads() -> list[EmailThread]:
@@ -480,7 +488,7 @@ Drafting rules:
 - For choice requests like `Would you like us to hold an open house Saturday or Sunday?`, do not say the user will check with a team, decide availability, or confirm a future preference. Say the user is reviewing the options and leave the final choice for the user to add.
 - Avoid promise-shaped phrases like `I will follow up`, `I will let you know`, `I'll let you know`, `I will call`, `I will check`, `I will contact`, `I will update`, or `I will confirm` unless the user already made that exact commitment in the thread. Prefer current-state language like `I am reviewing this` or `I am looking over the details`.
 - If the thread uses relative timing like `today`, `tomorrow`, `this morning`, or `in the morning`, do not repeat that timing as a future promise.
-- If classification is `urgent` or `reply_needed`, the body must contain at least one substantive sentence before the signature. Never return only a greeting, sign-off, or signature.
+- If classification is `urgent` or `reply_needed`, the body must contain at least one substantive sentence. Never return only a greeting, sign-off, or signature.
 - If information is missing, say so plainly instead of guessing.
 - Keep the draft under 140 words.
 - Produce both candidate replies in one response so each option uses the full thread context.
@@ -549,7 +557,7 @@ Drafting rules:
 - For choice requests like `Would you like us to hold an open house Saturday or Sunday?`, do not say the user will check with a team, decide availability, or confirm a future preference. Say the user is reviewing the options and leave the final choice for the user to add.
 - Avoid promise-shaped phrases like `I will follow up`, `I will let you know`, `I'll let you know`, `I will call`, `I will check`, `I will contact`, `I will update`, or `I will confirm` unless the user already made that exact commitment in the thread. Prefer current-state language like `I am reviewing this` or `I am looking over the details`.
 - If the thread uses relative timing like `today`, `tomorrow`, `this morning`, or `in the morning`, do not repeat that timing as a future promise.
-- If classification is `urgent` or `reply_needed`, the body must contain at least one substantive sentence before the signature. Never return only a greeting, sign-off, or signature.
+- If classification is `urgent` or `reply_needed`, the body must contain at least one substantive sentence. Never return only a greeting, sign-off, or signature.
 - If information is missing, say so plainly instead of guessing.
 - Keep the draft under 140 words.
 - Signature rules:
@@ -604,7 +612,7 @@ Drafting rules:
 - For choice requests like `Would you like us to hold an open house Saturday or Sunday?`, do not say the user will check with a team, decide availability, or confirm a future preference. Say the user is reviewing the options and leave the final choice for the user to add.
 - Avoid promise-shaped phrases like `I will follow up`, `I will let you know`, `I'll let you know`, `I will call`, `I will check`, `I will contact`, `I will update`, or `I will confirm` unless the user already made that exact commitment in the thread. Prefer current-state language like `I am reviewing this` or `I am looking over the details`.
 - If the thread uses relative timing like `today`, `tomorrow`, `this morning`, or `in the morning`, do not repeat that timing as a future promise.
-- The body must contain at least one substantive sentence before the signature. Never return only a greeting, sign-off, or signature.
+- The body must contain at least one substantive sentence. Never return only a greeting, sign-off, or signature.
 - If information is missing, say so plainly instead of guessing.
 - Keep the draft under 140 words.
 - Signature rules:
@@ -796,23 +804,19 @@ def build_fallback_candidates(
     classification = fallback_classification_for_thread(thread)
     latest = thread.messages[-1].text
     preview = textwrap.shorten(latest, width=120, placeholder="...")
-    signature_block = f"\n{signature.strip()}\n" if signature.strip() else ""
     fallback = []
     for candidate_id, label, tone, _ in CANDIDATE_BLUEPRINTS:
         if classification in SET_ASIDE_CLASSIFICATIONS:
             body = ""
         elif tone == "direct and executive":
-            body = (
-                f"Hi,\n\nI can take this forward. Based on your note, the main point to address is: "
-                f"{preview}\n\nI will send a clearer update today with the next steps called out."
-                f"{signature_block}"
+            body = append_signature_to_body(
+                f"Thanks for the note. I am reviewing this. The main point I am looking at is: {preview}",
+                signature=signature,
             )
         else:
-            body = (
-                f"Hi,\n\nThanks for the follow-up. I am pulling this together now and will send "
-                f"an updated reply shortly. The key item I am addressing is: {preview}\n\n"
-                f"I will make sure the response is clear on what changed and what happens next."
-                f"{signature_block}"
+            body = append_signature_to_body(
+                f"Thanks for the follow-up. I am looking over the details now. The key item I am reviewing is: {preview}",
+                signature=signature,
             )
         fallback.append(
             {
@@ -875,6 +879,7 @@ def generate_candidates_for_thread(
             raise RuntimeError("The local model did not return the expected number of draft options.")
 
         for (candidate_id, label, tone, _), body in zip(CANDIDATE_BLUEPRINTS, bodies):
+            body = append_signature_to_body(body, signature=signature)
             candidates.append(
                 {
                     "candidate_id": candidate_id,
@@ -935,6 +940,7 @@ def generate_candidate_for_tone(
         response = llm.compose_reply(prompt)
         classification, body = extract_classification_and_body(response)
         classification = merge_classification(classification, heuristic_classification)
+        body = append_signature_to_body(body, signature=signature)
         candidate = {
             "candidate_id": candidate_id,
             "label": candidate_display_label(tone),
@@ -998,7 +1004,7 @@ def stream_candidate_for_tone(
             raw_response += chunk
             if on_body_update is not None:
                 on_body_update(chunk)
-        body = raw_response.strip()
+        body = append_signature_to_body(raw_response.strip(), signature=signature)
         candidate = {
             "candidate_id": candidate_id,
             "label": candidate_display_label(tone),
@@ -1341,7 +1347,11 @@ def update_thread_status(thread_state: dict[str, Any], action: str) -> dict[str,
 def load_visible_version(root_dir: Path) -> str:
     version_file = root_dir / "VERSION"
     if not version_file.exists():
-        return "0.0"
+        try:
+            from mailassist import __version__
+        except ImportError:
+            return "0.0"
+        return __version__.removesuffix(".0")
     return version_file.read_text(encoding="utf-8").strip()
 
 

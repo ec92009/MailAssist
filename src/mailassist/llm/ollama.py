@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Iterator, List
+from typing import Any, Iterator, List
 from urllib import error, request
 
 
@@ -94,6 +94,9 @@ class OllamaClient:
             ) from exc
 
     def list_models(self) -> List[str]:
+        return [item["name"] for item in self.list_model_details() if item.get("name")]
+
+    def list_model_details(self) -> list[dict[str, Any]]:
         req = request.Request(
             f"{self.base_url}/api/tags",
             headers={"Content-Type": "application/json"},
@@ -108,4 +111,8 @@ class OllamaClient:
             ) from exc
 
         data = json.loads(body)
-        return [item["name"] for item in data.get("models", []) if item.get("name")]
+        return [
+            item
+            for item in data.get("models", [])
+            if isinstance(item, dict) and item.get("name")
+        ]

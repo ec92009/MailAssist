@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from mailassist.config import load_settings, parse_bool, parse_int, read_env_file, write_env_file
+from mailassist.config import default_root_dir, load_settings, parse_bool, parse_int, read_env_file, write_env_file
 from mailassist.gui.server import (
     OPTION_A_SEPARATOR,
     OPTION_B_SEPARATOR,
@@ -127,6 +127,24 @@ def test_load_settings_decodes_multiline_signature(monkeypatch, tmp_path: Path) 
     assert settings.bot_poll_seconds == 120
 
 
+def test_default_root_dir_uses_explicit_env(monkeypatch, tmp_path: Path) -> None:
+    configured = tmp_path / "MailAssist Data"
+    monkeypatch.setenv("MAILASSIST_ROOT_DIR", str(configured))
+
+    assert default_root_dir() == configured
+
+
+def test_load_settings_uses_application_root_from_env(monkeypatch, tmp_path: Path) -> None:
+    configured = tmp_path / "MailAssist Data"
+    monkeypatch.setenv("MAILASSIST_ROOT_DIR", str(configured))
+
+    settings = load_settings()
+
+    assert settings.root_dir == configured
+    assert settings.data_dir == configured / "data"
+    assert settings.gmail_credentials_file == configured / "secrets" / "gmail-client-secret.json"
+
+
 def test_extract_classification_and_body_parses_prefix() -> None:
     classification, body = extract_classification_and_body(
         "Classification: urgent\n\nPlease send the notes today."
@@ -189,8 +207,8 @@ def test_build_review_candidates_prompt_includes_full_contract() -> None:
     assert "Draft 2 candidate replies" in prompt
     assert "Thread context:" in prompt
     assert "Project kickoff follow-up" in prompt
-    assert "Signature block to use exactly:" in prompt
-    assert "Best regards,\nEthan" in prompt
+    assert "MailAssist will append the user's saved signature" in prompt
+    assert "Best regards,\nEthan" not in prompt
     assert "Do not turn email domains into company names" in prompt
     assert "do not invent the user's decision" in prompt
     assert "Do not invent teams" in prompt
@@ -214,7 +232,8 @@ def test_build_single_review_candidate_prompt_requests_one_alternative() -> None
     assert "Tone target: direct and executive." in prompt
     assert "Existing draft in this same tone:" in prompt
     assert "Write a meaningfully different alternative." in prompt
-    assert "Do not substitute names or invent any alternate sign-off." in prompt
+    assert "MailAssist will append the user's saved signature" in prompt
+    assert "Best regards,\nEthan" not in prompt
     assert "Do not turn email domains into company names" in prompt
     assert "do not invent the user's decision" in prompt
     assert "Do not invent teams" in prompt
@@ -399,7 +418,7 @@ def test_stream_candidate_for_tone_emits_incremental_chunks(monkeypatch, tmp_pat
     )
 
     assert updates == ["Hello", " there"]
-    assert candidate["body"] == "Hello there"
+    assert candidate["body"] == "Hello there\n\nBest regards,\nEthan"
     assert generation_model == "mistral:latest"
     assert generation_error is None
     assert classification == "urgent"

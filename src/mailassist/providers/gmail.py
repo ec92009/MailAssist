@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import base64
+import html
 import json
+import re
+from dataclasses import dataclass
 from email.mime.text import MIMEText
 from pathlib import Path
 from typing import Any
@@ -12,7 +15,14 @@ from mailassist.providers.base import DraftProvider
 GMAIL_SCOPES = [
     "https://www.googleapis.com/auth/gmail.compose",
     "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.settings.basic",
 ]
+
+
+@dataclass(frozen=True)
+class GmailSignature:
+    signature: str
+    send_as_email: str
 
 
 class GmailProvider(DraftProvider):
@@ -34,18 +44,24 @@ class GmailProvider(DraftProvider):
             ) from exc
         return Request, Credentials, InstalledAppFlow, build
 
-    def _credentials(self) -> Any:
+    def _credentials(self, *, allow_interactive_auth: bool = True) -> Any:
         Request, Credentials, InstalledAppFlow, _ = self._load_google_modules()
         creds = None
         if self.token_file.exists():
             if not _token_file_covers_scopes(self.token_file, GMAIL_SCOPES):
-                creds = None
+                if not allow_interactive_auth:
+                    raise RuntimeError(
+                        "Gmail needs one-time permission to read the saved signature. "
+                        "Use Import from Gmail to authorize that access."
+                    )
             else:
                 creds = Credentials.from_authorized_user_file(str(self.token_file), GMAIL_SCOPES)
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
                 creds.refresh(Request())
             else:
+                if not allow_interactive_auth:
+                    raise RuntimeError("Connect Gmail before importing the saved signature.")
                 if not self.credentials_file.exists():
                     raise RuntimeError(
                         f"Gmail credentials file not found at {self.credentials_file}"
@@ -126,6 +142,24 @@ class GmailProvider(DraftProvider):
             )
         return messages
 
+    def get_default_signature(self, *, allow_interactive_auth: bool = False) -> GmailSignature | None:
+        _, _, _, build = self._load_google_modules()
+        creds = self._credentials(allow_interactive_auth=allow_interactive_auth)
+        service = build("gmail", "v1", credentials=creds)
+        response = service.users().settings().sendAs().list(userId="me").execute()
+        send_as_entries = response.get("sendAs", [])
+        if not send_as_entries:
+            return None
+
+        selected = _select_send_as_entry(send_as_entries)
+        signature = _gmail_signature_to_text(str(selected.get("signature", "")))
+        if not signature:
+            return None
+        return GmailSignature(
+            signature=signature,
+            send_as_email=str(selected.get("sendAsEmail", "")).strip(),
+        )
+
     def ensure_authenticated(self) -> str:
         placeholder = DraftRecord(
             draft_id="auth-check",
@@ -160,3 +194,30 @@ def _token_file_covers_scopes(token_file: Path, scopes: list[str]) -> bool:
         return False
     granted = set(payload.get("granted_scopes") or payload.get("scopes") or [])
     return set(scopes).issubset(granted)
+
+
+def _select_send_as_entry(send_as_entries: list[dict[str, Any]]) -> dict[str, Any]:
+    with_signature = [entry for entry in send_as_entries if str(entry.get("signature", "")).strip()]
+    candidates = with_signature or send_as_entries
+    for key in ("isDefault", "isPrimary"):
+        for entry in candidates:
+            if entry.get(key):
+                return entry
+    return candidates[0]
+
+
+def _gmail_signature_to_text(signature_html: str) -> str:
+    text = signature_html.strip()
+    if not text:
+        return ""
+    text = re.sub(r"(?i)<\s*br\s*/?\s*>", "\n", text)
+    text = re.sub(r"(?i)</\s*(p|div|li|tr|h[1-6])\s*>", "\n", text)
+    text = re.sub(r"(?i)<\s*li[^>]*>", "- ", text)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = html.unescape(text).replace("\xa0", " ")
+    lines = [re.sub(r"[ \t]+", " ", line).strip() for line in text.splitlines()]
+    collapsed: list[str] = []
+    for line in lines:
+        if line or (collapsed and collapsed[-1]):
+            collapsed.append(line)
+    return "\n".join(collapsed).strip()

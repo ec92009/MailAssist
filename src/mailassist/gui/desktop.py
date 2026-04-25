@@ -3,13 +3,13 @@ from __future__ import annotations
 import json
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QObject, QProcess, QThread, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QColor, QFont, QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -26,7 +26,10 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QPlainTextEdit,
+    QFrame,
+    QSizePolicy,
     QSplitter,
+    QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -35,14 +38,13 @@ from PySide6.QtWidgets import (
 )
 
 from mailassist.config import load_settings, read_env_file, write_env_file
-from mailassist.background_bot import TONE_OPTIONS, tone_label
+from mailassist.background_bot import TONE_OPTIONS, build_prompt_preview, tone_label
 from mailassist.gui.server import (
     FILTER_LABELS,
     SET_ASIDE_CLASSIFICATIONS,
     STATUS_FILTER_LABELS,
     filtered_and_sorted_threads,
     find_thread_state,
-    list_available_models,
     load_review_state,
     load_visible_version,
     normalize_classification,
@@ -54,6 +56,8 @@ from mailassist.gui.server import (
     update_candidate,
 )
 from mailassist.models import utc_now_iso
+from mailassist.llm.ollama import OllamaClient
+from mailassist.providers.gmail import GmailProvider
 
 CLASSIFICATION_TINTS = {
     "urgent": ("#ffe3db", "#973522"),
@@ -74,6 +78,20 @@ SENDER_COLUMN = 4
 INBOX_ROW_HEIGHT = 30
 INBOX_INITIAL_VISIBLE_ROWS = 6
 INBOX_INITIAL_HEIGHT = 34 + (INBOX_ROW_HEIGHT * INBOX_INITIAL_VISIBLE_ROWS)
+
+
+def _configure_form(form: QFormLayout) -> QFormLayout:
+    form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+    form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+    form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+    return form
+
+
+def _wide_line_edit(value: str = "", *, min_width: int = 560) -> QLineEdit:
+    field = QLineEdit(value)
+    field.setMinimumWidth(min_width)
+    field.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+    return field
 
 
 def _humanize(token: str) -> str:
@@ -111,6 +129,129 @@ def _received_label(thread_state: dict[str, Any]) -> str:
 
 def _sender_label(thread_state: dict[str, Any]) -> str:
     return str(_latest_message(thread_state).get("from", "")).strip() or "Unknown sender"
+
+
+def _format_model_size(size_value: object) -> str:
+    try:
+        size = float(size_value)
+    except (TypeError, ValueError):
+        return ""
+    if size <= 0:
+        return ""
+    units = ("B", "KB", "MB", "GB", "TB")
+    unit_index = 0
+    while size >= 1000 and unit_index < len(units) - 1:
+        size /= 1000
+        unit_index += 1
+    if unit_index == 0:
+        return f"{int(size)} {units[unit_index]}"
+    return f"{size:.1f} {units[unit_index]}"
+
+
+def _format_model_age(modified_at: object) -> str:
+    value = str(modified_at or "").strip()
+    if not value:
+        return ""
+    if "." in value:
+        head, tail = value.split(".", 1)
+        suffix = ""
+        if "+" in tail:
+            fraction, suffix = tail.split("+", 1)
+            suffix = f"+{suffix}"
+        elif "-" in tail:
+            fraction, suffix = tail.split("-", 1)
+            suffix = f"-{suffix}"
+        elif tail.endswith("Z"):
+            fraction, suffix = tail[:-1], "Z"
+        else:
+            fraction = tail
+        value = f"{head}.{fraction[:6]}{suffix}"
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    days = max(0, (datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).days)
+    if days == 0:
+        return "today"
+    if days < 14:
+        unit_value = days
+        unit = "day"
+    elif days < 70:
+        unit_value = max(1, round(days / 7))
+        unit = "week"
+    elif days < 730:
+        unit_value = max(1, round(days / 30))
+        unit = "month"
+    else:
+        unit_value = max(1, round(days / 365))
+        unit = "year"
+    suffix = "" if unit_value == 1 else "s"
+    return f"{unit_value} {unit}{suffix}"
+
+
+def _model_display_label(model_detail: dict[str, Any]) -> str:
+    name = str(model_detail.get("name", "")).strip()
+    age = _format_model_age(model_detail.get("modified_at"))
+    detail_parts = [
+        value
+        for value in (
+            _format_model_size(model_detail.get("size")),
+            f"updated {age}" if age == "today" else f"updated {age} ago" if age else "",
+        )
+        if value
+    ]
+    if not name or not detail_parts:
+        return name
+    return f"{name} ({', '.join(detail_parts)})"
+
+
+def _parse_event_timestamp(value: object) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone()
+
+
+def _event_time_label(value: object) -> str:
+    parsed = _parse_event_timestamp(value)
+    if parsed is None:
+        return "--:--"
+    return parsed.strftime("%H:%M:%S")
+
+
+def _event_day_time_label(value: object) -> str:
+    parsed = _parse_event_timestamp(value)
+    if parsed is None:
+        return "Unknown time"
+    today = datetime.now(parsed.tzinfo).date()
+    if parsed.date() == today:
+        prefix = "Today"
+    elif (today - parsed.date()).days == 1:
+        prefix = "Yesterday"
+    else:
+        prefix = parsed.strftime("%b %-d")
+    return f"{prefix} {parsed.strftime('%H:%M')}"
+
+
+def _log_action_label(action: str) -> str:
+    labels = {
+        "gmail-inbox-preview": "Gmail inbox preview",
+        "ollama-check": "Ollama check",
+        "process-mock-inbox": "Mock inbox pass",
+        "queue-status": "Queue status",
+        "regenerate-thread": "Regenerate draft",
+        "sync-review-state": "Review sync",
+        "watch-once": "Watch pass",
+    }
+    return labels.get(action, _humanize(action))
 
 
 class SortableTableItem(QTableWidgetItem):
@@ -303,9 +444,19 @@ class MailAssistDesktopWindow(QMainWindow):
         self.table_sort_column = RECEIVED_COLUMN
         self.table_sort_order = Qt.SortOrder.DescendingOrder
         self.last_activity_summary = "Idle"
+        self.gmail_signature_import_attempted = False
+        self.review_previous_step_index = 3
+        self.settings_group_stable_height = 0
+        self.settings_wizard_stable_height = 0
+        setup_value = read_env_file(self.settings.root_dir / ".env").get("MAILASSIST_SETUP_COMPLETE", "false")
+        self.setup_finished = setup_value.strip().lower() == "true"
+        self.settings_open = not self.setup_finished
 
         self.setWindowTitle(f"MailAssist v{load_visible_version(self.settings.root_dir)}")
-        self.resize(1440, 980)
+        icon_path = self.settings.root_dir / "assets" / "brand" / "mailassist_icon.svg"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
+        self.resize(1120, 680)
 
         self._build_ui()
         self.refresh_models()
@@ -314,14 +465,65 @@ class MailAssistDesktopWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         root = QWidget()
+        root.setObjectName("appRoot")
         shell = QVBoxLayout(root)
-        shell.setContentsMargins(18, 18, 18, 18)
-        shell.setSpacing(14)
+        shell.setContentsMargins(10, 10, 10, 10)
+        shell.setSpacing(8)
+        self.setStyleSheet(
+            """
+            QMainWindow, QWidget#appRoot {
+                background: #f7efe6;
+            }
+            QGroupBox {
+                background: #fffaf4;
+                border: 1px solid #dfc7ad;
+                border-radius: 14px;
+                margin-top: 8px;
+                padding: 8px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 14px;
+                padding: 0 6px;
+                color: #8a5d2b;
+                font-weight: 700;
+            }
+            QPushButton {
+                background: #ffffff;
+                border: 1px solid #cfb89f;
+                border-radius: 9px;
+                color: #1d2430;
+                padding: 6px 12px;
+            }
+            QPushButton:hover {
+                background: #f5e5d1;
+            }
+            QPushButton:disabled {
+                background: #eee9e2;
+                color: #9c948b;
+            }
+            QLineEdit, QComboBox, QPlainTextEdit {
+                background: #ffffff;
+                border: 1px solid #cfb89f;
+                border-radius: 8px;
+                color: #1d2430;
+                padding: 5px;
+                selection-background-color: #2f6da3;
+            }
+            QComboBox {
+                min-width: 260px;
+            }
+            QCheckBox {
+                color: #1d2430;
+                spacing: 8px;
+            }
+            """
+        )
 
         hero = QHBoxLayout()
         title_box = QVBoxLayout()
-        title = QLabel("MailAssist Desktop Review")
-        title.setStyleSheet("font-size: 34px; font-weight: 700; color: #1d2430;")
+        title = QLabel("MailAssist")
+        title.setStyleSheet("font-size: 26px; font-weight: 800; color: #1d2430;")
         title_box.addWidget(title)
         hero.addLayout(title_box, 1)
 
@@ -330,19 +532,18 @@ class MailAssistDesktopWindow(QMainWindow):
         self.version_label.setStyleSheet(
             "border: 1px solid #dccbbb; border-radius: 16px; padding: 8px 12px; color: #5e6978;"
         )
-        settings_button = QPushButton("\u2699")
-        settings_button.setFixedSize(42, 42)
-        settings_button.setStyleSheet(
-            "font-size: 20px; border: 1px solid #dccbbb; border-radius: 21px; background: #fffaf4; color: #5e6978;"
-        )
-        settings_button.clicked.connect(self.open_settings_dialog)
-        logs_button = QPushButton("Logs")
+        logs_button = QPushButton("View logs")
         logs_button.setStyleSheet(
             "border: 1px solid #dccbbb; border-radius: 18px; padding: 8px 14px; background: #fffaf4; color: #5e6978;"
         )
         logs_button.clicked.connect(self.open_bot_logs_dialog)
+        self.settings_button = QPushButton("Settings")
+        self.settings_button.setStyleSheet(
+            "border: 1px solid #dccbbb; border-radius: 18px; padding: 8px 14px; background: #fffaf4; color: #5e6978;"
+        )
+        self.settings_button.clicked.connect(self.open_settings_wizard)
+        hero.addWidget(self.settings_button)
         hero.addWidget(logs_button)
-        hero.addWidget(settings_button)
         hero.addWidget(self.version_label)
         shell.addLayout(hero)
 
@@ -372,12 +573,20 @@ class MailAssistDesktopWindow(QMainWindow):
         status_layout.addWidget(self.banner)
         shell.addWidget(self.status_overlay)
 
-        control_group = QGroupBox("Bot Control")
-        control_layout = QVBoxLayout(control_group)
+        self.settings_group = QGroupBox("Settings")
+        self.settings_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        settings_layout = QVBoxLayout(self.settings_group)
+        settings_layout.setContentsMargins(8, 8, 8, 8)
+        settings_layout.setSpacing(6)
+        settings_layout.addWidget(self._build_settings_wizard())
+        shell.addWidget(self.settings_group)
+
+        self.control_group = QGroupBox("Bot Control")
+        control_layout = QVBoxLayout(self.control_group)
         control_layout.setContentsMargins(14, 14, 14, 14)
         control_layout.setSpacing(10)
 
-        status_grid = QFormLayout()
+        status_grid = _configure_form(QFormLayout())
         self.bot_status_label = QLabel("Idle")
         self.provider_status_label = QLabel(self.settings.default_provider)
         self.ollama_status_label = QLabel(self.settings.ollama_model)
@@ -410,22 +619,23 @@ class MailAssistDesktopWindow(QMainWindow):
         bot_actions.addWidget(queue_status_button)
         bot_actions.addStretch(1)
         control_layout.addLayout(bot_actions)
-        shell.addWidget(control_group)
+        shell.addWidget(self.control_group)
 
-        activity_group = QGroupBox("Recent Activity")
-        activity_layout = QVBoxLayout(activity_group)
+        self.activity_group = QGroupBox("Recent Activity")
+        activity_layout = QVBoxLayout(self.activity_group)
         activity_layout.setContentsMargins(10, 10, 10, 10)
         self.recent_activity = QPlainTextEdit()
         self.recent_activity.setReadOnly(True)
-        self.recent_activity.setMinimumHeight(360)
+        self.recent_activity.setMinimumHeight(80)
         self.recent_activity.setPlainText("No bot activity yet.")
         activity_layout.addWidget(self.recent_activity)
-        shell.addWidget(activity_group, 1)
+        shell.addWidget(self.activity_group, 1)
+        shell.addStretch(1)
 
-        self._build_settings_dialog()
         self._build_bot_logs_dialog()
 
         self.setCentralWidget(root)
+        self._refresh_setup_visibility()
 
     def _build_settings_dialog(self) -> None:
         dialog = QDialog(self)
@@ -446,6 +656,7 @@ class MailAssistDesktopWindow(QMainWindow):
         settings_tabs.addTab(self._build_ollama_settings_panel(), "Ollama")
         settings_tabs.addTab(self._build_provider_settings_panel(), "Providers")
         settings_tabs.addTab(self._build_signature_settings_panel(), "Signature")
+        settings_tabs.addTab(self._build_prompt_preview_panel(), "Prompt")
         layout.addWidget(settings_tabs, 1)
 
         footer = QHBoxLayout()
@@ -502,23 +713,37 @@ class MailAssistDesktopWindow(QMainWindow):
         layout.addWidget(stdout_label)
         self.bot_console = QPlainTextEdit()
         self.bot_console.setReadOnly(True)
-        self.bot_console.setMinimumHeight(140)
+        self.bot_console.setMinimumHeight(90)
+        self.bot_console.setMaximumHeight(120)
         layout.addWidget(self.bot_console)
 
+        log_header = QHBoxLayout()
         log_label = QLabel("Selected log")
         log_label.setStyleSheet("font-size: 13px; color: #5e6978;")
-        layout.addWidget(log_label)
+        log_header.addWidget(log_label)
+        log_header.addStretch(1)
+        self.show_raw_log_checkbox = QCheckBox("Show raw JSON")
+        self.show_raw_log_checkbox.toggled.connect(self.load_selected_bot_log)
+        log_header.addWidget(self.show_raw_log_checkbox)
+        layout.addLayout(log_header)
         self.bot_log_viewer = QPlainTextEdit()
         self.bot_log_viewer.setReadOnly(True)
-        self.bot_log_viewer.setMinimumHeight(140)
-        layout.addWidget(self.bot_log_viewer)
+        self.bot_log_viewer.setMinimumHeight(360)
+        layout.addWidget(self.bot_log_viewer, 1)
         return widget
 
     def open_settings_dialog(self) -> None:
-        if self.settings_dialog is None:
-            self._build_settings_dialog()
+        if hasattr(self, "settings_tabs"):
+            self.settings_tabs.setCurrentIndex(0)
+            self._set_banner("Settings are available in the main window.", level="info")
         self.refresh_models()
-        self.settings_dialog.exec()
+
+    def open_settings_wizard(self) -> None:
+        geometry = self.geometry()
+        self.settings_open = True
+        self._refresh_setup_visibility()
+        self._restore_geometry_after_layout(geometry)
+        self._set_banner("Settings are open. Press Finish when you are done.", level="info")
 
     def open_bot_logs_dialog(self) -> None:
         if self.bot_logs_dialog is None:
@@ -528,50 +753,634 @@ class MailAssistDesktopWindow(QMainWindow):
         self.bot_logs_dialog.raise_()
         self.bot_logs_dialog.activateWindow()
 
+    def _build_settings_wizard(self) -> QWidget:
+        widget = QWidget()
+        self.settings_wizard = widget
+        widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(6)
+
+        self.settings_step_label = QLabel("")
+        self.settings_step_label.hide()
+
+        self.settings_step_title = QLabel("")
+        self.settings_step_title.setStyleSheet("font-size: 19px; font-weight: 800; color: #1d2430;")
+        layout.addWidget(self.settings_step_title)
+
+        self.settings_step_help = QLabel("")
+        self.settings_step_help.setWordWrap(True)
+        self.settings_step_help.setMinimumWidth(0)
+        self.settings_step_help.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Maximum)
+        self.settings_step_help.setStyleSheet(
+            "background: #fff3df; border: 1px solid #dfc7ad; border-radius: 10px; padding: 6px; color: #5e6978;"
+        )
+        layout.addWidget(self.settings_step_help)
+
+        self.settings_stack = QStackedWidget()
+        self.settings_stack.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        self.settings_steps: list[tuple[str, str, bool]] = []
+        self.advanced_settings_enabled = False
+        self._add_settings_step(
+            "Choose Email Provider",
+            "",
+            self._build_wizard_provider_page(),
+        )
+        self._add_settings_step(
+            "Pick The Local AI Model",
+            "This is the model that classifies emails and drafts replies. Larger models are usually better, but slower; background drafting makes that acceptable.",
+            self._build_wizard_ollama_model_page(),
+        )
+        self._add_settings_step(
+            "Choose Writing Style",
+            "This is the default style the bot asks the local model to use. You can still edit drafts in Gmail before sending.",
+            self._build_wizard_writing_style_page(),
+        )
+        self._add_settings_step(
+            "Set Signature",
+            "Add the sign-off you want MailAssist to place at the end of each draft.",
+            self._build_wizard_signature_page(),
+        )
+        self._add_settings_step(
+            "Advanced Settings?",
+            "Optional knobs for connection paths and how often MailAssist checks for new mail.",
+            self._build_wizard_advanced_choice_page(),
+        )
+        self._add_settings_step(
+            "Review Choices",
+            "Here is the global view of what MailAssist will do. The prompt preview is read-only and uses a sanitized sample email.",
+            self._build_wizard_summary_page(),
+        )
+        layout.insertWidget(0, self._build_settings_progress_line())
+        layout.addWidget(self.settings_stack, 0, Qt.AlignmentFlag.AlignTop)
+
+        nav = QHBoxLayout()
+        nav.setSpacing(10)
+        self.settings_back_button = QPushButton("Back")
+        self.settings_back_button.setMinimumWidth(120)
+        self.settings_back_button.clicked.connect(self._previous_settings_step)
+        self.settings_next_button = QPushButton("Next")
+        self.settings_next_button.setMinimumWidth(120)
+        self.settings_next_button.clicked.connect(self._next_settings_step)
+        self.settings_save_button = QPushButton("Finish")
+        self.settings_save_button.setMinimumWidth(140)
+        self.settings_save_button.clicked.connect(self.finish_settings_wizard)
+        self.settings_advanced_button = QPushButton("Advanced settings")
+        self.settings_advanced_button.setMinimumWidth(160)
+        self.settings_advanced_button.clicked.connect(lambda _checked=False: self._open_advanced_settings_step())
+        nav.addWidget(self.settings_back_button)
+        nav.addStretch(1)
+        nav.addWidget(self.settings_advanced_button)
+        nav.addWidget(self.settings_next_button)
+        nav.addWidget(self.settings_save_button)
+        layout.addLayout(nav)
+
+        self.settings_step_index = 0
+        self._show_settings_step(0)
+        return widget
+
+    def _build_settings_progress_line(self) -> QWidget:
+        widget = QWidget()
+        widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(2, 0, 2, 2)
+        layout.setSpacing(4)
+        self.settings_progress_buttons: list[tuple[QPushButton, int]] = []
+        self.settings_progress_segments: list[QFrame] = []
+        for stop_index, (label, step_index) in enumerate(self._settings_progress_stops()):
+            button = QPushButton(f"●\n{label}")
+            button.setFlat(True)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setMinimumWidth(64)
+            button.setMaximumHeight(42)
+            button.clicked.connect(partial(self._jump_to_settings_step, step_index))
+            self.settings_progress_buttons.append((button, step_index))
+            layout.addWidget(button)
+            if stop_index < len(self._settings_progress_stops()) - 1:
+                segment = QFrame()
+                segment.setFixedHeight(3)
+                segment.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+                self.settings_progress_segments.append(segment)
+                layout.addWidget(segment, 1)
+        return widget
+
+    def _settings_progress_stops(self) -> tuple[tuple[str, int], ...]:
+        return (
+            ("Provider", 0),
+            ("Model", 1),
+            ("Tone", 2),
+            ("Signature", 3),
+            ("Advanced", 4),
+            ("Review", 5),
+        )
+
+    def _settings_progress_route_index(self, step_index: int) -> int:
+        return step_index
+
+    def _jump_to_settings_step(self, step_index: int) -> None:
+        self.save_settings(announce=False)
+        if self.settings_steps[self.settings_step_index][0] == "Advanced Settings?":
+            self.advanced_settings_enabled = self.advanced_settings_checkbox.isChecked()
+        self._show_settings_step(step_index)
+
+    def _toggle_advanced_settings_details(self, checked: bool) -> None:
+        self.advanced_settings_enabled = checked
+        if hasattr(self, "advanced_settings_details"):
+            self.advanced_settings_details.setVisible(checked)
+        self._refresh_settings_progress_line()
+        self._sync_settings_stack_height()
+
+    def _add_settings_step(
+        self,
+        title: str,
+        help_text: str,
+        page: QWidget,
+        *,
+        advanced: bool = False,
+    ) -> None:
+        self.settings_steps.append((title, help_text, advanced))
+        self.settings_stack.addWidget(page)
+
+    def _build_wizard_provider_page(self) -> QWidget:
+        widget = QWidget()
+        widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        layout = QVBoxLayout(widget)
+        layout.setSpacing(8)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        provider_group = QGroupBox("Email Provider")
+        provider_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        provider_group.setMaximumHeight(128)
+        provider_layout = QVBoxLayout(provider_group)
+        provider_layout.setSpacing(8)
+        provider_layout.setContentsMargins(18, 16, 18, 16)
+        self.gmail_enabled = QCheckBox("Gmail")
+        self.gmail_enabled.setChecked(self.settings.gmail_enabled or self.settings.default_provider == "gmail")
+        self.outlook_enabled = QCheckBox("Outlook (coming later)")
+        self.outlook_enabled.setChecked(False)
+        self.outlook_enabled.setEnabled(False)
+        provider_layout.addWidget(self.gmail_enabled)
+        provider_layout.addWidget(self.outlook_enabled)
+        layout.addWidget(provider_group, 0, Qt.AlignmentFlag.AlignTop)
+        return widget
+
+    def _build_wizard_ollama_model_page(self) -> QWidget:
+        widget = QWidget()
+        widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        layout = QVBoxLayout(widget)
+        layout.setSpacing(12)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        model_group = QGroupBox("Local AI Model")
+        self.ollama_model_group = model_group
+        model_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        model_group.setMaximumHeight(410)
+        model_layout = QVBoxLayout(model_group)
+        model_layout.setSpacing(6)
+        model_layout.setContentsMargins(18, 16, 18, 14)
+        model_form = _configure_form(QFormLayout())
+        self.ollama_model_picker = QComboBox()
+        self.ollama_model_picker.setMinimumWidth(520)
+        self.ollama_model_picker.currentIndexChanged.connect(self._refresh_ollama_model_hint)
+        model_form.addRow("Model", self.ollama_model_picker)
+        self.ollama_connection_status = QLabel("Checking Ollama...")
+        self.ollama_connection_status.setStyleSheet("color: #5e6978; font-size: 13px;")
+        model_form.addRow("Status", self.ollama_connection_status)
+        model_layout.addLayout(model_form)
+        self.ollama_models_hint = QLabel("")
+        self.ollama_models_hint.setWordWrap(True)
+        self.ollama_models_hint.setStyleSheet("color: #5e6978; font-size: 13px;")
+        self.ollama_models_hint.hide()
+        self.ollama_metadata_hint = QLabel(
+            "The dropdown shows local model size and when Ollama last modified/downloaded the local copy."
+        )
+        self.ollama_metadata_hint.setWordWrap(True)
+        self.ollama_metadata_hint.setStyleSheet("color: #5e6978; font-size: 13px;")
+        model_layout.addWidget(self.ollama_metadata_hint)
+        self.ollama_model_hint = QLabel("")
+        self.ollama_model_hint.setWordWrap(True)
+        self.ollama_model_hint.setStyleSheet(
+            "background: #fffaf4; border: 1px solid #dccbbb; border-radius: 10px; padding: 8px; color: #1d2430;"
+        )
+        model_layout.addWidget(self.ollama_model_hint)
+        actions = QHBoxLayout()
+        refresh_models_button = QPushButton("Refresh model list")
+        refresh_models_button.setMinimumWidth(210)
+        refresh_models_button.clicked.connect(self.refresh_models)
+        test_button = QPushButton("Send small test prompt")
+        test_button.setMinimumWidth(230)
+        test_button.clicked.connect(self.test_ollama)
+        actions.addWidget(refresh_models_button)
+        actions.addWidget(test_button)
+        actions.addStretch(1)
+        model_layout.addLayout(actions)
+        self.ollama_result_label = QLabel("Model test result")
+        self.ollama_result_label.setStyleSheet("font-size: 13px; color: #5e6978;")
+        self.ollama_result_label.setMaximumHeight(22)
+        self.ollama_result_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        model_layout.addWidget(self.ollama_result_label)
+        self.ollama_result = QPlainTextEdit()
+        self.ollama_result.setReadOnly(True)
+        self.ollama_result.setPlainText("Send a small test prompt to see the model response here.")
+        self.ollama_result.setMinimumHeight(104)
+        self.ollama_result.setMaximumHeight(124)
+        model_layout.addWidget(self.ollama_result)
+        layout.addWidget(model_group, 0, Qt.AlignmentFlag.AlignTop)
+        return widget
+
+    def _build_wizard_writing_style_page(self) -> QWidget:
+        widget = QWidget()
+        widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        layout = QVBoxLayout(widget)
+        layout.setSpacing(12)
+        style_group = QGroupBox("Writing Style")
+        style_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        style_layout = _configure_form(QFormLayout(style_group))
+        self.tone_combo = QComboBox()
+        self.tone_combo.setMinimumWidth(420)
+        for value, (label, _guidance) in TONE_OPTIONS.items():
+            self.tone_combo.addItem(label, value)
+        tone_index = self.tone_combo.findData(self.settings.user_tone)
+        if tone_index >= 0:
+            self.tone_combo.setCurrentIndex(tone_index)
+        self.tone_combo.currentIndexChanged.connect(self._refresh_prompt_preview)
+        style_layout.addRow("Default tone", self.tone_combo)
+        layout.addWidget(style_group, 0, Qt.AlignmentFlag.AlignTop)
+        return widget
+
+    def _build_wizard_signature_page(self) -> QWidget:
+        widget = QWidget()
+        widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        layout = QVBoxLayout(widget)
+        layout.setSpacing(8)
+        signature_group = QGroupBox("Signature")
+        signature_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        signature_layout = QVBoxLayout(signature_group)
+        signature_layout.setSpacing(8)
+        self.signature_input = QPlainTextEdit(self.settings.user_signature)
+        self.signature_input.setPlaceholderText("Best regards,\nYour Name")
+        self.signature_input.setMinimumHeight(110)
+        self.signature_input.setMaximumHeight(140)
+        self.signature_input.textChanged.connect(self._refresh_prompt_preview)
+        signature_layout.addWidget(self.signature_input)
+        signature_actions = QHBoxLayout()
+        import_button = QPushButton("Import from Gmail")
+        import_button.clicked.connect(lambda _checked=False: self._import_gmail_signature(force=True))
+        signature_actions.addWidget(import_button)
+        signature_actions.addStretch(1)
+        signature_layout.addLayout(signature_actions)
+        self.gmail_signature_status = QLabel(
+            "MailAssist can start from your Gmail signature if Gmail exposes one."
+        )
+        self.gmail_signature_status.setWordWrap(True)
+        self.gmail_signature_status.setStyleSheet("color: #5e6978; font-size: 13px;")
+        signature_layout.addWidget(self.gmail_signature_status)
+        layout.addWidget(signature_group, 0, Qt.AlignmentFlag.AlignTop)
+        return widget
+
+    def _build_wizard_advanced_choice_page(self) -> QWidget:
+        widget = QWidget()
+        widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        layout = QVBoxLayout(widget)
+        layout.setSpacing(8)
+        self.advanced_settings_checkbox = QCheckBox()
+        self.advanced_settings_checkbox.setChecked(True)
+        self.advanced_settings_checkbox.hide()
+        self.advanced_settings_details = self._build_wizard_advanced_page()
+        layout.addWidget(self.advanced_settings_details, 0, Qt.AlignmentFlag.AlignTop)
+        return widget
+
+    def _build_wizard_advanced_page(self) -> QWidget:
+        widget = QWidget()
+        widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        layout = QVBoxLayout(widget)
+        layout.setSpacing(8)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        advanced_group = QGroupBox("Advanced Settings")
+        advanced_layout = _configure_form(QFormLayout(advanced_group))
+        self.ollama_url_input = _wide_line_edit(self.settings.ollama_url)
+        self.gmail_credentials_input = _wide_line_edit(str(self.settings.gmail_credentials_file), min_width=620)
+        self.gmail_token_input = _wide_line_edit(str(self.settings.gmail_token_file), min_width=620)
+        self.poll_seconds_input = _wide_line_edit(str(self.settings.bot_poll_seconds), min_width=160)
+        advanced_layout.addRow("Ollama URL", self.ollama_url_input)
+        advanced_layout.addRow("Client secret", self.gmail_credentials_input)
+        advanced_layout.addRow("Local token", self.gmail_token_input)
+        advanced_layout.addRow("Poll interval (seconds)", self.poll_seconds_input)
+        layout.addWidget(advanced_group)
+
+        refresh_button = QPushButton("Check connection and refresh models")
+        refresh_button.clicked.connect(self.refresh_models)
+        layout.addWidget(refresh_button)
+        return widget
+
+    def _build_wizard_summary_page(self) -> QWidget:
+        widget = QWidget()
+        widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        layout = QVBoxLayout(widget)
+        layout.setSpacing(0)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.settings_summary = QPlainTextEdit()
+        self.settings_summary.setReadOnly(True)
+        self.settings_summary.setMinimumHeight(360)
+        self.settings_summary.setMaximumHeight(360)
+        self.settings_summary.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        font = QFont("Menlo")
+        font.setStyleHint(QFont.StyleHint.Monospace)
+        self.settings_summary.setFont(font)
+        layout.addWidget(self.settings_summary)
+        return widget
+
+    def _show_settings_step(self, index: int) -> None:
+        self.settings_step_index = max(0, min(index, self.settings_stack.count() - 1))
+        self.settings_stack.setCurrentIndex(self.settings_step_index)
+        title, help_text, _advanced = self.settings_steps[self.settings_step_index]
+        visible_indices = self._visible_settings_indices()
+        visible_position = visible_indices.index(self.settings_step_index) + 1
+        self.settings_step_label.setText(f"Step {visible_position} of {len(visible_indices)}")
+        self.settings_step_title.setText(title)
+        self.settings_step_help.setText(help_text)
+        self.settings_step_help.setVisible(bool(help_text.strip()))
+        self.settings_back_button.setEnabled(self.settings_step_index > 0)
+        is_last = self._next_visible_settings_index(self.settings_step_index) == self.settings_step_index
+        self.settings_next_button.setVisible(not is_last)
+        self.settings_save_button.setVisible(is_last)
+        self.settings_advanced_button.setVisible(self.settings_step_index == 3)
+        self._refresh_settings_progress_line()
+        if title == "Review Choices":
+            self._refresh_prompt_preview()
+            self._refresh_settings_summary()
+        elif title == "Set Signature" and not self.gmail_signature_import_attempted:
+            self.gmail_signature_import_attempted = True
+            QTimer.singleShot(0, lambda: self._import_gmail_signature(force=False))
+        self._sync_settings_stack_height()
+
+    def _sync_settings_stack_height(self) -> None:
+        if not hasattr(self, "settings_stack"):
+            return
+        if self.settings_stack.currentWidget() is None:
+            return
+        target_height = max(
+            max(
+                (self.settings_stack.widget(index).sizeHint().height() for index in range(self.settings_stack.count())),
+                default=24,
+            )
+            + 8,
+            397,
+        )
+        self.settings_stack.setMinimumHeight(target_height)
+        self.settings_stack.setMaximumHeight(target_height)
+        if hasattr(self, "settings_wizard"):
+            self.settings_wizard.adjustSize()
+            wizard_height = max(
+                self.settings_wizard.sizeHint().height(),
+                self.settings_wizard_stable_height,
+                target_height + 96,
+                569,
+            )
+            self.settings_wizard_stable_height = wizard_height
+            self.settings_wizard.setMinimumHeight(wizard_height)
+            self.settings_wizard.setMaximumHeight(wizard_height)
+            self.settings_wizard.updateGeometry()
+        if hasattr(self, "settings_group"):
+            self.settings_group.adjustSize()
+            group_height = max(
+                self.settings_group.sizeHint().height(),
+                self.settings_group_stable_height,
+                self.settings_wizard_stable_height + 42,
+                611,
+            )
+            self.settings_group_stable_height = group_height
+            self.settings_group.setMinimumHeight(group_height)
+            self.settings_group.setMaximumHeight(group_height)
+            self.settings_group.updateGeometry()
+
+    def _import_gmail_signature(self, *, force: bool) -> None:
+        if not hasattr(self, "signature_input") or not hasattr(self, "gmail_signature_status"):
+            return
+        if not self.gmail_enabled.isChecked():
+            self.gmail_signature_status.setText("Enable Gmail first, then MailAssist can try importing its saved signature.")
+            return
+        if not force and self.signature_input.toPlainText().strip():
+            self.gmail_signature_status.setText("Using your saved MailAssist signature. Use Import from Gmail to replace it.")
+            return
+        self.gmail_signature_status.setText("Checking Gmail for a saved signature...")
+        QApplication.processEvents()
+        provider = GmailProvider(
+            Path(self.gmail_credentials_input.text().strip()),
+            Path(self.gmail_token_input.text().strip()),
+        )
+        try:
+            result = provider.get_default_signature(allow_interactive_auth=force)
+        except Exception as exc:
+            self.gmail_signature_status.setText(str(exc))
+            return
+        if result is None:
+            self.gmail_signature_status.setText("No Gmail signature was found. You can type one here.")
+            return
+        self.signature_input.setPlainText(result.signature)
+        source = f" from {result.send_as_email}" if result.send_as_email else ""
+        self.gmail_signature_status.setText(
+            f"Imported Gmail signature{source}. You can edit it before continuing."
+        )
+
+    def _refresh_settings_progress_line(self) -> None:
+        if not hasattr(self, "settings_progress_buttons"):
+            return
+        stops = self._settings_progress_stops()
+        routes = [step_index for _label, step_index in stops]
+        current_route = self._settings_progress_route_index(self.settings_step_index)
+        try:
+            current_position = routes.index(current_route)
+        except ValueError:
+            current_position = 0
+        for position, (button, _step_index) in enumerate(self.settings_progress_buttons):
+            if position < current_position:
+                button.setStyleSheet(
+                    "QPushButton { background: #e6f1ec; border: 1px solid #a9cfc0; border-radius: 13px; "
+                    "color: #215f4a; font-weight: 700; padding: 3px 5px; }"
+                    "QPushButton:hover { background: #d5eadf; }"
+                )
+            elif position == current_position:
+                button.setStyleSheet(
+                    "QPushButton { background: #1e7a61; border: 1px solid #1e7a61; border-radius: 13px; "
+                    "color: #ffffff; font-weight: 800; padding: 3px 5px; }"
+                    "QPushButton:hover { background: #17664f; }"
+                )
+            else:
+                button.setStyleSheet(
+                    "QPushButton { background: #fffaf4; border: 1px solid #dfc7ad; border-radius: 13px; "
+                    "color: #8a7461; font-weight: 650; padding: 3px 5px; }"
+                    "QPushButton:hover { background: #f5e5d1; }"
+                )
+        for position, segment in enumerate(self.settings_progress_segments):
+            color = "#1e7a61" if position < current_position else "#dfc7ad"
+            segment.setStyleSheet(f"background: {color}; border-radius: 1px;")
+
+    def _refresh_setup_visibility(self) -> None:
+        if not hasattr(self, "control_group"):
+            return
+        self.settings_group.setVisible(self.settings_open)
+        self.settings_button.setVisible(not self.settings_open)
+        self.control_group.setVisible(self.setup_finished and not self.settings_open)
+        self.activity_group.setVisible(self.setup_finished and not self.settings_open)
+        if self.settings_open:
+            self._sync_settings_stack_height()
+
+    def _restore_geometry_after_layout(self, geometry) -> None:
+        self.setGeometry(geometry)
+        QTimer.singleShot(0, lambda saved=geometry: self.setGeometry(saved))
+        QTimer.singleShot(60, lambda saved=geometry: self.setGeometry(saved))
+
+    def _next_settings_step(self) -> None:
+        self.save_settings(announce=False)
+        if self.settings_steps[self.settings_step_index][0] == "Advanced Settings?":
+            self.advanced_settings_enabled = self.advanced_settings_checkbox.isChecked()
+        if self.settings_step_index == 3:
+            self.review_previous_step_index = 3
+            self._show_settings_step(5)
+            return
+        if self.settings_step_index == 4:
+            self.review_previous_step_index = 4
+        self._show_settings_step(self._next_visible_settings_index(self.settings_step_index))
+
+    def _previous_settings_step(self) -> None:
+        self.save_settings(announce=False)
+        if self.settings_step_index == 5:
+            self._show_settings_step(self.review_previous_step_index)
+            return
+        self._show_settings_step(self._previous_visible_settings_index(self.settings_step_index))
+
+    def _open_advanced_settings_step(self) -> None:
+        self.save_settings(announce=False)
+        self.review_previous_step_index = 4
+        self._show_settings_step(4)
+
+    def _next_visible_settings_index(self, current_index: int) -> int:
+        index = current_index + 1
+        while index < len(self.settings_steps):
+            if self.advanced_settings_enabled or not self.settings_steps[index][2]:
+                return index
+            index += 1
+        return len(self.settings_steps) - 1
+
+    def _previous_visible_settings_index(self, current_index: int) -> int:
+        index = current_index - 1
+        while index >= 0:
+            if self.advanced_settings_enabled or not self.settings_steps[index][2]:
+                return index
+            index -= 1
+        return 0
+
+    def _visible_settings_indices(self) -> list[int]:
+        return [
+            index
+            for index, (_title, _help_text, advanced) in enumerate(self.settings_steps)
+            if self.advanced_settings_enabled or not advanced
+        ]
+
+    def _refresh_settings_summary(self) -> None:
+        if not hasattr(self, "settings_summary"):
+            return
+        selected_model = str(self.ollama_model_picker.currentData() or self.settings.ollama_model)
+        provider = "gmail" if self.gmail_enabled.isChecked() else "outlook"
+        signature_state = "Configured" if self.signature_input.toPlainText().strip() else "Missing"
+        lines = [
+            "MailAssist will use these settings:",
+            "",
+            f"Email provider: {provider.title()}",
+            f"Local AI model: {selected_model}",
+            f"Default tone: {self.tone_combo.currentText()}",
+            f"Signature: {signature_state}",
+            f"Check interval: every {self.poll_seconds_input.text().strip() or '60'} seconds",
+            "",
+            "MailAssist will watch for new mail and prepare drafts for messages that need a reply.",
+            "",
+            "Prompt preview (read-only)",
+            "",
+            self._prompt_preview_text(),
+        ]
+        self.settings_summary.setPlainText("\n".join(lines))
+
     def _build_ollama_settings_panel(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
+        layout.setSpacing(12)
 
-        form = QFormLayout()
-        self.ollama_url_input = QLineEdit(self.settings.ollama_url)
+        model_group = QGroupBox("Local AI Model")
+        model_layout = QVBoxLayout(model_group)
+        model_layout.setSpacing(8)
+        model_form = _configure_form(QFormLayout())
         self.ollama_model_picker = QComboBox()
-        form.addRow("Ollama URL", self.ollama_url_input)
-        form.addRow("Chosen model", self.ollama_model_picker)
-        layout.addLayout(form)
+        self.ollama_model_picker.currentIndexChanged.connect(self._refresh_ollama_model_hint)
+        model_form.addRow("Model", self.ollama_model_picker)
+        self.ollama_connection_status = QLabel("Checking Ollama...")
+        self.ollama_connection_status.setStyleSheet("color: #5e6978; font-size: 13px;")
+        model_form.addRow("Status", self.ollama_connection_status)
+        model_layout.addLayout(model_form)
 
         self.ollama_models_hint = QLabel("")
         self.ollama_models_hint.setWordWrap(True)
         self.ollama_models_hint.setStyleSheet("color: #5e6978; font-size: 13px;")
-        layout.addWidget(self.ollama_models_hint)
+        model_layout.addWidget(self.ollama_models_hint)
 
-        self.ollama_test_prompt = QPlainTextEdit("Say hello and confirm which model answered.")
-        self.ollama_test_prompt.setMinimumHeight(100)
-        layout.addWidget(self.ollama_test_prompt)
+        self.ollama_model_hint = QLabel("")
+        self.ollama_model_hint.setWordWrap(True)
+        self.ollama_model_hint.setStyleSheet(
+            "background: #fffaf4; border: 1px solid #dccbbb; border-radius: 10px; padding: 8px; color: #1d2430;"
+        )
+        model_layout.addWidget(self.ollama_model_hint)
 
         actions = QHBoxLayout()
         save_button = QPushButton("Save settings")
         save_button.clicked.connect(self.save_settings)
         refresh_models_button = QPushButton("Refresh model list")
         refresh_models_button.clicked.connect(self.refresh_models)
-        test_button = QPushButton("Run Ollama check")
+        test_button = QPushButton("Test selected model")
         test_button.clicked.connect(self.test_ollama)
         actions.addWidget(save_button)
         actions.addWidget(refresh_models_button)
         actions.addWidget(test_button)
         actions.addStretch(1)
-        layout.addLayout(actions)
+        model_layout.addLayout(actions)
+        layout.addWidget(model_group)
 
+        advanced_group = QGroupBox("Advanced Connection")
+        advanced_layout = _configure_form(QFormLayout(advanced_group))
+        self.ollama_url_input = _wide_line_edit(self.settings.ollama_url)
+        advanced_layout.addRow("Ollama URL", self.ollama_url_input)
+        layout.addWidget(advanced_group)
+
+        result_label = QLabel("Model check result")
+        result_label.setStyleSheet("font-size: 13px; color: #5e6978;")
+        layout.addWidget(result_label)
         self.ollama_result = QPlainTextEdit()
         self.ollama_result.setReadOnly(True)
-        self.ollama_result.setMinimumHeight(110)
-        layout.addWidget(self.ollama_result)
+        self.ollama_result.setMinimumHeight(90)
+        layout.addWidget(self.ollama_result, 1)
         return widget
+
+    def _refresh_ollama_model_hint(self) -> None:
+        if not hasattr(self, "ollama_model_hint"):
+            return
+        model = str(self.ollama_model_picker.currentData() or self.settings.ollama_model)
+        if model.startswith("gemma4:31b"):
+            message = "High quality, slower. Good for background drafting and careful wording."
+        elif model.startswith("gemma3:12b"):
+            message = "Fast and lightweight. Useful for quick tests, but draft quality has been less reliable."
+        elif "qwen" in model.lower():
+            message = "General-purpose local model. Good for experiments; compare draft quality before using live."
+        elif model:
+            message = "Installed local model. Use the model check before relying on it for drafts."
+        else:
+            message = "No model selected."
+        self.ollama_model_hint.setText(message)
 
     def _build_provider_settings_panel(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        form = QFormLayout()
+        layout.setSpacing(12)
 
+        provider_group = QGroupBox("Email Provider")
+        provider_layout = _configure_form(QFormLayout(provider_group))
         self.default_provider_combo = QComboBox()
         self.default_provider_combo.addItem("Gmail", "gmail")
         self.default_provider_combo.addItem("Outlook", "outlook")
@@ -579,17 +1388,21 @@ class MailAssistDesktopWindow(QMainWindow):
 
         self.gmail_enabled = QCheckBox("Enable Gmail")
         self.gmail_enabled.setChecked(self.settings.gmail_enabled)
-        self.outlook_enabled = QCheckBox("Enable Outlook")
+        self.outlook_enabled = QCheckBox("Enable Outlook (coming later)")
         self.outlook_enabled.setChecked(self.settings.outlook_enabled)
-        self.gmail_credentials_input = QLineEdit(str(self.settings.gmail_credentials_file))
-        self.gmail_token_input = QLineEdit(str(self.settings.gmail_token_file))
+        self.outlook_enabled.setEnabled(False)
+        provider_layout.addRow("Draft provider", self.default_provider_combo)
+        provider_layout.addRow("", self.gmail_enabled)
+        provider_layout.addRow("", self.outlook_enabled)
+        layout.addWidget(provider_group)
 
-        form.addRow("Default provider", self.default_provider_combo)
-        form.addRow("", self.gmail_enabled)
-        form.addRow("", self.outlook_enabled)
-        form.addRow("Gmail credentials", self.gmail_credentials_input)
-        form.addRow("Gmail token", self.gmail_token_input)
-        layout.addLayout(form)
+        advanced_group = QGroupBox("Gmail OAuth Files")
+        advanced_layout = _configure_form(QFormLayout(advanced_group))
+        self.gmail_credentials_input = _wide_line_edit(str(self.settings.gmail_credentials_file), min_width=720)
+        self.gmail_token_input = _wide_line_edit(str(self.settings.gmail_token_file), min_width=720)
+        advanced_layout.addRow("Client secret", self.gmail_credentials_input)
+        advanced_layout.addRow("Local token", self.gmail_token_input)
+        layout.addWidget(advanced_group)
 
         save_button = QPushButton("Save provider settings")
         save_button.clicked.connect(self.save_settings)
@@ -602,7 +1415,24 @@ class MailAssistDesktopWindow(QMainWindow):
         layout = QVBoxLayout(widget)
         layout.setSpacing(12)
 
-        intro = QLabel("Use this exact block when MailAssist signs off a generated email.")
+        style_group = QGroupBox("Writing Style")
+        style_layout = _configure_form(QFormLayout(style_group))
+        self.tone_combo = QComboBox()
+        for value, (label, _guidance) in TONE_OPTIONS.items():
+            self.tone_combo.addItem(label, value)
+        tone_index = self.tone_combo.findData(self.settings.user_tone)
+        if tone_index >= 0:
+            self.tone_combo.setCurrentIndex(tone_index)
+        self.tone_combo.currentIndexChanged.connect(self._refresh_prompt_preview)
+        self.poll_seconds_input = _wide_line_edit(str(self.settings.bot_poll_seconds), min_width=160)
+        style_layout.addRow("Default tone", self.tone_combo)
+        style_layout.addRow("Poll interval (seconds)", self.poll_seconds_input)
+        layout.addWidget(style_group)
+
+        intro = QLabel(
+            "MailAssist appends this signature itself after the local model drafts the body. "
+            "The model is asked not to write or modify the signature."
+        )
         intro.setWordWrap(True)
         intro.setStyleSheet("color: #5e6978; font-size: 13px;")
         layout.addWidget(intro)
@@ -610,25 +1440,62 @@ class MailAssistDesktopWindow(QMainWindow):
         self.signature_input = QPlainTextEdit(self.settings.user_signature)
         self.signature_input.setPlaceholderText("Best regards,\nYour Name")
         self.signature_input.setMinimumHeight(120)
+        self.signature_input.textChanged.connect(self._refresh_prompt_preview)
         layout.addWidget(self.signature_input)
 
-        form = QFormLayout()
-        self.tone_combo = QComboBox()
-        for value, (label, _guidance) in TONE_OPTIONS.items():
-            self.tone_combo.addItem(label, value)
-        tone_index = self.tone_combo.findData(self.settings.user_tone)
-        if tone_index >= 0:
-            self.tone_combo.setCurrentIndex(tone_index)
-        self.poll_seconds_input = QLineEdit(str(self.settings.bot_poll_seconds))
-        form.addRow("Default tone", self.tone_combo)
-        form.addRow("Poll seconds", self.poll_seconds_input)
-        layout.addLayout(form)
-
-        save_button = QPushButton("Save signature")
+        save_button = QPushButton("Save writing settings")
         save_button.clicked.connect(self.save_settings)
         layout.addWidget(save_button)
         layout.addStretch(1)
         return widget
+
+    def _build_prompt_preview_panel(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setSpacing(12)
+
+        intro = QLabel(
+            "Read-only preview of the bot drafting prompt. Real Gmail prompts use the actual "
+            "incoming thread; this preview uses a sanitized sample email with your current tone. "
+            "The saved signature is not included in the prompt because MailAssist appends it after drafting."
+        )
+        intro.setWordWrap(True)
+        intro.setStyleSheet("color: #5e6978; font-size: 13px;")
+        layout.addWidget(intro)
+
+        self.prompt_preview = QPlainTextEdit()
+        self.prompt_preview.setReadOnly(True)
+        self.prompt_preview.setMinimumHeight(360)
+        font = QFont("Menlo")
+        font.setStyleHint(QFont.StyleHint.Monospace)
+        self.prompt_preview.setFont(font)
+        layout.addWidget(self.prompt_preview, 1)
+
+        actions = QHBoxLayout()
+        refresh_button = QPushButton("Refresh preview")
+        refresh_button.clicked.connect(self._refresh_prompt_preview)
+        actions.addWidget(refresh_button)
+        actions.addStretch(1)
+        layout.addLayout(actions)
+
+        self._refresh_prompt_preview()
+        return widget
+
+    def _refresh_prompt_preview(self) -> None:
+        preview_text = self._prompt_preview_text()
+        if hasattr(self, "prompt_preview"):
+            self.prompt_preview.setPlainText(preview_text)
+        if hasattr(self, "settings_summary"):
+            self._refresh_settings_summary()
+
+    def _prompt_preview_text(self) -> str:
+        tone_key = str(self.tone_combo.currentData() or self.settings.user_tone)
+        signature = self.signature_input.toPlainText().strip()
+        return build_prompt_preview(
+            tone_key=tone_key,
+            signature=signature,
+            user_facing=True,
+        )
 
     def _refresh_status_overlay_visibility(self) -> None:
         visible = self.banner.isVisible() or self.progress_bar.isVisible()
@@ -793,29 +1660,64 @@ class MailAssistDesktopWindow(QMainWindow):
             reverse=True,
         )
         for path in log_paths:
-            self.bot_log_selector.addItem(path.name, str(path))
+            self.bot_log_selector.addItem(self._bot_log_selector_label(path), str(path))
         self.bot_log_selector.blockSignals(False)
 
         if self.latest_bot_log_path is not None:
             index = self.bot_log_selector.findData(str(self.latest_bot_log_path))
             if index >= 0:
                 self.bot_log_selector.setCurrentIndex(index)
+                self.load_selected_bot_log()
                 return
         if self.bot_log_selector.count():
             self.bot_log_selector.setCurrentIndex(0)
+            self.load_selected_bot_log()
         else:
             self.bot_log_viewer.clear()
 
+    def _bot_log_selector_label(self, path: Path) -> str:
+        events = self._read_bot_log_events(path)
+        if not events:
+            return path.name
+        first = events[0]
+        completed = next((event for event in reversed(events) if event.get("type") == "completed"), {})
+        action = str(first.get("action") or path.name.removeprefix("bot-").split("-", 1)[0])
+        pieces = [_event_day_time_label(first.get("timestamp")), _log_action_label(action)]
+        provider = completed.get("provider")
+        if provider:
+            pieces.append(str(provider).title())
+        if action == "watch-once" and completed:
+            draft_count = int(completed.get("draft_count") or 0)
+            skipped_count = int(completed.get("skipped_count") or 0)
+            already_count = int(completed.get("already_handled_count") or 0)
+            pieces.append(f"{draft_count} draft{'s' if draft_count != 1 else ''}")
+            if skipped_count:
+                pieces.append(f"{skipped_count} skipped")
+            if already_count:
+                pieces.append(f"{already_count} already handled")
+        elif action == "ollama-check":
+            pieces.append("success" if completed else "running")
+        elif completed and "message_count" in completed:
+            pieces.append(f"{completed.get('message_count')} messages")
+        elif completed and "processed_count" in completed:
+            pieces.append(f"{completed.get('processed_count')} processed")
+        if any(event.get("type") == "error" for event in events):
+            pieces.append("error")
+        return " - ".join(pieces)
+
     def refresh_models(self) -> None:
-        models, model_error = list_available_models(
-            self.ollama_url_input.text().strip(),
-            self.settings.ollama_model,
-        )
+        model_details, model_error = self._list_available_model_details()
+        models = [str(item.get("name", "")).strip() for item in model_details if item.get("name")]
+        self.ollama_model_details = {
+            str(item.get("name", "")).strip(): item for item in model_details if item.get("name")
+        }
         self.ollama_model_picker.blockSignals(True)
         self.ollama_model_picker.clear()
         if models:
-            for model in models:
-                self.ollama_model_picker.addItem(model, model)
+            for model_detail in model_details:
+                model = str(model_detail.get("name", "")).strip()
+                if model:
+                    self.ollama_model_picker.addItem(_model_display_label(model_detail), model)
             picker_index = self.ollama_model_picker.findData(self.settings.ollama_model)
             if picker_index >= 0:
                 self.ollama_model_picker.setCurrentIndex(picker_index)
@@ -823,15 +1725,35 @@ class MailAssistDesktopWindow(QMainWindow):
             self.ollama_model_picker.addItem("No local models found", "")
         self.ollama_model_picker.blockSignals(False)
         if models:
-            self.ollama_models_hint.setText("Available models: " + ", ".join(models))
+            self.ollama_connection_status.setText(f"Connected, {len(models)} installed")
+            self.ollama_connection_status.setStyleSheet("color: #215f4a; font-size: 13px;")
+            self.ollama_models_hint.setText(f"Found {len(models)} installed model(s).")
         else:
-            self.ollama_models_hint.setText("Available models: none detected yet.")
+            self.ollama_connection_status.setText("No models found")
+            self.ollama_connection_status.setStyleSheet("color: #8c4029; font-size: 13px;")
+            self.ollama_models_hint.setText("No installed Ollama models were detected.")
         if model_error:
-            self.ollama_result.setPlainText(model_error)
-        elif models:
-            self.ollama_result.setPlainText(f"Found {len(models)} available model(s).")
-        else:
+            self.ollama_connection_status.setText("Not reachable")
+            self.ollama_connection_status.setStyleSheet("color: #8c4029; font-size: 13px;")
+            if not self.ollama_result.toPlainText().startswith("Sending a tiny test prompt"):
+                self._set_ollama_result_text(model_error)
+        elif not models and not self.ollama_result.toPlainText().strip():
             self.ollama_result.clear()
+        self._refresh_ollama_model_hint()
+
+    def _list_available_model_details(self) -> tuple[list[dict[str, Any]], str]:
+        base_url = self.ollama_url_input.text().strip()
+        selected_model = self.settings.ollama_model
+        try:
+            return OllamaClient(base_url, selected_model).list_model_details(), ""
+        except RuntimeError as exc:
+            return [], str(exc)
+
+    def _set_ollama_result_text(self, text: str) -> None:
+        self.ollama_result.setPlainText(text)
+        self.ollama_result_label.show()
+        self.ollama_result.show()
+        self._sync_settings_stack_height()
 
     def current_context(self) -> dict[str, str]:
         return {
@@ -1296,11 +2218,19 @@ class MailAssistDesktopWindow(QMainWindow):
             return
         self.run_bot_action("regenerate-thread", thread_id=self.current_thread_id)
 
-    def save_settings(self) -> None:
+    def save_settings(
+        self,
+        _checked: bool = False,
+        *,
+        announce: bool = True,
+        mark_complete: bool = False,
+    ) -> None:
         env_file = self.settings.root_dir / ".env"
         current = read_env_file(env_file)
         selected_model = str(self.ollama_model_picker.currentData() or self.settings.ollama_model).strip()
         poll_seconds = self.poll_seconds_input.text().strip() or "60"
+        setup_complete = "true" if mark_complete else ("true" if self.setup_finished else "false")
+        provider = "gmail" if self.gmail_enabled.isChecked() else "outlook"
         current.update(
             {
                 "MAILASSIST_OLLAMA_URL": self.ollama_url_input.text().strip() or "http://localhost:11434",
@@ -1308,7 +2238,7 @@ class MailAssistDesktopWindow(QMainWindow):
                 "MAILASSIST_USER_SIGNATURE": self.signature_input.toPlainText().strip().replace("\n", "\\n"),
                 "MAILASSIST_USER_TONE": str(self.tone_combo.currentData() or "direct_concise"),
                 "MAILASSIST_BOT_POLL_SECONDS": poll_seconds,
-                "MAILASSIST_DEFAULT_PROVIDER": str(self.default_provider_combo.currentData()),
+                "MAILASSIST_DEFAULT_PROVIDER": provider,
                 "MAILASSIST_GMAIL_ENABLED": "true" if self.gmail_enabled.isChecked() else "false",
                 "MAILASSIST_OUTLOOK_ENABLED": "true" if self.outlook_enabled.isChecked() else "false",
                 "MAILASSIST_GMAIL_CREDENTIALS_FILE": self.gmail_credentials_input.text().strip(),
@@ -1319,19 +2249,36 @@ class MailAssistDesktopWindow(QMainWindow):
                     "MAILASSIST_OUTLOOK_REDIRECT_URI",
                     "http://localhost:8765/outlook/callback",
                 ),
+                "MAILASSIST_SETUP_COMPLETE": setup_complete,
             }
         )
         write_env_file(env_file, current)
         self.settings = load_settings()
+        if mark_complete:
+            geometry = self.geometry()
+            self.setup_finished = True
+            self.settings_open = False
         self.refresh_models()
         self.refresh_dashboard()
-        self._set_banner("Settings saved.", level="info")
+        self._refresh_prompt_preview()
+        self._refresh_setup_visibility()
+        if mark_complete:
+            self._restore_geometry_after_layout(geometry)
+        if announce:
+            self._set_banner("Settings saved.", level="info")
+
+    def finish_settings_wizard(self) -> None:
+        self.save_settings(announce=True, mark_complete=True)
+        self._set_banner("Settings finished. Bot controls are now available.", level="info")
 
     def test_ollama(self) -> None:
-        prompt = self.ollama_test_prompt.toPlainText().strip()
-        if not prompt:
-            self._set_banner("Enter a prompt before testing Ollama.", level="error")
-            return
+        prompt = "Reply with one short sentence confirming MailAssist can use this model."
+        model = str(self.ollama_model_picker.currentData() or self.settings.ollama_model)
+        self._set_ollama_result_text(
+            f"Sending a tiny test prompt to {model}...\n\nPrompt: {prompt}\n\nResponse: waiting..."
+        )
+        self._set_banner("Sending a small test prompt to Ollama. This can take a moment.", level="info")
+        QApplication.processEvents()
         self.run_bot_action("ollama-check", prompt=prompt)
 
     def run_mock_watch_once(self) -> None:
@@ -1416,7 +2363,12 @@ class MailAssistDesktopWindow(QMainWindow):
             self.latest_bot_log_path = Path(str(event.get("path")))
             self.refresh_bot_logs()
         elif event_type == "ollama_result":
-            self.ollama_result.setPlainText(str(event.get("result", "")))
+            prompt = str(event.get("prompt", "")).strip()
+            result = str(event.get("result", "")).strip()
+            if prompt:
+                self._set_ollama_result_text(f"Prompt: {prompt}\n\nResponse: {result}")
+            else:
+                self._set_ollama_result_text(f"Response: {result}")
         elif event_type == "draft_created":
             self._append_recent_activity(
                 f"Draft created: {event.get('subject', 'Unknown subject')} ({event.get('classification', 'unclassified')})"
@@ -1469,7 +2421,155 @@ class MailAssistDesktopWindow(QMainWindow):
             self.bot_log_viewer.clear()
             self._set_banner("The selected bot log no longer exists.", level="error")
             return
-        self.bot_log_viewer.setPlainText(log_path.read_text(encoding="utf-8"))
+        raw_text = log_path.read_text(encoding="utf-8")
+        if self.show_raw_log_checkbox.isChecked():
+            self.bot_log_viewer.setPlainText(raw_text)
+            return
+        self.bot_log_viewer.setPlainText(self._format_bot_log_for_humans(log_path, raw_text))
+
+    def _read_bot_log_events(self, path: Path) -> list[dict[str, Any]]:
+        if not path.exists():
+            return []
+        return self._parse_bot_log_events(path.read_text(encoding="utf-8"))
+
+    def _parse_bot_log_events(self, raw_text: str) -> list[dict[str, Any]]:
+        events: list[dict[str, Any]] = []
+        for line in raw_text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                parsed = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                events.append(parsed)
+        return events
+
+    def _format_bot_log_for_humans(self, path: Path, raw_text: str) -> str:
+        events = self._parse_bot_log_events(raw_text)
+        if not events:
+            return f"No readable events were found in {path.name}."
+
+        first = events[0]
+        completed = next((event for event in reversed(events) if event.get("type") == "completed"), None)
+        errors = [event for event in events if event.get("type") == "error" or event.get("generation_error")]
+        action = str(first.get("action") or "")
+        title = _log_action_label(action)
+        started_at = first.get("timestamp")
+        finished_at = completed.get("timestamp") if completed else None
+        duration = self._log_duration_label(started_at, finished_at)
+
+        lines = [
+            f"{_event_day_time_label(started_at)} - {title}",
+            "",
+            "Summary",
+            f"Started: {_event_time_label(started_at)}",
+        ]
+        if completed:
+            lines.append(f"Finished: {_event_time_label(finished_at)}{f' ({duration})' if duration else ''}")
+        else:
+            lines.append("Finished: not yet")
+        lines.extend(self._bot_log_summary_lines(action, events, completed, errors))
+        if errors:
+            lines.extend(["", "Needs Attention"])
+            lines.extend(f"- {self._event_human_message(event)}" for event in errors)
+        lines.extend(["", "Timeline"])
+        for event in events:
+            if event.get("type") == "log_file":
+                continue
+            lines.append(f"{_event_time_label(event.get('timestamp'))}  {self._event_human_message(event)}")
+        lines.extend(["", f"Raw log file: {path}"])
+        return "\n".join(lines)
+
+    def _log_duration_label(self, started_at: object, finished_at: object) -> str:
+        start = _parse_event_timestamp(started_at)
+        finish = _parse_event_timestamp(finished_at)
+        if start is None or finish is None:
+            return ""
+        seconds = max(0, int((finish - start).total_seconds()))
+        if seconds < 60:
+            return f"{seconds} seconds"
+        minutes, remainder = divmod(seconds, 60)
+        return f"{minutes} min {remainder} sec" if remainder else f"{minutes} min"
+
+    def _bot_log_summary_lines(
+        self,
+        action: str,
+        events: list[dict[str, Any]],
+        completed: dict[str, Any] | None,
+        errors: list[dict[str, Any]],
+    ) -> list[str]:
+        lines: list[str] = []
+        started = events[0]
+        arguments = started.get("arguments") if isinstance(started.get("arguments"), dict) else {}
+        provider = (completed or {}).get("provider") or arguments.get("provider")
+        model = (completed or {}).get("selected_model") or arguments.get("selected_model")
+        if provider and action != "ollama-check":
+            lines.append(f"Provider: {str(provider).title()}")
+        if model:
+            lines.append(f"Model: {model}")
+        if completed:
+            for key, label in (
+                ("draft_count", "Drafts created"),
+                ("skipped_count", "Skipped"),
+                ("already_handled_count", "Already handled"),
+                ("processed_count", "Processed"),
+                ("message_count", "Messages read"),
+                ("generated_threads", "Drafts refreshed"),
+            ):
+                if key in completed:
+                    lines.append(f"{label}: {completed.get(key)}")
+        lines.append(f"Result: {'Error' if errors else 'OK'}")
+        return lines
+
+    def _event_human_message(self, event: dict[str, Any]) -> str:
+        event_type = str(event.get("type") or "")
+        message = str(event.get("message") or "").strip()
+        subject = str(event.get("subject") or "").strip()
+        classification = str(event.get("classification") or "").strip()
+        if event_type == "started":
+            return f"Started {_log_action_label(str(event.get('action') or 'bot action'))}."
+        if event_type == "log_file":
+            return "Opened the run log file."
+        if event_type == "info":
+            return message or "Information event."
+        if event_type == "draft_created":
+            detail = f'Created draft for "{subject}".' if subject else "Created draft."
+            if classification:
+                detail += f" Classification: {_humanize(classification)}."
+            provider_draft_id = event.get("provider_draft_id")
+            if provider_draft_id:
+                detail += f" Draft ID: {provider_draft_id}."
+            return detail
+        if event_type == "already_handled":
+            return f'Already handled "{subject}".' if subject else "Already handled an email."
+        if event_type == "skipped_email":
+            return message or (f'Skipped "{subject}".' if subject else "Skipped an email.")
+        if event_type == "processed_email":
+            detail = f'Processed "{subject}" for GUI review.' if subject else "Processed an email for GUI review."
+            if classification:
+                detail += f" Classification: {_humanize(classification)}."
+            return detail
+        if event_type == "gmail_message_preview":
+            sender = event.get("sender") or event.get("from") or "unknown sender"
+            return f'Previewed Gmail message "{subject or event.get("snippet", "")}" from {sender}.'
+        if event_type == "queue_status":
+            counts = event.get("counts")
+            if isinstance(counts, dict):
+                readable = ", ".join(f"{_humanize(str(key))}: {value}" for key, value in counts.items())
+                return f"Queue status: {readable}."
+            return "Read queue status."
+        if event_type == "ollama_result":
+            result = str(event.get("result") or "").strip()
+            return f"Ollama replied: {result}" if result else "Ollama returned an empty reply."
+        if event_type == "completed":
+            return message or "Completed."
+        if event_type == "error":
+            return message or "Error."
+        if event.get("generation_error"):
+            return f"Draft generation error: {event.get('generation_error')}"
+        return message or _humanize(event_type)
 
 
 def run_desktop_gui() -> int:

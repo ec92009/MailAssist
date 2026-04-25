@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict
@@ -76,8 +77,17 @@ def write_env_file(env_file: Path, values: Dict[str, str]) -> None:
     env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def default_root_dir() -> Path:
+    configured_root = os.getenv("MAILASSIST_ROOT_DIR", "").strip()
+    if configured_root:
+        return Path(configured_root).expanduser()
+    if getattr(sys, "frozen", False):
+        return Path.home() / "Library" / "Application Support" / "MailAssist"
+    return Path.cwd()
+
+
 def load_settings() -> Settings:
-    root_dir = Path.cwd()
+    root_dir = default_root_dir()
     load_dotenv(root_dir / ".env")
 
     data_dir = root_dir / "data"

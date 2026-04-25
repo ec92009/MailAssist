@@ -49,7 +49,8 @@ The GUI should not be a full email editor. Gmail and Outlook already do that wel
 
 - Generate one draft, not multiple options.
 - Use the user's configured tone as the base style.
-- Include the user's exact configured signature when appropriate.
+- Do not ask the model to write the user's signature.
+- Append the user's configured signature outside the model response when appropriate.
 - Stay grounded in the source thread.
 - Never invent attachments, commitments, dates, approvals, prices, or prior context.
 - Never invent teams, reviewers, vendors, calendars, internal processes, or availability.

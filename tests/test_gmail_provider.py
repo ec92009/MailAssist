@@ -4,7 +4,12 @@ from types import ModuleType
 from pathlib import Path
 
 from mailassist.models import DraftRecord
-from mailassist.providers.gmail import GMAIL_SCOPES, GmailProvider
+from mailassist.providers.gmail import (
+    GMAIL_SCOPES,
+    GmailProvider,
+    _gmail_signature_to_text,
+    _select_send_as_entry,
+)
 
 
 def test_gmail_provider_includes_recipients_in_raw_draft(monkeypatch, tmp_path: Path) -> None:
@@ -99,3 +104,21 @@ def test_gmail_provider_includes_recipients_in_raw_draft(monkeypatch, tmp_path: 
 def test_gmail_scopes_include_compose_and_readonly() -> None:
     assert "https://www.googleapis.com/auth/gmail.compose" in GMAIL_SCOPES
     assert "https://www.googleapis.com/auth/gmail.readonly" in GMAIL_SCOPES
+    assert "https://www.googleapis.com/auth/gmail.settings.basic" in GMAIL_SCOPES
+
+
+def test_gmail_signature_html_is_sanitized_to_plain_text() -> None:
+    html = "<div>Best regards,<br>Example&nbsp;User</div><div>user@example.com</div>"
+
+    assert _gmail_signature_to_text(html) == "Best regards,\nExample User\nuser@example.com"
+
+
+def test_gmail_signature_prefers_default_send_as_entry() -> None:
+    selected = _select_send_as_entry(
+        [
+            {"sendAsEmail": "alias@example.com", "signature": "Alias"},
+            {"sendAsEmail": "main@example.com", "signature": "Main", "isDefault": True},
+        ]
+    )
+
+    assert selected["sendAsEmail"] == "main@example.com"

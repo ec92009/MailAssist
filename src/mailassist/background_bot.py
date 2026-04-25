@@ -58,6 +58,30 @@ def tone_guidance(tone_key: str) -> tuple[str, str]:
     return TONE_OPTIONS.get(tone_key, TONE_OPTIONS["direct_concise"])
 
 
+def build_prompt_preview(
+    *,
+    tone_key: str,
+    signature: str,
+    sample_thread_id: str = "thread-010",
+    user_facing: bool = False,
+) -> str:
+    """Build a representative live-draft prompt with sanitized mock mail."""
+    tone, guidance = tone_guidance(tone_key)
+    threads = build_mock_threads()
+    sample_thread = next((thread for thread in threads if thread.thread_id == sample_thread_id), threads[0])
+    prompt = build_batch_candidate_prompt(
+        [sample_thread],
+        tone=tone,
+        guidance=guidance,
+        signature=signature,
+    )
+    if not user_facing:
+        return prompt
+    prompt = re.sub(r"(?ms)^Output format requirements:.*?^Threads:\n", "Example email sent to the local model:\n", prompt)
+    prompt = re.sub(r"(?m)^- If classification is `automated`, `no_response`, or `spam`, set `SHOULD_DRAFT: no` and leave `BODY:` empty\.\n", "", prompt)
+    return prompt
+
+
 def bot_state_path(root_dir: Path) -> Path:
     return root_dir / "data" / BOT_STATE_FILENAME
 
@@ -356,7 +380,7 @@ Drafting rules:
 - For choice requests like `Would you like us to hold an open house Saturday or Sunday?`, do not say the user will check with a team, decide availability, or confirm a future preference. Say the user is reviewing the options and leave the final choice for the user to add.
 - Avoid promise-shaped phrases like `I will follow up`, `I will let you know`, `I'll let you know`, `I will call`, `I will check`, `I will contact`, `I will update`, or `I will confirm` unless the user already made that exact commitment in the thread. Prefer current-state language like `I am reviewing this` or `I am looking over the details`.
 - If the thread uses relative timing like `today`, `tomorrow`, `this morning`, or `in the morning`, do not repeat that timing as a future promise.
-- If classification is `urgent` or `reply_needed`, the body must contain at least one substantive sentence before the signature. Never return only a greeting, sign-off, or signature.
+- If classification is `urgent` or `reply_needed`, the body must contain at least one substantive sentence. Never return only a greeting, sign-off, or signature.
 - If information is missing, say so plainly instead of guessing.
 - Keep each draft under 140 words.
 - Signature rules:
@@ -452,12 +476,28 @@ def reply_recipients_for_thread(thread: EmailThread, user_address: str = "you@ex
 
 
 def ensure_substantive_reply_body(thread: EmailThread, body: str, *, signature: str = "") -> str:
-    cleaned = body.strip()
+    cleaned = strip_configured_signature(body, signature=signature)
     if has_substantive_reply_text(cleaned, signature=signature) and not has_promise_shaped_language(
         cleaned
     ):
-        return cleaned
+        return append_signature(cleaned, signature=signature)
     return conservative_acknowledgement_body(signature=signature)
+
+
+def append_signature(body: str, *, signature: str = "") -> str:
+    cleaned = strip_configured_signature(body, signature=signature)
+    cleaned_signature = signature.strip()
+    if cleaned and cleaned_signature:
+        return f"{cleaned}\n\n{cleaned_signature}"
+    return cleaned
+
+
+def strip_configured_signature(body: str, *, signature: str = "") -> str:
+    cleaned = body.strip()
+    cleaned_signature = signature.strip()
+    if cleaned_signature and cleaned.lower().endswith(cleaned_signature.lower()):
+        return cleaned[: -len(cleaned_signature)].rstrip()
+    return cleaned
 
 
 def has_promise_shaped_language(body: str) -> bool:
@@ -503,11 +543,7 @@ def has_substantive_reply_text(body: str, *, signature: str = "") -> bool:
 
 
 def conservative_acknowledgement_body(*, signature: str = "") -> str:
-    body = "Thanks for the note. I am reviewing this."
-    cleaned_signature = signature.strip()
-    if cleaned_signature:
-        return f"{body}\n\n{cleaned_signature}"
-    return body
+    return append_signature("Thanks for the note. I am reviewing this.", signature=signature)
 
 
 def body_with_review_context(thread: EmailThread, body: str) -> str:

@@ -3,7 +3,7 @@
 ## Product Simplification
 
 - Remove or quarantine legacy review-table helper code once the compact control panel is stable.
-- Keep refining the control panel around bot status, recent activity, settings, and logs.
+- Keep refining the control panel around bot status, recent activity, settings, and readable logs.
 - Keep one preferred tone setting near the user signature.
 - Keep one generated draft per actionable email.
 
@@ -28,13 +28,13 @@
 - Keep Gmail OAuth credentials under ignored `secrets/`.
 - Keep the mock-to-Gmail draft test available for regression checks.
 - Keep the read-only latest-10 inbox preview available for Gmail ingestion checks.
-- Add read-only classification for the latest Gmail inbox preview before any real-email drafting.
 - Add Gmail inbox/thread polling.
 - Preserve recipients, cc/bcc, subject, and reply threading metadata.
 - Create drafts in the correct thread.
 - Detect whether a user already replied manually.
 - Avoid duplicate drafts for the same latest provider message.
 - Keep real Gmail draft creation behind controlled tests until read-only classification looks trustworthy.
+- Use Gmail send-as signature as a starting point for the local signature setting when available.
 
 ## Outlook
 
@@ -52,7 +52,17 @@
 - Show recent drafts created in provider.
 - Show skipped counts by classification.
 - Keep logs in a separate inspectable window.
+- Keep the setup wizard compact, stable in window size, and first-run friendly.
+- Keep bottom navigation controls in stable locations across wizard pages.
 - Avoid explanatory subtitles and empty panels.
+
+## Packaging
+
+- Keep `dist/` ignored; do not commit generated `.app` or `.dmg` artifacts.
+- Publish the Mac/Gmail `.dmg` through GitHub Releases.
+- Keep README download links synchronized with the current visible version.
+- Add notarization/signing research before broader distribution.
+- Add Windows packaging after the Mac/Gmail loop is stable.
 
 ## Cleanup
 
