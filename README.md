@@ -49,7 +49,7 @@ Windows and Outlook are planned after this Mac/Gmail loop is stable.
 
 If you are reading this on GitHub, download the latest Mac/Gmail `.dmg`:
 
-[Download MailAssist-v56.46-mac-gmail.dmg](https://github.com/ec92009/MailAssist/releases/latest/download/MailAssist-v56.46-mac-gmail.dmg)
+[Download MailAssist-v56.46-mac-gmail.dmg](https://github.com/ec92009/MailAssist/releases/download/v56.46/MailAssist-v56.46-mac-gmail.dmg)
 
 If that direct link is not available yet, open the [MailAssist Releases page](https://github.com/ec92009/MailAssist/releases) and download the latest Mac/Gmail `.dmg`.
 
