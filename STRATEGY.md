@@ -20,6 +20,8 @@ MailAssist should feel like a quiet local assistant that keeps Gmail or Outlook 
 8. The user reviews, edits, sends, or deletes that draft in Gmail or Outlook.
 9. The GUI shows configuration, bot health, recent activity, and logs.
 
+Live watching should optimize for first-draft latency. If one actionable email arrives, draft it immediately instead of waiting for a batch. Batching is useful for backlog catch-up, import jobs, first-install processing, or an acquisition pass where several messages are already waiting at the same instant.
+
 ## What The Bot Owns
 
 - Provider polling or watching.
@@ -50,6 +52,9 @@ The GUI should not be a full email editor. Gmail and Outlook already do that wel
 - Include the user's exact configured signature when appropriate.
 - Stay grounded in the source thread.
 - Never invent attachments, commitments, dates, approvals, prices, or prior context.
+- Never invent teams, reviewers, vendors, calendars, internal processes, or availability.
+- Do not promise the user will call, check, contact, confirm, update, or follow up unless the user already made that exact commitment in the thread.
+- For requests that require a user decision, generate a safe holding reply and leave the final decision for the user to add.
 - Do not draft for automated, spam, newsletter, digest, or no-response messages.
 - Treat `urgent` as a priority signal, not as a separate user workflow.
 
@@ -91,6 +96,12 @@ Keep local state small and explainable:
 - recent activity summary for the GUI
 
 Avoid a complex folder state machine unless real provider behavior forces it. A simple local state file plus logs is enough until proven otherwise.
+
+## Model Posture
+
+`gemma4:31b` is a promising quality model on the current M1 Max test machine. MailAssist should disable Ollama thinking output with `think: false`, allow enough timeout for slower local models, and expose model selection without allowing accidental model downloads from free-form names.
+
+Single-email drafting latency around 14-20 seconds is acceptable for background watching. Batch sizes 5 and 10 are acceptable for throughput, but they should not become the default live behavior if they delay the first visible provider draft.
 
 ## Design Posture
 

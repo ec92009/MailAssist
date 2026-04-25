@@ -18,6 +18,10 @@
 - Draft only for `urgent` and `reply_needed`.
 - Create provider-native drafts for drafted items.
 - Emit JSONL activity events for skipped, drafted, failed, and retry states.
+- Keep live processing optimized for first-draft latency, usually one actionable email at a time.
+- Use `--batch-size` for backlog catch-up, imports, or first-install processing, not as a reason to wait for more mail.
+- Add per-batch timing events if batching remains useful for diagnostics.
+- Keep post-generation safety checks for signature-only and promise-shaped replies.
 
 ## Gmail
 
@@ -30,6 +34,7 @@
 - Create drafts in the correct thread.
 - Detect whether a user already replied manually.
 - Avoid duplicate drafts for the same latest provider message.
+- Keep real Gmail draft creation behind controlled tests until read-only classification looks trustworthy.
 
 ## Outlook
 
@@ -55,3 +60,4 @@
 - Decide whether to keep `bot_queue.py` as a useful scaffold or replace it with a simpler state store.
 - Keep runtime logs, drafts, queue files, and provider artifacts ignored.
 - Keep only sanitized samples in git.
+- Keep Gmail receipt/order lookups out of committed artifacts; they were used only to confirm local hardware performance context.

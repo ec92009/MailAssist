@@ -193,6 +193,11 @@ def test_build_review_candidates_prompt_includes_full_contract() -> None:
     assert "Best regards,\nEthan" in prompt
     assert "Do not turn email domains into company names" in prompt
     assert "do not invent the user's decision" in prompt
+    assert "Do not invent teams" in prompt
+    assert "leave the final choice for the user to add" in prompt
+    assert "Avoid promise-shaped phrases" in prompt
+    assert "do not repeat that timing as a future promise" in prompt
+    assert "Never return only a greeting, sign-off, or signature" in prompt
 
 
 def test_build_single_review_candidate_prompt_requests_one_alternative() -> None:
@@ -212,6 +217,11 @@ def test_build_single_review_candidate_prompt_requests_one_alternative() -> None
     assert "Do not substitute names or invent any alternate sign-off." in prompt
     assert "Do not turn email domains into company names" in prompt
     assert "do not invent the user's decision" in prompt
+    assert "Do not invent teams" in prompt
+    assert "leave the final choice for the user to add" in prompt
+    assert "Avoid promise-shaped phrases" in prompt
+    assert "do not repeat that timing as a future promise" in prompt
+    assert "Never return only a greeting, sign-off, or signature" in prompt
     assert OPTION_A_SEPARATOR not in prompt
     assert OPTION_B_SEPARATOR not in prompt
 

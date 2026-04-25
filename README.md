@@ -13,6 +13,7 @@ The user reviews, edits, sends, or deletes drafts in the normal mail client. Mai
 - Bot creates one provider draft for mail that needs a response.
 - GUI configures and supervises the bot.
 - Gmail/Outlook remain the review and editing surfaces.
+- Live watching favors one-at-a-time first-draft latency; batching is for backlog catch-up.
 
 ## Current Docs
 
@@ -98,6 +99,19 @@ Create one Gmail draft from one mock email after Gmail setup is complete:
 
 This command is intentionally narrow: it keeps mock input emails, creates one provider draft in Gmail, and should not send mail. Re-running with `--force` can create duplicate drafts.
 
+Process a mock backlog in larger Ollama batches:
+
+```bash
+./.venv/bin/mailassist review-bot \
+  --action watch-once \
+  --provider gmail \
+  --force \
+  --batch-size 10 \
+  --selected-model gemma4:31b
+```
+
+Use batching for backlogs or controlled tests. For live watching, prefer immediate one-at-a-time drafting so the first provider draft appears as soon as possible.
+
 Preview the latest 10 Gmail inbox messages without creating drafts:
 
 ```bash
@@ -124,6 +138,14 @@ Runtime files live under `data/` and should generally stay out of git:
 - `data/user_replied/`
 
 Only sanitized examples and empty placeholders should be committed.
+
+## Current Verified Baseline
+
+- Visible version: `v56.10`.
+- Test suite: 51 passing tests.
+- `gemma4:31b` works locally after MailAssist sends `think: false` to Ollama.
+- Controlled mock-to-Gmail draft creation has been tested with batch sizes 1, 5, and 10.
+- MailAssist creates drafts only; it does not send email.
 
 ## Project Shorthand
 

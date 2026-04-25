@@ -4,6 +4,9 @@ from pathlib import Path
 from mailassist.background_bot import (
     body_with_review_context,
     build_batch_candidate_prompt,
+    ensure_substantive_reply_body,
+    has_promise_shaped_language,
+    has_substantive_reply_text,
     human_review_context_time,
     load_bot_state,
     parse_batch_candidate_response,
@@ -95,6 +98,52 @@ def test_body_with_review_context_adds_latest_mock_message() -> None:
     assert body.endswith("I will send the kickoff notes today.")
 
 
+def test_body_with_review_context_includes_recent_incoming_messages() -> None:
+    from mailassist.gui.server import build_mock_threads
+
+    thread = next(item for item in build_mock_threads() if item.thread_id == "thread-009")
+
+    body = body_with_review_context(thread, "I will check and update you.")
+
+    assert "> Can you do me a favor in the morning" in body
+    assert "> If the utility cannot answer quickly" in body
+    assert body.endswith("I will check and update you.")
+
+
+def test_signature_only_candidate_gets_conservative_body() -> None:
+    from mailassist.gui.server import build_mock_threads
+
+    thread = next(item for item in build_mock_threads() if item.thread_id == "thread-010")
+    signature = "Best,\nElie\ne@example.com"
+
+    body = ensure_substantive_reply_body(thread, f"Best,\n\nElie\ne@example.com", signature=signature)
+
+    assert body.startswith("Thanks for the note. I am reviewing this.")
+    assert body.endswith(signature)
+    assert not has_substantive_reply_text("Best,\nElie\ne@example.com", signature=signature)
+
+
+def test_promise_shaped_candidate_gets_conservative_body() -> None:
+    from mailassist.gui.server import build_mock_threads
+
+    thread = next(item for item in build_mock_threads() if item.thread_id == "thread-009")
+    signature = "Best,\nElie\ne@example.com"
+
+    body = ensure_substantive_reply_body(
+        thread,
+        "I will call the utility company and update you.\n\nBest,\nElie\ne@example.com",
+        signature=signature,
+    )
+
+    assert body == "Thanks for the note. I am reviewing this.\n\nBest,\nElie\ne@example.com"
+
+
+def test_has_promise_shaped_language_detects_common_commitments() -> None:
+    assert has_promise_shaped_language("I will let you know if anything changes.")
+    assert has_promise_shaped_language("I'll follow up with details.")
+    assert not has_promise_shaped_language("I am reviewing the details.")
+
+
 def test_human_review_context_time_uses_relative_day_words() -> None:
     now = datetime(2026, 4, 25, 13, 0, tzinfo=timezone.utc)
 
@@ -169,6 +218,11 @@ def test_build_batch_candidate_prompt_forbids_domain_company_names() -> None:
 
     assert "Do not turn email domains into company names" in prompt
     assert "do not invent the user's decision" in prompt
+    assert "Do not invent teams" in prompt
+    assert "leave the final choice for the user to add" in prompt
+    assert "Avoid promise-shaped phrases" in prompt
+    assert "do not repeat that timing as a future promise" in prompt
+    assert "Never return only a greeting, sign-off, or signature" in prompt
     assert "samira@brightforge.ai" in prompt
 
 

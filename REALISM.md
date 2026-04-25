@@ -49,6 +49,12 @@ The UI should avoid pretending progress is exact. Use honest statuses:
 - skipped because no reply is needed
 - failed with retryable/non-retryable error
 
+Some newer local models can expose thinking text unless explicitly disabled. MailAssist should send `think: false` to Ollama generation requests and should keep generation timeouts long enough for larger local models.
+
+Prompting alone is not enough. If a generated draft is only a signature, or if it promises that the user will call, check, contact, confirm, update, or follow up without an existing user commitment, the bot should fall back to a conservative acknowledgement instead of writing that promise into Gmail.
+
+Batching improves average throughput for backlogs, but it can hurt the user-visible moment that matters most: when the first draft appears. Live provider watching should usually draft one actionable email immediately and reserve batching for already-waiting backlogs.
+
 ## Privacy Reality
 
 Local state will contain email content. Default posture:

@@ -211,6 +211,12 @@ def run_mock_watch_pass(
             body = str(item.get("body", "")).strip()
             generation_model = item.get("generation_model")
             generation_error = item.get("generation_error")
+            if classification not in SET_ASIDE_CLASSIFICATIONS:
+                body = ensure_substantive_reply_body(
+                    thread,
+                    body,
+                    signature=settings.user_signature,
+                )
 
             if classification in SET_ASIDE_CLASSIFICATIONS or not body:
                 provider_state[thread.thread_id] = _state_record(
@@ -345,7 +351,12 @@ Drafting rules:
 - If a reply is appropriate, write as the recipient of that specific thread.
 - Stay grounded in that thread only.
 - Do not turn email domains into company names unless that company name appears explicitly in the thread.
-- If the email asks the user to approve, choose, confirm attendance, accept terms, authorize access, or make a business decision, do not invent the user's decision. Draft a response that says the user is reviewing it, asks for missing detail, or leaves the decision for the user to complete.
+- If the email asks the user to approve, choose, confirm attendance, accept terms, authorize access, call someone, contact someone, check with another party, or make a business decision, do not invent the user's decision or promise the user will do the requested action. Draft a safe holding response that says the user is reviewing it, asks for missing detail, or leaves the action for the user to complete.
+- Do not invent teams, reviewers, calendars, availability, internal processes, vendors, companies, or people that are not explicitly named in the thread.
+- For choice requests like `Would you like us to hold an open house Saturday or Sunday?`, do not say the user will check with a team, decide availability, or confirm a future preference. Say the user is reviewing the options and leave the final choice for the user to add.
+- Avoid promise-shaped phrases like `I will follow up`, `I will let you know`, `I'll let you know`, `I will call`, `I will check`, `I will contact`, `I will update`, or `I will confirm` unless the user already made that exact commitment in the thread. Prefer current-state language like `I am reviewing this` or `I am looking over the details`.
+- If the thread uses relative timing like `today`, `tomorrow`, `this morning`, or `in the morning`, do not repeat that timing as a future promise.
+- If classification is `urgent` or `reply_needed`, the body must contain at least one substantive sentence before the signature. Never return only a greeting, sign-off, or signature.
 - If information is missing, say so plainly instead of guessing.
 - Keep each draft under 140 words.
 - Signature rules:
@@ -440,18 +451,90 @@ def reply_recipients_for_thread(thread: EmailThread, user_address: str = "you@ex
     return [item for item in thread.participants if item != user_address]
 
 
-def body_with_review_context(thread: EmailThread, body: str) -> str:
-    if not thread.messages:
-        return body.strip()
-    latest = thread.messages[-1]
-    quoted = "\n".join(f"> {line}" if line else ">" for line in latest.text.strip().splitlines())
-    return (
-        "Review context - delete before sending:\n"
-        f"{latest.sender} wrote {human_review_context_time(latest.sent_at)}:\n"
-        f"{quoted}\n\n"
-        "---\n\n"
-        f"{body.strip()}"
+def ensure_substantive_reply_body(thread: EmailThread, body: str, *, signature: str = "") -> str:
+    cleaned = body.strip()
+    if has_substantive_reply_text(cleaned, signature=signature) and not has_promise_shaped_language(
+        cleaned
+    ):
+        return cleaned
+    return conservative_acknowledgement_body(signature=signature)
+
+
+def has_promise_shaped_language(body: str) -> bool:
+    promise_verbs = (
+        "call",
+        "check",
+        "confirm",
+        "contact",
+        "follow up",
+        "get",
+        "let you know",
+        "provide",
+        "send",
+        "update",
     )
+    alternatives = "|".join(re.escape(verb) for verb in promise_verbs)
+    patterns = [
+        rf"\bI\s+will\s+({alternatives})\b",
+        rf"\bI'll\s+({alternatives})\b",
+        rf"\bI\s+am\s+going\s+to\s+({alternatives})\b",
+    ]
+    return any(re.search(pattern, body, flags=re.IGNORECASE) for pattern in patterns)
+
+
+def has_substantive_reply_text(body: str, *, signature: str = "") -> bool:
+    cleaned = body.strip()
+    if not cleaned:
+        return False
+    signature_lines = {line.strip().lower() for line in signature.splitlines() if line.strip()}
+    generic_lines = {"best", "best,", "thanks", "thanks,", "thank you", "regards", "regards,"}
+    content_lines = []
+    for line in cleaned.splitlines():
+        normalized = line.strip().lower()
+        if not normalized:
+            continue
+        if normalized in signature_lines or normalized in generic_lines:
+            continue
+        if "@" in normalized and len(normalized.split()) == 1:
+            continue
+        content_lines.append(line.strip())
+    content = " ".join(content_lines)
+    return bool(re.search(r"[A-Za-z].{12,}", content))
+
+
+def conservative_acknowledgement_body(*, signature: str = "") -> str:
+    body = "Thanks for the note. I am reviewing this."
+    cleaned_signature = signature.strip()
+    if cleaned_signature:
+        return f"{body}\n\n{cleaned_signature}"
+    return body
+
+
+def body_with_review_context(thread: EmailThread, body: str) -> str:
+    context_messages = review_context_messages(thread)
+    if not context_messages:
+        return body.strip()
+    blocks = []
+    for message in context_messages:
+        quoted = "\n".join(f"> {line}" if line else ">" for line in message.text.strip().splitlines())
+        blocks.append(
+            f"{message.sender} wrote {human_review_context_time(message.sent_at)}:\n{quoted}"
+        )
+    return "Review context - delete before sending:\n" + "\n\n".join(blocks) + f"\n\n---\n\n{body.strip()}"
+
+
+def review_context_messages(
+    thread: EmailThread,
+    *,
+    user_address: str = "you@example.com",
+    max_messages: int = 2,
+) -> list[Any]:
+    if not thread.messages:
+        return []
+    incoming = [message for message in thread.messages if message.sender != user_address]
+    if incoming:
+        return incoming[-max_messages:]
+    return thread.messages[-max_messages:]
 
 
 def human_review_context_time(

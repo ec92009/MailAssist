@@ -15,9 +15,9 @@ Open questions:
 
 Current Gmail research checkpoint:
 
-- The first safe Gmail test keeps mock emails as input and creates one Gmail draft for `thread-008`.
-- The test uses the Gmail compose scope and should create a draft only, not send mail.
-- The next real-mail step uses Gmail readonly access for metadata/snippet preview before any drafting.
+- Safe Gmail tests keep sanitized mock emails as input and create Gmail drafts only, never sends.
+- Batch-size 5 and 10 have been tested against Gmail draft creation with `gemma4:31b`.
+- The next real-mail step uses Gmail readonly access for metadata/snippet preview and classification before any real-email drafting.
 - The project now has two setup PDFs for the Google Cloud/OAuth steps because the Google Console is dense enough to need explicit navigation cues.
 
 ## Deduplication
@@ -64,6 +64,14 @@ Questions to answer:
 - Is one prompt cheaper and reliable enough?
 - Does the model produce better drafts if tone, signature, and provider context are separated into clear sections?
 - How often does the model invent facts under each tone?
+
+Latest findings:
+
+- `gemma4:31b` is higher quality than the earlier small-model tests once Ollama thinking output is disabled.
+- `think: false` is required for clean MailAssist output with this model.
+- The model can still invent soft process details like `team` or promise-shaped user actions, so prompt rules need a post-generation guard.
+- Batch-size 10 is not materially faster end to end than batch-size 5 for the current 11-email mock set; both are around 150 seconds including Gmail draft creation.
+- Live watching should not delay draft creation while waiting for a batch. Batching is a backlog/catch-up tool.
 
 ## GUI Scope
 

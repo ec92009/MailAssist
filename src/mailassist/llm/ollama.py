@@ -5,6 +5,10 @@ from typing import Iterator, List
 from urllib import error, request
 
 
+GENERATE_TIMEOUT_SECONDS = 300
+LIST_MODELS_TIMEOUT_SECONDS = 30
+
+
 class OllamaClient:
     def __init__(self, base_url: str, model: str) -> None:
         self.base_url = base_url.rstrip("/")
@@ -16,6 +20,7 @@ class OllamaClient:
                 "model": self.model,
                 "prompt": prompt,
                 "stream": False,
+                "think": False,
             }
         ).encode("utf-8")
         req = request.Request(
@@ -25,7 +30,7 @@ class OllamaClient:
             method="POST",
         )
         try:
-            with request.urlopen(req, timeout=120) as response:
+            with request.urlopen(req, timeout=GENERATE_TIMEOUT_SECONDS) as response:
                 body = response.read().decode("utf-8")
         except error.URLError as exc:
             raise RuntimeError(
@@ -41,6 +46,7 @@ class OllamaClient:
                 "model": self.model,
                 "prompt": prompt,
                 "stream": True,
+                "think": False,
             }
         ).encode("utf-8")
         req = request.Request(
@@ -50,7 +56,7 @@ class OllamaClient:
             method="POST",
         )
         try:
-            with request.urlopen(req, timeout=300) as response:
+            with request.urlopen(req, timeout=GENERATE_TIMEOUT_SECONDS) as response:
                 pending = b""
                 reader = getattr(response, "read1", None)
                 if reader is None and getattr(response, "fp", None) is not None:
@@ -94,7 +100,7 @@ class OllamaClient:
             method="GET",
         )
         try:
-            with request.urlopen(req, timeout=30) as response:
+            with request.urlopen(req, timeout=LIST_MODELS_TIMEOUT_SECONDS) as response:
                 body = response.read().decode("utf-8")
         except error.URLError as exc:
             raise RuntimeError(

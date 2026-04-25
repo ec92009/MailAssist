@@ -298,6 +298,105 @@ def build_mock_threads() -> list[EmailThread]:
                 ),
             ],
         ),
+        EmailThread(
+            thread_id="thread-009",
+            subject="Solar savings details before buyer meeting",
+            participants=["lauren@coastalhomes.example", "you@example.com"],
+            messages=[
+                EmailMessage(
+                    message_id="msg-801",
+                    sender="lauren@coastalhomes.example",
+                    to=["you@example.com"],
+                    sent_at="2026-04-24T12:05:00Z",
+                    text=(
+                        "Can you do me a favor in the morning and call the utility company to ask "
+                        "how much the solar system saved over the last billing period? The buyer's "
+                        "agent is meeting them at 10am, so even a rough number would help."
+                    ),
+                ),
+                EmailMessage(
+                    message_id="msg-802",
+                    sender="lauren@coastalhomes.example",
+                    to=["you@example.com"],
+                    sent_at="2026-04-24T12:09:00Z",
+                    text=(
+                        "If the utility cannot answer quickly, the solar provider may have the usage "
+                        "summary. Please let me know what you find out."
+                    ),
+                ),
+            ],
+        ),
+        EmailThread(
+            thread_id="thread-010",
+            subject="Open house this weekend?",
+            participants=["jordan@coastalhomes.example", "you@example.com"],
+            messages=[
+                EmailMessage(
+                    message_id="msg-901",
+                    sender="jordan@coastalhomes.example",
+                    to=["you@example.com"],
+                    sent_at="2026-04-24T12:18:00Z",
+                    text=(
+                        "Would you like us to hold an open house this Saturday or Sunday? We are "
+                        "available either day, and I think 1pm to 3pm is the best window."
+                    ),
+                ),
+            ],
+        ),
+        EmailThread(
+            thread_id="thread-011",
+            subject="Closing papers follow-up",
+            participants=["doug@harbortitle.example", "you@example.com"],
+            messages=[
+                EmailMessage(
+                    message_id="msg-1001",
+                    sender="doug@harbortitle.example",
+                    to=["you@example.com"],
+                    sent_at="2026-04-24T12:27:00Z",
+                    text=(
+                        "Good morning. I wanted to follow up and see if you had a chance to review "
+                        "and sign the closing papers. Please let me know if you have any questions "
+                        "or if you need the documents resent."
+                    ),
+                ),
+            ],
+        ),
+        EmailThread(
+            thread_id="thread-012",
+            subject="Rental showing availability",
+            participants=["micki@rentaldesk.example", "you@example.com"],
+            messages=[
+                EmailMessage(
+                    message_id="msg-1101",
+                    sender="micki@rentaldesk.example",
+                    to=["you@example.com"],
+                    sent_at="2026-04-24T12:36:00Z",
+                    text=(
+                        "Thanks for asking about the Sandcastle rental. I can show the property "
+                        "tomorrow between 12:00 and 12:30, or Thursday after 3pm. Please let me know "
+                        "which time works, and how soon you are hoping to move in."
+                    ),
+                ),
+            ],
+        ),
+        EmailThread(
+            thread_id="thread-013",
+            subject="Puerto Vallarta itinerary",
+            participants=["magali@example.com", "you@example.com"],
+            messages=[
+                EmailMessage(
+                    message_id="msg-1201",
+                    sender="magali@example.com",
+                    to=["you@example.com"],
+                    sent_at="2026-04-24T12:45:00Z",
+                    text=(
+                        "I pulled together the Puerto Vallarta itinerary with the boat tour, food "
+                        "walk, and beach day. Let me know what you think. I would like to book early "
+                        "next week if the plan looks good."
+                    ),
+                ),
+            ],
+        ),
     ]
 
 
@@ -376,7 +475,12 @@ Drafting rules:
 - If a reply is appropriate, write as the recipient of the thread.
 - Stay grounded in the thread. Do not invent status updates, dates, approvals, pricing, timelines, or deliverables.
 - Do not turn email domains into company names unless that company name appears explicitly in the thread.
-- If the email asks the user to approve, choose, confirm attendance, accept terms, authorize access, or make a business decision, do not invent the user's decision. Draft a response that says the user is reviewing it, asks for missing detail, or leaves the decision for the user to complete.
+- If the email asks the user to approve, choose, confirm attendance, accept terms, authorize access, call someone, contact someone, check with another party, or make a business decision, do not invent the user's decision or promise the user will do the requested action. Draft a safe holding response that says the user is reviewing it, asks for missing detail, or leaves the action for the user to complete.
+- Do not invent teams, reviewers, calendars, availability, internal processes, vendors, companies, or people that are not explicitly named in the thread.
+- For choice requests like `Would you like us to hold an open house Saturday or Sunday?`, do not say the user will check with a team, decide availability, or confirm a future preference. Say the user is reviewing the options and leave the final choice for the user to add.
+- Avoid promise-shaped phrases like `I will follow up`, `I will let you know`, `I'll let you know`, `I will call`, `I will check`, `I will contact`, `I will update`, or `I will confirm` unless the user already made that exact commitment in the thread. Prefer current-state language like `I am reviewing this` or `I am looking over the details`.
+- If the thread uses relative timing like `today`, `tomorrow`, `this morning`, or `in the morning`, do not repeat that timing as a future promise.
+- If classification is `urgent` or `reply_needed`, the body must contain at least one substantive sentence before the signature. Never return only a greeting, sign-off, or signature.
 - If information is missing, say so plainly instead of guessing.
 - Keep the draft under 140 words.
 - Produce both candidate replies in one response so each option uses the full thread context.
@@ -440,7 +544,12 @@ Drafting rules:
 - If a reply is appropriate, write as the recipient of the thread.
 - Stay grounded in the thread. Do not invent status updates, dates, approvals, pricing, timelines, or deliverables.
 - Do not turn email domains into company names unless that company name appears explicitly in the thread.
-- If the email asks the user to approve, choose, confirm attendance, accept terms, authorize access, or make a business decision, do not invent the user's decision. Draft a response that says the user is reviewing it, asks for missing detail, or leaves the decision for the user to complete.
+- If the email asks the user to approve, choose, confirm attendance, accept terms, authorize access, call someone, contact someone, check with another party, or make a business decision, do not invent the user's decision or promise the user will do the requested action. Draft a safe holding response that says the user is reviewing it, asks for missing detail, or leaves the action for the user to complete.
+- Do not invent teams, reviewers, calendars, availability, internal processes, vendors, companies, or people that are not explicitly named in the thread.
+- For choice requests like `Would you like us to hold an open house Saturday or Sunday?`, do not say the user will check with a team, decide availability, or confirm a future preference. Say the user is reviewing the options and leave the final choice for the user to add.
+- Avoid promise-shaped phrases like `I will follow up`, `I will let you know`, `I'll let you know`, `I will call`, `I will check`, `I will contact`, `I will update`, or `I will confirm` unless the user already made that exact commitment in the thread. Prefer current-state language like `I am reviewing this` or `I am looking over the details`.
+- If the thread uses relative timing like `today`, `tomorrow`, `this morning`, or `in the morning`, do not repeat that timing as a future promise.
+- If classification is `urgent` or `reply_needed`, the body must contain at least one substantive sentence before the signature. Never return only a greeting, sign-off, or signature.
 - If information is missing, say so plainly instead of guessing.
 - Keep the draft under 140 words.
 - Signature rules:
@@ -490,7 +599,12 @@ Drafting rules:
 - Write only the email body. Do not include a classification line, heading, bullets, or explanation.
 - Stay grounded in the thread. Do not invent status updates, dates, approvals, pricing, timelines, or deliverables.
 - Do not turn email domains into company names unless that company name appears explicitly in the thread.
-- If the email asks the user to approve, choose, confirm attendance, accept terms, authorize access, or make a business decision, do not invent the user's decision. Draft a response that says the user is reviewing it, asks for missing detail, or leaves the decision for the user to complete.
+- If the email asks the user to approve, choose, confirm attendance, accept terms, authorize access, call someone, contact someone, check with another party, or make a business decision, do not invent the user's decision or promise the user will do the requested action. Draft a safe holding response that says the user is reviewing it, asks for missing detail, or leaves the action for the user to complete.
+- Do not invent teams, reviewers, calendars, availability, internal processes, vendors, companies, or people that are not explicitly named in the thread.
+- For choice requests like `Would you like us to hold an open house Saturday or Sunday?`, do not say the user will check with a team, decide availability, or confirm a future preference. Say the user is reviewing the options and leave the final choice for the user to add.
+- Avoid promise-shaped phrases like `I will follow up`, `I will let you know`, `I'll let you know`, `I will call`, `I will check`, `I will contact`, `I will update`, or `I will confirm` unless the user already made that exact commitment in the thread. Prefer current-state language like `I am reviewing this` or `I am looking over the details`.
+- If the thread uses relative timing like `today`, `tomorrow`, `this morning`, or `in the morning`, do not repeat that timing as a future promise.
+- The body must contain at least one substantive sentence before the signature. Never return only a greeting, sign-off, or signature.
 - If information is missing, say so plainly instead of guessing.
 - Keep the draft under 140 words.
 - Signature rules:
