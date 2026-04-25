@@ -1,9 +1,10 @@
+import json
 from email import message_from_bytes
 from types import ModuleType
 from pathlib import Path
 
 from mailassist.models import DraftRecord
-from mailassist.providers.gmail import GmailProvider
+from mailassist.providers.gmail import GMAIL_SCOPES, GmailProvider
 
 
 def test_gmail_provider_includes_recipients_in_raw_draft(monkeypatch, tmp_path: Path) -> None:
@@ -27,6 +28,8 @@ def test_gmail_provider_includes_recipients_in_raw_draft(monkeypatch, tmp_path: 
 
     class FakeCreds:
         valid = True
+        def has_scopes(self, scopes):
+            return set(scopes).issubset(set(GMAIL_SCOPES))
 
     def fake_credentials_from_file(path, scopes):
         return FakeCreds()
@@ -66,7 +69,7 @@ def test_gmail_provider_includes_recipients_in_raw_draft(monkeypatch, tmp_path: 
     monkeypatch.setitem(sys.modules, "googleapiclient.discovery", discovery_module)
 
     token_file = tmp_path / "token.json"
-    token_file.write_text("{}", encoding="utf-8")
+    token_file.write_text(json.dumps({"scopes": GMAIL_SCOPES}), encoding="utf-8")
     provider = GmailProvider(tmp_path / "credentials.json", token_file)
 
     provider.create_draft(
@@ -91,3 +94,8 @@ def test_gmail_provider_includes_recipients_in_raw_draft(monkeypatch, tmp_path: 
     assert parsed["cc"] == "cc@example.com"
     assert parsed["bcc"] == "bcc@example.com"
     assert parsed["subject"] == "Re: Test"
+
+
+def test_gmail_scopes_include_compose_and_readonly() -> None:
+    assert "https://www.googleapis.com/auth/gmail.compose" in GMAIL_SCOPES
+    assert "https://www.googleapis.com/auth/gmail.readonly" in GMAIL_SCOPES

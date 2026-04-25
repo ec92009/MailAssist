@@ -21,14 +21,10 @@
 
 ## Gmail
 
-- Use `docs/setting_up_gmail_connection_for_MailAssist.pdf` to create the OAuth Desktop client JSON.
-- Place the downloaded JSON at `secrets/gmail-client-secret.json`.
-- Enable Gmail in settings or `.env`.
-- Run the first narrow mock-to-Gmail draft test:
-  `./.venv/bin/mailassist review-bot --action watch-once --provider gmail --thread-id thread-008 --force`.
-- Confirm the first OAuth browser approval creates `secrets/gmail-token.json`.
-- Confirm exactly one Gmail draft appears in Drafts and is not sent.
-- Validate recipient, subject, body, and whether Gmail preserves the expected reply/thread behavior.
+- Keep Gmail OAuth credentials under ignored `secrets/`.
+- Keep the mock-to-Gmail draft test available for regression checks.
+- Keep the read-only latest-10 inbox preview available for Gmail ingestion checks.
+- Add read-only classification for the latest Gmail inbox preview before any real-email drafting.
 - Add Gmail inbox/thread polling.
 - Preserve recipients, cc/bcc, subject, and reply threading metadata.
 - Create drafts in the correct thread.

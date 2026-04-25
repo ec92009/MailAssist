@@ -93,3 +93,56 @@ def test_review_bot_sync_review_state_uses_cli_model_arguments(
     assert lines[0]["arguments"]["selected_model"] == "cli-model:latest"
     assert lines[-1]["type"] == "completed"
     assert lines[-1]["generated_threads"] == len(calls)
+
+
+def test_review_bot_gmail_inbox_preview_emits_message_metadata(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_env_file(
+        tmp_path / ".env",
+        {
+            "MAILASSIST_GMAIL_ENABLED": "true",
+        },
+    )
+
+    class FakeProvider:
+        def list_recent_inbox_messages(self, limit: int = 10):
+            assert limit == 2
+            return [
+                {
+                    "id": "msg-1",
+                    "thread_id": "thread-1",
+                    "from": "sender@example.com",
+                    "to": "you@example.com",
+                    "date": "Sat, 25 Apr 2026 08:00:00 +0200",
+                    "subject": "Hello",
+                    "snippet": "Short preview",
+                }
+            ]
+
+    monkeypatch.setattr(
+        "mailassist.bot_runtime.get_provider_for_settings",
+        lambda settings, provider_name: FakeProvider(),
+    )
+
+    args = argparse.Namespace(
+        command="review-bot",
+        action="gmail-inbox-preview",
+        thread_id=None,
+        prompt=None,
+        base_url=None,
+        selected_model=None,
+        provider="gmail",
+        batch_size=1,
+        limit=2,
+        force=False,
+    )
+
+    exit_code = command_review_bot(args)
+
+    assert exit_code == 0
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
+    assert any(line["type"] == "gmail_message_preview" for line in lines)
+    assert lines[-1]["type"] == "completed"
+    assert lines[-1]["message_count"] == 1

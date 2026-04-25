@@ -375,6 +375,8 @@ Drafting rules:
 - If classification is `automated`, `no_response`, or `spam`, return an empty email body.
 - If a reply is appropriate, write as the recipient of the thread.
 - Stay grounded in the thread. Do not invent status updates, dates, approvals, pricing, timelines, or deliverables.
+- Do not turn email domains into company names unless that company name appears explicitly in the thread.
+- If the email asks the user to approve, choose, confirm attendance, accept terms, authorize access, or make a business decision, do not invent the user's decision. Draft a response that says the user is reviewing it, asks for missing detail, or leaves the decision for the user to complete.
 - If information is missing, say so plainly instead of guessing.
 - Keep the draft under 140 words.
 - Produce both candidate replies in one response so each option uses the full thread context.
@@ -437,6 +439,8 @@ Drafting rules:
 - If classification is `automated`, `no_response`, or `spam`, return an empty email body.
 - If a reply is appropriate, write as the recipient of the thread.
 - Stay grounded in the thread. Do not invent status updates, dates, approvals, pricing, timelines, or deliverables.
+- Do not turn email domains into company names unless that company name appears explicitly in the thread.
+- If the email asks the user to approve, choose, confirm attendance, accept terms, authorize access, or make a business decision, do not invent the user's decision. Draft a response that says the user is reviewing it, asks for missing detail, or leaves the decision for the user to complete.
 - If information is missing, say so plainly instead of guessing.
 - Keep the draft under 140 words.
 - Signature rules:
@@ -485,6 +489,8 @@ Your job for this single thread:
 Drafting rules:
 - Write only the email body. Do not include a classification line, heading, bullets, or explanation.
 - Stay grounded in the thread. Do not invent status updates, dates, approvals, pricing, timelines, or deliverables.
+- Do not turn email domains into company names unless that company name appears explicitly in the thread.
+- If the email asks the user to approve, choose, confirm attendance, accept terms, authorize access, or make a business decision, do not invent the user's decision. Draft a response that says the user is reviewing it, asks for missing detail, or leaves the decision for the user to complete.
 - If information is missing, say so plainly instead of guessing.
 - Keep the draft under 140 words.
 - Signature rules:

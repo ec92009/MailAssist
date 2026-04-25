@@ -1,6 +1,6 @@
 # Summary
 
-MailAssist is now pointed at the first real Gmail draft-injection test while keeping mock emails as the safe input source.
+MailAssist has proven the mock-email to Gmail-draft loop and the first read-only real Gmail inbox preview.
 
 The product thesis is unchanged: the local LLM is slow enough that drafting should happen in the background before the user needs the reply. The user still reviews, edits, sends, or deletes drafts in Gmail or Outlook. MailAssist must not send email.
 
@@ -14,13 +14,14 @@ The product thesis is unchanged: the local LLM is slow enough that drafting shou
 - Gmail/Outlook remain the review and editing surfaces.
 - The GUI configures and supervises the bot.
 
-## Latest Gmail Test Direction
+## Latest Gmail Direction
 
-- Keep the mock sample emails for controlled testing.
-- Use Gmail only as the draft destination for the first real provider write.
-- Start with one narrow command: `watch-once --provider gmail --thread-id thread-008 --force`.
-- The test should create one Gmail draft addressed from mock thread recipient data and should not send mail.
-- Re-running the Gmail test with `--force` can create duplicate drafts, so use it deliberately.
+- Mock-to-Gmail draft creation works end to end.
+- Batched mock drafting has been tested with batch sizes 2, 5, and 10.
+- Generated mock drafts now include review context, safer decision language, and Mac-clock-aware timestamps.
+- Gmail OAuth now has both compose and readonly scopes.
+- The latest 10 inbox messages were previewed without creating drafts or sending mail.
+- The next real-mail step is read-only classification of previewed Gmail messages.
 
 ## Current Code Reality
 
@@ -30,9 +31,9 @@ The product thesis is unchanged: the local LLM is slow enough that drafting shou
 - The mock watch pass can filter to one thread and route generated drafts to either mock or Gmail providers.
 - A compact GUI button exists for creating a Gmail test draft from mock thread `thread-008`.
 - Gmail optional dependencies have been installed in the local virtualenv.
-- Gmail is still disabled in local settings until credentials are provided.
-- Local Gmail credentials are still missing: `secrets/gmail-client-secret.json`.
-- Local Gmail token is still missing: `secrets/gmail-token.json`.
+- Gmail is enabled locally and draft creation has been authorized.
+- Gmail provider work now includes a read-only inbox preview path for the latest messages.
+- Gmail OAuth has been re-authorized for both compose and readonly scopes.
 
 ## Docs Added
 
@@ -42,16 +43,15 @@ The product thesis is unchanged: the local LLM is slow enough that drafting shou
 
 ## Desired Next Code Direction
 
-- Test the Gmail connection in the morning with real OAuth credentials.
-- Confirm the first Gmail draft is created in Drafts and not sent.
-- Inspect recipient, subject, body, and whether the draft lands in the expected thread.
-- After the single-thread Gmail draft test passes, add Gmail inbox/thread polling.
+- Add a read-only classification pass for the latest Gmail inbox messages.
+- Keep real-email drafting disabled until classification output looks trustworthy.
+- Add Gmail inbox/thread polling only after the read-only preview looks correct.
 - Keep the GUI compact and focused on provider status, bot state, settings, recent activity, and logs.
 
 ## Current Version And Tests
 
-- Latest visible version: `v56.0`.
-- Latest verified suite: 37 passing tests.
+- Latest visible version: `v56.8`.
+- Latest verified suite: 45 passing tests.
 
 Project workflow shorthand:
 

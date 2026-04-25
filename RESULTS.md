@@ -19,6 +19,7 @@ The bot should continuously watch Gmail, Outlook, or mock input; use the local L
 - The bot now has a simplified `watch-once` mock pass that classifies mock threads, skips non-response mail, and creates one mock provider draft per actionable thread.
 - The bot can now run a narrow Gmail draft test using mock input: `watch-once --provider gmail --thread-id thread-008 --force`.
 - Gmail draft records now carry recipient headers so provider drafts can include `To`, `Cc`, and `Bcc`.
+- Gmail provider can preview recent inbox message metadata/snippets using read-only access.
 - The desktop app includes a Gmail test-draft button for the controlled mock-to-Gmail path.
 - The desktop app now opens as a compact bot control panel rather than a review table.
 - Settings now include preferred tone and poll interval beside the user signature.
@@ -51,12 +52,12 @@ These were useful experiments, but the lighter product should not build on them 
 
 ## Latest Verified State
 
-- Latest visible version: `v56.0`.
-- Latest test run: 37 passing tests.
+- Latest visible version: `v56.8`.
+- Latest test run: 45 passing tests.
 - Current code still contains legacy review helpers, but the visible GUI surface is now the compact bot control panel.
 - Gmail optional dependencies are installed in the local virtualenv.
-- Local Gmail setup still needs `secrets/gmail-client-secret.json` and the first browser OAuth run to create `secrets/gmail-token.json`.
-- The next code phase should test one real Gmail draft, then remove or quarantine legacy review code once the control-panel path is stable.
+- Local Gmail setup has been proven for draft creation and readonly latest-10 inbox preview.
+- The next code phase should add read-only classification for real Gmail previews, then remove or quarantine legacy review code once the control-panel path is stable.
 
 ## Conclusion
 

@@ -57,6 +57,13 @@ secrets/gmail-client-secret.json
 
 Use the first-time setup PDF in `docs/` before running the Gmail test.
 
+MailAssist currently requests Gmail permissions for:
+
+- reading message metadata/snippets for triage
+- creating Gmail drafts for replies
+
+It still does not send email.
+
 ## Run The Desktop App
 
 ```bash
@@ -90,6 +97,12 @@ Create one Gmail draft from one mock email after Gmail setup is complete:
 ```
 
 This command is intentionally narrow: it keeps mock input emails, creates one provider draft in Gmail, and should not send mail. Re-running with `--force` can create duplicate drafts.
+
+Preview the latest 10 Gmail inbox messages without creating drafts:
+
+```bash
+./.venv/bin/mailassist review-bot --action gmail-inbox-preview --limit 10
+```
 
 Older local draft command, still useful for testing:
 

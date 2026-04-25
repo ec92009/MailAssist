@@ -17,6 +17,7 @@ Current Gmail research checkpoint:
 
 - The first safe Gmail test keeps mock emails as input and creates one Gmail draft for `thread-008`.
 - The test uses the Gmail compose scope and should create a draft only, not send mail.
+- The next real-mail step uses Gmail readonly access for metadata/snippet preview before any drafting.
 - The project now has two setup PDFs for the Google Cloud/OAuth steps because the Google Console is dense enough to need explicit navigation cues.
 
 ## Deduplication

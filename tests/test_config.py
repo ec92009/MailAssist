@@ -191,6 +191,8 @@ def test_build_review_candidates_prompt_includes_full_contract() -> None:
     assert "Project kickoff follow-up" in prompt
     assert "Signature block to use exactly:" in prompt
     assert "Best regards,\nEthan" in prompt
+    assert "Do not turn email domains into company names" in prompt
+    assert "do not invent the user's decision" in prompt
 
 
 def test_build_single_review_candidate_prompt_requests_one_alternative() -> None:
@@ -208,6 +210,8 @@ def test_build_single_review_candidate_prompt_requests_one_alternative() -> None
     assert "Existing draft in this same tone:" in prompt
     assert "Write a meaningfully different alternative." in prompt
     assert "Do not substitute names or invent any alternate sign-off." in prompt
+    assert "Do not turn email domains into company names" in prompt
+    assert "do not invent the user's decision" in prompt
     assert OPTION_A_SEPARATOR not in prompt
     assert OPTION_B_SEPARATOR not in prompt
 

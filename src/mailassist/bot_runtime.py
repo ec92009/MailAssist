@@ -61,6 +61,7 @@ def build_review_bot_parser(subparsers: argparse._SubParsersAction[argparse.Argu
             "process-mock-inbox",
             "queue-status",
             "watch-once",
+            "gmail-inbox-preview",
         ),
         help="Bot action to run.",
     )
@@ -69,6 +70,13 @@ def build_review_bot_parser(subparsers: argparse._SubParsersAction[argparse.Argu
     parser.add_argument("--base-url", help="Ollama base URL for bot actions.")
     parser.add_argument("--selected-model", help="Ollama model for bot actions.")
     parser.add_argument("--provider", default="mock", help="Provider to watch for watch-once.")
+    parser.add_argument("--limit", type=int, default=10, help="Maximum Gmail messages for preview actions.")
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=1,
+        help="Number of actionable mock emails to submit to Ollama per prompt during watch-once.",
+    )
     parser.add_argument(
         "--force",
         action="store_true",
@@ -92,6 +100,7 @@ def command_review_bot(args: argparse.Namespace) -> int:
             "selected_model": selected_model,
             "force": bool(getattr(args, "force", False)),
             "provider": getattr(args, "provider", "mock"),
+            "batch_size": max(1, int(getattr(args, "batch_size", 1) or 1)),
         },
     )
     reporter.emit("log_file", path=str(reporter.log_path))
@@ -219,6 +228,29 @@ def command_review_bot(args: argparse.Namespace) -> int:
             reporter.emit("completed", message="Queue status ready.", counts=counts)
             return 0
 
+        if args.action == "gmail-inbox-preview":
+            provider = get_provider_for_settings(settings, "gmail")
+            reader = getattr(provider, "list_recent_inbox_messages", None)
+            if not callable(reader):
+                raise RuntimeError("The configured Gmail provider cannot list inbox messages.")
+            limit = max(1, int(getattr(args, "limit", 10) or 10))
+            reporter.emit(
+                "info",
+                message=f"Reading metadata for the latest {limit} Gmail inbox message(s).",
+                provider="gmail",
+                limit=limit,
+            )
+            messages = reader(limit=limit)
+            for message in messages:
+                reporter.emit("gmail_message_preview", **message)
+            reporter.emit(
+                "completed",
+                message="Gmail inbox preview completed.",
+                provider="gmail",
+                message_count=len(messages),
+            )
+            return 0
+
         if args.action == "watch-once":
             provider_name = getattr(args, "provider", "mock") or "mock"
             provider = get_provider_for_settings(settings, provider_name)
@@ -234,6 +266,7 @@ def command_review_bot(args: argparse.Namespace) -> int:
                 selected_model=selected_model,
                 thread_id=args.thread_id or "",
                 force=bool(getattr(args, "force", False)),
+                batch_size=max(1, int(getattr(args, "batch_size", 1) or 1)),
             )
             draft_count = 0
             skipped_count = 0
