@@ -181,17 +181,17 @@ The desktop app is now a compact bot control panel with settings, bot controls, 
 
 ## Bot Commands
 
-Check local queue status:
+Run the polling bot loop against the mock provider:
 
 ```bash
-./.venv/bin/mailassist review-bot --action queue-status
+./.venv/bin/mailassist review-bot \
+  --action watch-loop \
+  --provider mock \
+  --selected-model gemma4:31b \
+  --max-passes 3
 ```
 
-Process mock input into a draft-processing artifact:
-
-```bash
-./.venv/bin/mailassist review-bot --action process-mock-inbox --thread-id thread-008
-```
+If `--poll-seconds` is omitted, the loop uses `MAILASSIST_BOT_POLL_SECONDS`.
 
 Create one Gmail draft from one mock email after Gmail setup is complete:
 
@@ -224,24 +224,18 @@ Preview the latest 10 Gmail inbox messages without creating drafts:
 ./.venv/bin/mailassist review-bot --action gmail-inbox-preview --limit 10
 ```
 
-Older local draft command, still useful for testing:
-
-```bash
-./.venv/bin/mailassist draft-thread --thread-file data/threads/sample-thread.json
-```
-
 ## Runtime Data
 
-When running from source, runtime files live under `data/` and should generally stay out of git:
+When running from source, active bot runtime files live under `data/` and should generally stay out of git:
 
-- `data/logs/`
 - `data/bot-logs/`
-- `data/drafts/`
-- `data/bot_processed/`
-- `data/gui_acquired/`
-- `data/user_reviewed/`
-- `data/provider_drafted/`
-- `data/user_replied/`
+- `data/mock-provider-drafts/`
+
+Legacy review/runtime artifacts now live under `data/legacy/`:
+
+- `data/legacy/logs/`
+- `data/legacy/drafts/`
+- `data/legacy/review-inbox.json`
 
 Only sanitized examples and empty placeholders should be committed.
 

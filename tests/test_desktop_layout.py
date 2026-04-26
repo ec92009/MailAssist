@@ -3,7 +3,7 @@ import json
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from mailassist.gui.desktop import MailAssistDesktopWindow
 
@@ -24,7 +24,7 @@ def _button_metrics(window: MailAssistDesktopWindow) -> tuple[str, int, int, int
         position.y(),
         geometry.width(),
         geometry.height(),
-        window.settings_stack.geometry().height(),
+        window.settings_stack_scroll.geometry().height(),
     )
 
 
@@ -54,7 +54,6 @@ def test_settings_wizard_navigation_stays_stable() -> None:
     window.gmail_signature_status.setText(
         "Imported Gmail signature from example@example.com. You can edit it before continuing."
     )
-    window._sync_settings_stack_height()
     records.append(_button_metrics(window))
 
     next_records = [record for record in records if record[0] == "Next"]
@@ -111,4 +110,51 @@ def test_bot_log_formatter_shows_summary_and_timeline() -> None:
     assert 'Created draft for "Action needed: approve vendor access". Classification: Urgent.' in formatted
     assert '"type": "draft_created"' not in formatted
 
+    window.close()
+
+
+def test_gmail_draft_test_requires_confirmation(monkeypatch) -> None:
+    window = MailAssistDesktopWindow()
+    called: list[tuple[str, str, str, bool]] = []
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.No,
+    )
+    monkeypatch.setattr(
+        window,
+        "run_bot_action",
+        lambda action, *, thread_id="", prompt="", provider="", force=False: called.append(
+            (action, thread_id, provider, force)
+        ),
+    )
+
+    window.run_gmail_draft_test()
+
+    assert called == []
+    assert window.banner.text() == "Gmail test draft canceled."
+    window.close()
+
+
+def test_gmail_draft_test_runs_after_confirmation(monkeypatch) -> None:
+    window = MailAssistDesktopWindow()
+    called: list[tuple[str, str, str, bool]] = []
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr(
+        window,
+        "run_bot_action",
+        lambda action, *, thread_id="", prompt="", provider="", force=False: called.append(
+            (action, thread_id, provider, force)
+        ),
+    )
+
+    window.run_gmail_draft_test()
+
+    assert called == [("watch-once", "thread-008", "gmail", True)]
     window.close()

@@ -1,0 +1,472 @@
+{
+  "schema_version": 2,
+  "generated_at": "2026-04-26T16:48:54+00:00",
+  "threads": [
+    {
+      "thread_id": "thread-001",
+      "thread": {
+        "thread_id": "thread-001",
+        "subject": "Project kickoff follow-up",
+        "participants": [
+          "alex@example.com",
+          "you@example.com"
+        ],
+        "messages": [
+          {
+            "message_id": "msg-001",
+            "from": "alex@example.com",
+            "to": [
+              "you@example.com"
+            ],
+            "sent_at": "2026-04-24T08:30:00Z",
+            "text": "Can you send the kickoff notes by end of day? I also want to confirm whether the draft timeline still looks realistic."
+          },
+          {
+            "message_id": "msg-002",
+            "from": "you@example.com",
+            "to": [
+              "alex@example.com"
+            ],
+            "sent_at": "2026-04-24T08:42:00Z",
+            "text": "I can send the notes shortly. I am still reviewing the timeline."
+          },
+          {
+            "message_id": "msg-003",
+            "from": "alex@example.com",
+            "to": [
+              "you@example.com"
+            ],
+            "sent_at": "2026-04-24T08:55:00Z",
+            "text": "Perfect. If the timeline has slipped, just tell me what changed and what you need."
+          }
+        ]
+      },
+      "subject": "Project kickoff follow-up",
+      "status": "pending_review",
+      "selected_candidate_id": null,
+      "candidate_generation_error": null,
+      "candidate_generation_model": null,
+      "classification": "unclassified",
+      "classification_source": null,
+      "classification_updated_at": null,
+      "candidates": []
+    },
+    {
+      "thread_id": "thread-002",
+      "thread": {
+        "thread_id": "thread-002",
+        "subject": "Pricing proposal before Friday",
+        "participants": [
+          "maria@northstar.co",
+          "you@example.com"
+        ],
+        "messages": [
+          {
+            "message_id": "msg-101",
+            "from": "maria@northstar.co",
+            "to": [
+              "you@example.com"
+            ],
+            "sent_at": "2026-04-24T07:10:00Z",
+            "text": "Checking in on the pricing proposal. If we can get a revised draft by Friday morning, I can bring it into the client readout."
+          },
+          {
+            "message_id": "msg-102",
+            "from": "maria@northstar.co",
+            "to": [
+              "you@example.com"
+            ],
+            "sent_at": "2026-04-24T07:18:00Z",
+            "text": "The main concern is whether we should keep the onboarding line item separate or bundle it into the first phase."
+          }
+        ]
+      },
+      "subject": "Pricing proposal before Friday",
+      "status": "pending_review",
+      "selected_candidate_id": null,
+      "candidate_generation_error": null,
+      "candidate_generation_model": null,
+      "classification": "unclassified",
+      "classification_source": null,
+      "classification_updated_at": null,
+      "candidates": []
+    },
+    {
+      "thread_id": "thread-003",
+      "thread": {
+        "thread_id": "thread-003",
+        "subject": "Your weekly analytics digest",
+        "participants": [
+          "no-reply@metrics.example",
+          "you@example.com"
+        ],
+        "messages": [
+          {
+            "message_id": "msg-201",
+            "from": "no-reply@metrics.example",
+            "to": [
+              "you@example.com"
+            ],
+            "sent_at": "2026-04-24T06:45:00Z",
+            "text": "Your weekly analytics digest is ready. Traffic is up 12%. This is an automated email. No reply is monitored. Visit the dashboard for details or unsubscribe from this alert."
+          }
+        ]
+      },
+      "subject": "Your weekly analytics digest",
+      "status": "pending_review",
+      "selected_candidate_id": null,
+      "candidate_generation_error": null,
+      "candidate_generation_model": null,
+      "classification": "unclassified",
+      "classification_source": null,
+      "classification_updated_at": null,
+      "candidates": []
+    },
+    {
+      "thread_id": "thread-004",
+      "thread": {
+        "thread_id": "thread-004",
+        "subject": "Contract redlines before tomorrow",
+        "participants": [
+          "jordan@elmlegal.com",
+          "you@example.com"
+        ],
+        "messages": [
+          {
+            "message_id": "msg-301",
+            "from": "jordan@elmlegal.com",
+            "to": [
+              "you@example.com"
+            ],
+            "sent_at": "2026-04-24T09:12:00Z",
+            "text": "I just sent the latest contract redlines. If we want to get this signed tomorrow, I need your call on the indemnity clause by 10am."
+          },
+          {
+            "message_id": "msg-302",
+            "from": "jordan@elmlegal.com",
+            "to": [
+              "you@example.com"
+            ],
+            "sent_at": "2026-04-24T09:18:00Z",
+            "text": "If you are okay with the fallback language, I can finalize the clean copy right away."
+          }
+        ]
+      },
+      "subject": "Contract redlines before tomorrow",
+      "status": "pending_review",
+      "selected_candidate_id": null,
+      "candidate_generation_error": null,
+      "candidate_generation_model": null,
+      "classification": "unclassified",
+      "classification_source": null,
+      "classification_updated_at": null,
+      "candidates": []
+    },
+    {
+      "thread_id": "thread-005",
+      "thread": {
+        "thread_id": "thread-005",
+        "subject": "Team lunch headcount",
+        "participants": [
+          "nina@example.com",
+          "you@example.com"
+        ],
+        "messages": [
+          {
+            "message_id": "msg-401",
+            "from": "nina@example.com",
+            "to": [
+              "you@example.com"
+            ],
+            "sent_at": "2026-04-24T10:05:00Z",
+            "text": "Quick one: can you confirm whether you are in for the team lunch on Thursday? I am locking the reservation this afternoon."
+          }
+        ]
+      },
+      "subject": "Team lunch headcount",
+      "status": "pending_review",
+      "selected_candidate_id": null,
+      "candidate_generation_error": null,
+      "candidate_generation_model": null,
+      "classification": "unclassified",
+      "classification_source": null,
+      "classification_updated_at": null,
+      "candidates": []
+    },
+    {
+      "thread_id": "thread-006",
+      "thread": {
+        "thread_id": "thread-006",
+        "subject": "Security awareness training reminder",
+        "participants": [
+          "it-ops@example.com",
+          "you@example.com"
+        ],
+        "messages": [
+          {
+            "message_id": "msg-501",
+            "from": "it-ops@example.com",
+            "to": [
+              "you@example.com"
+            ],
+            "sent_at": "2026-04-24T06:15:00Z",
+            "text": "Reminder: your annual security awareness training is due next week. This is an automated notification. Please complete the course in the portal."
+          }
+        ]
+      },
+      "subject": "Security awareness training reminder",
+      "status": "pending_review",
+      "selected_candidate_id": null,
+      "candidate_generation_error": null,
+      "candidate_generation_model": null,
+      "classification": "unclassified",
+      "classification_source": null,
+      "classification_updated_at": null,
+      "candidates": []
+    },
+    {
+      "thread_id": "thread-007",
+      "thread": {
+        "thread_id": "thread-007",
+        "subject": "Customer quote follow-up",
+        "participants": [
+          "samira@brightforge.ai",
+          "you@example.com"
+        ],
+        "messages": [
+          {
+            "message_id": "msg-601",
+            "from": "samira@brightforge.ai",
+            "to": [
+              "you@example.com"
+            ],
+            "sent_at": "2026-04-24T11:02:00Z",
+            "text": "Checking whether you had a chance to look at the updated quote. If we can align on scope this week, I can keep the implementation window open."
+          },
+          {
+            "message_id": "msg-602",
+            "from": "samira@brightforge.ai",
+            "to": [
+              "you@example.com"
+            ],
+            "sent_at": "2026-04-24T11:09:00Z",
+            "text": "The only item I still need clarity on is whether onboarding stays in phase one or moves to a separate workstream."
+          }
+        ]
+      },
+      "subject": "Customer quote follow-up",
+      "status": "pending_review",
+      "selected_candidate_id": null,
+      "candidate_generation_error": null,
+      "candidate_generation_model": null,
+      "classification": "unclassified",
+      "classification_source": null,
+      "classification_updated_at": null,
+      "candidates": []
+    },
+    {
+      "thread_id": "thread-008",
+      "thread": {
+        "thread_id": "thread-008",
+        "subject": "Action needed: approve vendor access",
+        "participants": [
+          "ops@harborhq.com",
+          "you@example.com"
+        ],
+        "messages": [
+          {
+            "message_id": "msg-701",
+            "from": "ops@harborhq.com",
+            "to": [
+              "you@example.com"
+            ],
+            "sent_at": "2026-04-24T11:26:00Z",
+            "text": "Action needed: can you confirm whether BrightForge should receive temporary workspace access for next week's onboarding? I need your approval before 3pm so I can finish provisioning."
+          },
+          {
+            "message_id": "msg-702",
+            "from": "ops@harborhq.com",
+            "to": [
+              "you@example.com"
+            ],
+            "sent_at": "2026-04-24T11:31:00Z",
+            "text": "If you want me to limit access to the shared project folder only, I can set it up that way instead."
+          }
+        ]
+      },
+      "subject": "Action needed: approve vendor access",
+      "status": "pending_review",
+      "selected_candidate_id": null,
+      "candidate_generation_error": null,
+      "candidate_generation_model": null,
+      "classification": "unclassified",
+      "classification_source": null,
+      "classification_updated_at": null,
+      "candidates": []
+    },
+    {
+      "thread_id": "thread-009",
+      "thread": {
+        "thread_id": "thread-009",
+        "subject": "Solar savings details before buyer meeting",
+        "participants": [
+          "lauren@coastalhomes.example",
+          "you@example.com"
+        ],
+        "messages": [
+          {
+            "message_id": "msg-801",
+            "from": "lauren@coastalhomes.example",
+            "to": [
+              "you@example.com"
+            ],
+            "sent_at": "2026-04-24T12:05:00Z",
+            "text": "Can you do me a favor in the morning and call the utility company to ask how much the solar system saved over the last billing period? The buyer's agent is meeting them at 10am, so even a rough number would help."
+          },
+          {
+            "message_id": "msg-802",
+            "from": "lauren@coastalhomes.example",
+            "to": [
+              "you@example.com"
+            ],
+            "sent_at": "2026-04-24T12:09:00Z",
+            "text": "If the utility cannot answer quickly, the solar provider may have the usage summary. Please let me know what you find out."
+          }
+        ]
+      },
+      "subject": "Solar savings details before buyer meeting",
+      "status": "pending_review",
+      "selected_candidate_id": null,
+      "candidate_generation_error": null,
+      "candidate_generation_model": null,
+      "classification": "unclassified",
+      "classification_source": null,
+      "classification_updated_at": null,
+      "candidates": []
+    },
+    {
+      "thread_id": "thread-010",
+      "thread": {
+        "thread_id": "thread-010",
+        "subject": "Open house this weekend?",
+        "participants": [
+          "jordan@coastalhomes.example",
+          "you@example.com"
+        ],
+        "messages": [
+          {
+            "message_id": "msg-901",
+            "from": "jordan@coastalhomes.example",
+            "to": [
+              "you@example.com"
+            ],
+            "sent_at": "2026-04-24T12:18:00Z",
+            "text": "Would you like us to hold an open house this Saturday or Sunday? We are available either day, and I think 1pm to 3pm is the best window."
+          }
+        ]
+      },
+      "subject": "Open house this weekend?",
+      "status": "pending_review",
+      "selected_candidate_id": null,
+      "candidate_generation_error": null,
+      "candidate_generation_model": null,
+      "classification": "unclassified",
+      "classification_source": null,
+      "classification_updated_at": null,
+      "candidates": []
+    },
+    {
+      "thread_id": "thread-011",
+      "thread": {
+        "thread_id": "thread-011",
+        "subject": "Closing papers follow-up",
+        "participants": [
+          "doug@harbortitle.example",
+          "you@example.com"
+        ],
+        "messages": [
+          {
+            "message_id": "msg-1001",
+            "from": "doug@harbortitle.example",
+            "to": [
+              "you@example.com"
+            ],
+            "sent_at": "2026-04-24T12:27:00Z",
+            "text": "Good morning. I wanted to follow up and see if you had a chance to review and sign the closing papers. Please let me know if you have any questions or if you need the documents resent."
+          }
+        ]
+      },
+      "subject": "Closing papers follow-up",
+      "status": "pending_review",
+      "selected_candidate_id": null,
+      "candidate_generation_error": null,
+      "candidate_generation_model": null,
+      "classification": "unclassified",
+      "classification_source": null,
+      "classification_updated_at": null,
+      "candidates": []
+    },
+    {
+      "thread_id": "thread-012",
+      "thread": {
+        "thread_id": "thread-012",
+        "subject": "Rental showing availability",
+        "participants": [
+          "micki@rentaldesk.example",
+          "you@example.com"
+        ],
+        "messages": [
+          {
+            "message_id": "msg-1101",
+            "from": "micki@rentaldesk.example",
+            "to": [
+              "you@example.com"
+            ],
+            "sent_at": "2026-04-24T12:36:00Z",
+            "text": "Thanks for asking about the Sandcastle rental. I can show the property tomorrow between 12:00 and 12:30, or Thursday after 3pm. Please let me know which time works, and how soon you are hoping to move in."
+          }
+        ]
+      },
+      "subject": "Rental showing availability",
+      "status": "pending_review",
+      "selected_candidate_id": null,
+      "candidate_generation_error": null,
+      "candidate_generation_model": null,
+      "classification": "unclassified",
+      "classification_source": null,
+      "classification_updated_at": null,
+      "candidates": []
+    },
+    {
+      "thread_id": "thread-013",
+      "thread": {
+        "thread_id": "thread-013",
+        "subject": "Puerto Vallarta itinerary",
+        "participants": [
+          "magali@example.com",
+          "you@example.com"
+        ],
+        "messages": [
+          {
+            "message_id": "msg-1201",
+            "from": "magali@example.com",
+            "to": [
+              "you@example.com"
+            ],
+            "sent_at": "2026-04-24T12:45:00Z",
+            "text": "I pulled together the Puerto Vallarta itinerary with the boat tour, food walk, and beach day. Let me know what you think. I would like to book early next week if the plan looks good."
+          }
+        ]
+      },
+      "subject": "Puerto Vallarta itinerary",
+      "status": "pending_review",
+      "selected_candidate_id": null,
+      "candidate_generation_error": null,
+      "candidate_generation_model": null,
+      "classification": "unclassified",
+      "classification_source": null,
+      "classification_updated_at": null,
+      "candidates": []
+    }
+  ]
+}

@@ -13,8 +13,10 @@ from uuid import uuid4
 
 from mailassist.config import Settings
 from mailassist.fixtures.mock_threads import build_mock_threads
-from mailassist.gui.server import (
+from mailassist.live_state import load_live_state, save_live_state
+from mailassist.review_state import (
     SET_ASIDE_CLASSIFICATIONS,
+    append_signature_to_body,
     fallback_classification_for_thread,
     format_thread_context,
     generate_candidate_for_tone,
@@ -27,8 +29,6 @@ from mailassist.gui.server import (
 from mailassist.llm.ollama import OllamaClient
 from mailassist.models import DraftRecord, EmailThread, utc_now_iso
 from mailassist.providers.base import DraftProvider
-
-BOT_STATE_FILENAME = "bot-state.json"
 
 TONE_OPTIONS = {
     "direct_concise": (
@@ -83,23 +83,15 @@ def build_prompt_preview(
 
 
 def bot_state_path(root_dir: Path) -> Path:
-    return root_dir / "data" / BOT_STATE_FILENAME
+    return root_dir / "data" / "live-state.json"
 
 
 def load_bot_state(root_dir: Path) -> dict[str, Any]:
-    path = bot_state_path(root_dir)
-    if not path.exists():
-        return {"schema_version": 1, "providers": {}}
-    return json.loads(path.read_text(encoding="utf-8"))
+    return load_live_state(root_dir)
 
 
 def save_bot_state(root_dir: Path, state: dict[str, Any]) -> Path:
-    path = bot_state_path(root_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
-    tmp_path.write_text(json.dumps(state, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
-    tmp_path.replace(path)
-    return path
+    return save_live_state(root_dir, state)
 
 
 def run_mock_watch_pass(
@@ -113,7 +105,12 @@ def run_mock_watch_pass(
     batch_size: int = 1,
 ) -> list[dict[str, Any]]:
     state = load_bot_state(settings.root_dir)
-    provider_state = state.setdefault("providers", {}).setdefault(provider.name, {})
+    user_address = _resolve_account_email(state, provider)
+    provider_slot = state.setdefault("providers", {}).setdefault(
+        provider.name,
+        {"cursor": None, "threads": {}},
+    )
+    provider_state = provider_slot.setdefault("threads", {})
     events = []
     pending_threads: list[tuple[EmailThread, str]] = []
 
@@ -121,6 +118,28 @@ def run_mock_watch_pass(
         if thread_id and thread.thread_id != thread_id:
             continue
         latest_message_id = _latest_message_id(thread)
+        if _latest_sender(thread) == user_address:
+            provider_state[thread.thread_id] = _state_record(
+                thread=thread,
+                latest_message_id=latest_message_id,
+                classification="reply_needed",
+                action="user_replied",
+            )
+            events.append(
+                {
+                    "type": "user_replied",
+                    "thread_id": thread.thread_id,
+                    "subject": thread.subject,
+                    "classification": "reply_needed",
+                    "reason": "latest_message_from_user",
+                }
+            )
+            _append_recent_activity(
+                state,
+                provider_name=provider.name,
+                event=events[-1],
+            )
+            continue
         previous = provider_state.get(thread.thread_id, {})
         if not force and previous.get("latest_message_id") == latest_message_id:
             events.append(
@@ -131,6 +150,11 @@ def run_mock_watch_pass(
                     "classification": previous.get("classification", "unclassified"),
                     "provider_draft_id": previous.get("provider_draft_id"),
                 }
+            )
+            _append_recent_activity(
+                state,
+                provider_name=provider.name,
+                event=events[-1],
             )
             continue
 
@@ -150,6 +174,11 @@ def run_mock_watch_pass(
                     "classification": classification,
                     "reason": "no_response_needed",
                 }
+            )
+            _append_recent_activity(
+                state,
+                provider_name=provider.name,
+                event=events[-1],
             )
             continue
 
@@ -179,6 +208,7 @@ def run_mock_watch_pass(
                             guidance=guidance,
                             base_url=base_url,
                             selected_model=selected_model,
+                            signature=settings.user_signature,
                         )
                     )
                     generated[thread.thread_id] = {
@@ -199,6 +229,7 @@ def run_mock_watch_pass(
                 guidance=guidance,
                 base_url=base_url,
                 selected_model=selected_model,
+                signature=settings.user_signature,
             )
             generated = {
                 thread.thread_id: {
@@ -228,6 +259,11 @@ def run_mock_watch_pass(
                         "reason": "missing_batch_result",
                         "generation_error": "Batch generation did not include this thread.",
                     }
+                )
+                _append_recent_activity(
+                    state,
+                    provider_name=provider.name,
+                    event=events[-1],
                 )
                 continue
 
@@ -261,6 +297,11 @@ def run_mock_watch_pass(
                         "generation_error": generation_error,
                     }
                 )
+                _append_recent_activity(
+                    state,
+                    provider_name=provider.name,
+                    event=events[-1],
+                )
                 continue
 
             draft = DraftRecord(
@@ -268,9 +309,9 @@ def run_mock_watch_pass(
                 thread_id=thread.thread_id,
                 provider=provider.name,
                 subject=f"Re: {thread.subject}",
-                body=body_with_review_context(thread, body),
+                body=body_with_review_context(thread, body, user_address=user_address),
                 model=str(generation_model or "fallback"),
-                to=reply_recipients_for_thread(thread),
+                to=reply_recipients_for_thread(thread, user_address=user_address),
             )
             provider_reference = provider.create_draft(draft)
 
@@ -294,6 +335,11 @@ def run_mock_watch_pass(
                     "generation_model": generation_model,
                     "generation_error": generation_error,
                 }
+            )
+            _append_recent_activity(
+                state,
+                provider_name=provider.name,
+                event=events[-1],
             )
 
     state["updated_at"] = utc_now_iso()
@@ -467,6 +513,12 @@ def _latest_message_id(thread: EmailThread) -> str:
     return thread.messages[-1].message_id
 
 
+def _latest_sender(thread: EmailThread) -> str:
+    if not thread.messages:
+        return ""
+    return thread.messages[-1].sender.strip().lower()
+
+
 def reply_recipients_for_thread(thread: EmailThread, user_address: str = "you@example.com") -> list[str]:
     if thread.messages:
         latest_sender = thread.messages[-1].sender
@@ -485,11 +537,7 @@ def ensure_substantive_reply_body(thread: EmailThread, body: str, *, signature: 
 
 
 def append_signature(body: str, *, signature: str = "") -> str:
-    cleaned = strip_configured_signature(body, signature=signature)
-    cleaned_signature = signature.strip()
-    if cleaned and cleaned_signature:
-        return f"{cleaned}\n\n{cleaned_signature}"
-    return cleaned
+    return append_signature_to_body(body, signature=signature)
 
 
 def strip_configured_signature(body: str, *, signature: str = "") -> str:
@@ -546,8 +594,13 @@ def conservative_acknowledgement_body(*, signature: str = "") -> str:
     return append_signature("Thanks for the note. I am reviewing this.", signature=signature)
 
 
-def body_with_review_context(thread: EmailThread, body: str) -> str:
-    context_messages = review_context_messages(thread)
+def body_with_review_context(
+    thread: EmailThread,
+    body: str,
+    *,
+    user_address: str = "you@example.com",
+) -> str:
+    context_messages = review_context_messages(thread, user_address=user_address)
     if not context_messages:
         return body.strip()
     blocks = []
@@ -571,6 +624,60 @@ def review_context_messages(
     if incoming:
         return incoming[-max_messages:]
     return thread.messages[-max_messages:]
+
+
+def _resolve_account_email(state: dict[str, Any], provider: DraftProvider) -> str:
+    provider_accounts = state.setdefault("provider_accounts", {})
+    discovered = _discover_account_email(provider)
+    if discovered:
+        provider_accounts[provider.name] = discovered
+        state["account_email"] = discovered
+        return discovered
+
+    provider_specific = str(provider_accounts.get(provider.name, "")).strip()
+    if provider_specific:
+        return provider_specific
+
+    fallback = str(state.get("account_email", "")).strip()
+    if fallback:
+        return fallback
+    return "you@example.com"
+
+
+def _append_recent_activity(
+    state: dict[str, Any],
+    *,
+    provider_name: str,
+    event: dict[str, Any],
+    limit: int = 50,
+) -> None:
+    recent_activity = state.setdefault("recent_activity", [])
+    recent_activity.append(
+        {
+            "timestamp": utc_now_iso(),
+            "provider": provider_name,
+            "type": str(event.get("type", "")),
+            "thread_id": str(event.get("thread_id", "")),
+            "subject": str(event.get("subject", "")),
+            "classification": str(event.get("classification", "")),
+            "reason": str(event.get("reason", "")) or None,
+            "provider_draft_id": str(event.get("provider_draft_id", "")) or None,
+        }
+    )
+    if len(recent_activity) > limit:
+        del recent_activity[:-limit]
+
+
+def _discover_account_email(provider: DraftProvider) -> str | None:
+    getter = getattr(provider, "get_account_email", None)
+    if not callable(getter):
+        return None
+    try:
+        value = getter()
+    except Exception:
+        return None
+    cleaned = str(value or "").strip().lower()
+    return cleaned or None
 
 
 def human_review_context_time(

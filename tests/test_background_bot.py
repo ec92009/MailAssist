@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -73,14 +74,51 @@ def test_mock_watch_pass_creates_one_provider_draft_and_skips_second_run(
     assert first_events[0]["provider_draft_id"] == "mock-draft-thread-008"
     assert second_events[0]["type"] == "already_handled"
     assert (tmp_path / "data" / "mock-provider-drafts" / "thread-008.json").exists()
+    assert (tmp_path / "data" / "live-state.json").exists()
     state = load_bot_state(tmp_path)
-    assert state["providers"]["mock"]["thread-008"]["action"] == "draft_created"
+    assert state["account_email"] is None
+    assert state["providers"]["mock"]["threads"]["thread-008"]["action"] == "draft_created"
+    assert state["recent_activity"][-1]["type"] == "already_handled"
+
+
+def test_load_bot_state_migrates_legacy_bot_state_file(tmp_path: Path) -> None:
+    legacy_path = tmp_path / "data" / "bot-state.json"
+    legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_path.write_text(
+        '{\n'
+        '  "schema_version": 1,\n'
+        '  "providers": {\n'
+        '    "mock": {\n'
+        '      "thread-001": {\n'
+        '        "action": "draft_created"\n'
+        "      }\n"
+        "    }\n"
+        "  }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    state = load_bot_state(tmp_path)
+
+    assert state["account_email"] is None
+    assert state["providers"]["mock"]["threads"]["thread-001"]["action"] == "draft_created"
+    assert state["providers"]["mock"]["cursor"] is None
+    assert not legacy_path.exists()
+    assert (tmp_path / "data" / "live-state.json").exists()
 
 
 def test_reply_recipients_for_thread_targets_latest_sender() -> None:
     thread = next(item for item in build_mock_threads() if item.thread_id == "thread-008")
 
     assert reply_recipients_for_thread(thread) == ["ops@harborhq.com"]
+
+
+def test_reply_recipients_for_thread_uses_discovered_account_email() -> None:
+    thread = next(item for item in build_mock_threads() if item.thread_id == "thread-008")
+
+    assert reply_recipients_for_thread(thread, user_address="magali@example.com") == [
+        "ops@harborhq.com"
+    ]
 
 
 def test_body_with_review_context_adds_latest_mock_message() -> None:
@@ -103,6 +141,19 @@ def test_body_with_review_context_includes_recent_incoming_messages() -> None:
     assert "> Can you do me a favor in the morning" in body
     assert "> If the utility cannot answer quickly" in body
     assert body.endswith("I will check and update you.")
+
+
+def test_body_with_review_context_excludes_user_messages_for_discovered_account_email() -> None:
+    thread = next(item for item in build_mock_threads() if item.thread_id == "thread-001")
+
+    body = body_with_review_context(
+        thread,
+        "I am reviewing this.",
+        user_address="alex@example.com",
+    )
+
+    assert "you@example.com wrote" in body
+    assert "alex@example.com wrote" not in body
 
 
 def test_signature_only_candidate_gets_conservative_body() -> None:
@@ -302,7 +353,102 @@ def test_mock_watch_pass_batches_actionable_threads(monkeypatch, tmp_path: Path)
 
     assert [event["type"] for event in events] == ["draft_created", "draft_created"]
     state = load_bot_state(tmp_path)
-    assert state["providers"]["mock"]["thread-001"]["generation_model"] == "batch-model"
-    assert state["providers"]["mock"]["thread-002"]["generation_model"] == "batch-model"
+    assert state["providers"]["mock"]["threads"]["thread-001"]["generation_model"] == "batch-model"
+    assert state["providers"]["mock"]["threads"]["thread-002"]["generation_model"] == "batch-model"
     assert (tmp_path / "data" / "mock-provider-drafts" / "thread-001.json").exists()
     assert (tmp_path / "data" / "mock-provider-drafts" / "thread-002.json").exists()
+
+
+def test_mock_watch_pass_persists_provider_account_email_and_uses_it(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_env_file(
+        tmp_path / ".env",
+        {
+            "MAILASSIST_USER_TONE": "brief_casual",
+            "MAILASSIST_USER_SIGNATURE": "Best,\\nTest",
+        },
+    )
+
+    def fake_build_mock_threads():
+        return [item for item in build_mock_threads() if item.thread_id == "thread-008"]
+
+    def fake_generate_candidate_for_tone(*args, **kwargs):
+        return (
+            {
+                "candidate_id": "option-a",
+                "body": "I am reviewing this.\n\nBest,\nTest",
+                "generated_by": "mock-model",
+            },
+            "mock-model",
+            None,
+            "urgent",
+        )
+
+    monkeypatch.setattr("mailassist.background_bot.build_mock_threads", fake_build_mock_threads)
+    monkeypatch.setattr(
+        "mailassist.background_bot.generate_candidate_for_tone",
+        fake_generate_candidate_for_tone,
+    )
+
+    settings = load_settings()
+    provider = MockProvider(
+        settings.mock_provider_drafts_dir,
+        account_email="magali@example.com",
+    )
+
+    events = run_mock_watch_pass(
+        settings=settings,
+        provider=provider,
+        base_url="http://localhost:11434",
+        selected_model="mock-model",
+    )
+
+    assert events[0]["type"] == "draft_created"
+    state = load_bot_state(tmp_path)
+    assert state["account_email"] == "magali@example.com"
+    assert state["provider_accounts"]["mock"] == "magali@example.com"
+    assert state["recent_activity"][-1]["type"] == "draft_created"
+    draft_payload = json.loads(
+        (tmp_path / "data" / "mock-provider-drafts" / "thread-008.json").read_text(encoding="utf-8")
+    )
+    assert draft_payload["to"] == ["ops@harborhq.com"]
+    assert "ops@harborhq.com wrote" in draft_payload["body"]
+    assert "magali@example.com wrote" not in draft_payload["body"]
+
+
+def test_mock_watch_pass_skips_threads_when_latest_message_is_from_user(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    def fake_build_mock_threads():
+        return [
+            next(item for item in build_mock_threads() if item.thread_id == "thread-001"),
+        ]
+
+    monkeypatch.setattr("mailassist.background_bot.build_mock_threads", fake_build_mock_threads)
+
+    settings = load_settings()
+    provider = MockProvider(
+        settings.mock_provider_drafts_dir,
+        account_email="alex@example.com",
+    )
+
+    events = run_mock_watch_pass(
+        settings=settings,
+        provider=provider,
+        base_url="http://localhost:11434",
+        selected_model="mock-model",
+    )
+
+    assert events == [
+        {
+            "type": "user_replied",
+            "thread_id": "thread-001",
+            "subject": "Project kickoff follow-up",
+            "classification": "reply_needed",
+            "reason": "latest_message_from_user",
+        }
+    ]
+    state = load_bot_state(tmp_path)
+    assert state["providers"]["mock"]["threads"]["thread-001"]["action"] == "user_replied"
+    assert state["recent_activity"][-1]["type"] == "user_replied"
+    assert not (tmp_path / "data" / "mock-provider-drafts" / "thread-001.json").exists()

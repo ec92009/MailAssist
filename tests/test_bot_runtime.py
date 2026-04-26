@@ -38,63 +38,6 @@ def test_review_bot_ollama_check_requires_prompt(monkeypatch, tmp_path: Path, ca
     assert lines[-1]["type"] == "error"
     assert "--prompt is required for ollama-check" in lines[-1]["message"]
 
-
-def test_review_bot_sync_review_state_uses_cli_model_arguments(
-    monkeypatch, tmp_path: Path, capsys
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    write_env_file(
-        tmp_path / ".env",
-        {
-            "MAILASSIST_OLLAMA_URL": "http://env-only:11434",
-            "MAILASSIST_OLLAMA_MODEL": "env-model:latest",
-        },
-    )
-
-    calls: list[tuple[str, str, str]] = []
-
-    def fake_regenerate_thread_candidates(
-        state: dict,
-        thread_id: str,
-        *,
-        base_url: str,
-        selected_model: str,
-    ) -> dict:
-        calls.append((thread_id, base_url, selected_model))
-        thread_state = next(item for item in state["threads"] if item["thread_id"] == thread_id)
-        thread_state["candidates"] = [{"candidate_id": "option-a", "body": "Ready"}]
-        return thread_state
-
-    monkeypatch.setattr(
-        "mailassist.bot_runtime.regenerate_thread_candidates",
-        fake_regenerate_thread_candidates,
-    )
-
-    args = argparse.Namespace(
-        command="review-bot",
-        action="sync-review-state",
-        thread_id=None,
-        prompt=None,
-        base_url="http://cli-example:11434",
-        selected_model="cli-model:latest",
-    )
-
-    exit_code = command_review_bot(args)
-
-    assert exit_code == 0
-    assert calls
-    assert all(base_url == "http://cli-example:11434" for _, base_url, _ in calls)
-    assert all(selected_model == "cli-model:latest" for _, _, selected_model in calls)
-
-    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
-    assert lines[0]["type"] == "started"
-    assert lines[0]["command"] == "review-bot"
-    assert lines[0]["arguments"]["base_url"] == "http://cli-example:11434"
-    assert lines[0]["arguments"]["selected_model"] == "cli-model:latest"
-    assert lines[-1]["type"] == "completed"
-    assert lines[-1]["generated_threads"] == len(calls)
-
-
 def test_review_bot_gmail_inbox_preview_emits_message_metadata(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
@@ -146,3 +89,136 @@ def test_review_bot_gmail_inbox_preview_emits_message_metadata(
     assert any(line["type"] == "gmail_message_preview" for line in lines)
     assert lines[-1]["type"] == "completed"
     assert lines[-1]["message_count"] == 1
+
+
+def test_review_bot_watch_loop_uses_polling_settings_and_counts_events(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_env_file(
+        tmp_path / ".env",
+        {
+            "MAILASSIST_BOT_POLL_SECONDS": "15",
+        },
+    )
+
+    class FakeProvider:
+        name = "mock"
+
+    call_count = {"value": 0}
+    slept = []
+
+    def fake_get_provider(settings, provider_name):
+        assert provider_name == "mock"
+        return FakeProvider()
+
+    def fake_run_mock_watch_pass(**kwargs):
+        call_count["value"] += 1
+        if call_count["value"] == 1:
+            return [
+                {
+                    "type": "draft_created",
+                    "thread_id": "thread-1",
+                    "subject": "First",
+                    "classification": "urgent",
+                    "provider_draft_id": "draft-1",
+                }
+            ]
+        return [
+            {
+                "type": "already_handled",
+                "thread_id": "thread-1",
+                "subject": "First",
+                "classification": "urgent",
+                "provider_draft_id": "draft-1",
+            }
+        ]
+
+    monkeypatch.setattr("mailassist.bot_runtime.get_provider_for_settings", fake_get_provider)
+    monkeypatch.setattr("mailassist.bot_runtime.run_mock_watch_pass", fake_run_mock_watch_pass)
+    monkeypatch.setattr("mailassist.bot_runtime.time.sleep", lambda seconds: slept.append(seconds))
+
+    args = argparse.Namespace(
+        command="review-bot",
+        action="watch-loop",
+        thread_id=None,
+        prompt=None,
+        base_url=None,
+        selected_model=None,
+        provider="mock",
+        batch_size=1,
+        limit=10,
+        force=False,
+        poll_seconds=0,
+        max_passes=2,
+    )
+
+    exit_code = command_review_bot(args)
+
+    assert exit_code == 0
+    assert slept == [15]
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
+    assert lines[0]["type"] == "started"
+    assert any(line["type"] == "watch_pass_started" and line["pass_number"] == 1 for line in lines)
+    assert any(line["type"] == "sleeping" and line["poll_seconds"] == 15 for line in lines)
+    assert lines[-1]["type"] == "completed"
+    assert lines[-1]["completed_passes"] == 2
+    assert lines[-1]["draft_count"] == 1
+    assert lines[-1]["already_handled_count"] == 1
+
+
+def test_review_bot_watch_loop_emits_failed_and_retry_events(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_env_file(
+        tmp_path / ".env",
+        {
+            "MAILASSIST_BOT_POLL_SECONDS": "9",
+        },
+    )
+
+    class FakeProvider:
+        name = "mock"
+
+    call_count = {"value": 0}
+    slept = []
+
+    monkeypatch.setattr(
+        "mailassist.bot_runtime.get_provider_for_settings",
+        lambda settings, provider_name: FakeProvider(),
+    )
+
+    def fake_run_mock_watch_pass(**kwargs):
+        call_count["value"] += 1
+        if call_count["value"] == 1:
+            raise RuntimeError("temporary provider failure")
+        return []
+
+    monkeypatch.setattr("mailassist.bot_runtime.run_mock_watch_pass", fake_run_mock_watch_pass)
+    monkeypatch.setattr("mailassist.bot_runtime.time.sleep", lambda seconds: slept.append(seconds))
+
+    args = argparse.Namespace(
+        command="review-bot",
+        action="watch-loop",
+        thread_id=None,
+        prompt=None,
+        base_url=None,
+        selected_model=None,
+        provider="mock",
+        batch_size=1,
+        limit=10,
+        force=False,
+        poll_seconds=0,
+        max_passes=2,
+    )
+
+    exit_code = command_review_bot(args)
+
+    assert exit_code == 0
+    assert slept == [9]
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
+    assert any(line["type"] == "failed_pass" and "temporary provider failure" in line["message"] for line in lines)
+    assert any(line["type"] == "retry_scheduled" and line["poll_seconds"] == 9 for line in lines)
+    assert lines[-1]["failed_pass_count"] == 1
+    assert lines[-1]["retry_count"] == 1

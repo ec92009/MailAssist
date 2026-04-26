@@ -11,6 +11,7 @@ from typing import Dict
 class Settings:
     root_dir: Path
     data_dir: Path
+    legacy_data_dir: Path
     drafts_dir: Path
     logs_dir: Path
     bot_logs_dir: Path
@@ -86,19 +87,64 @@ def default_root_dir() -> Path:
     return Path.cwd()
 
 
+def _move_file_if_needed(source: Path, destination: Path) -> None:
+    if not source.exists() or destination.exists():
+        return
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    source.replace(destination)
+
+
+def _merge_directory_if_needed(source: Path, destination: Path) -> None:
+    if not source.exists():
+        return
+    destination.mkdir(parents=True, exist_ok=True)
+    for child in sorted(source.iterdir()):
+        target = destination / child.name
+        if child.is_dir():
+            _merge_directory_if_needed(child, target)
+        elif not target.exists():
+            child.replace(target)
+    try:
+        source.rmdir()
+    except OSError:
+        pass
+
+
+def migrate_legacy_runtime_layout(root_dir: Path) -> None:
+    data_dir = root_dir / "data"
+    legacy_dir = data_dir / "legacy"
+    queue_dir = legacy_dir / "queue"
+
+    _move_file_if_needed(data_dir / "review-inbox.json", legacy_dir / "review-inbox.json")
+    _merge_directory_if_needed(data_dir / "drafts", legacy_dir / "drafts")
+    _merge_directory_if_needed(data_dir / "logs", legacy_dir / "logs")
+
+    for phase in (
+        "bot_processed",
+        "gui_acquired",
+        "user_reviewed",
+        "provider_drafted",
+        "user_replied",
+    ):
+        _merge_directory_if_needed(data_dir / phase, queue_dir / phase)
+
+
 def load_settings() -> Settings:
     root_dir = default_root_dir()
     load_dotenv(root_dir / ".env")
+    migrate_legacy_runtime_layout(root_dir)
 
     data_dir = root_dir / "data"
-    drafts_dir = data_dir / "drafts"
-    logs_dir = data_dir / "logs"
+    legacy_data_dir = data_dir / "legacy"
+    drafts_dir = legacy_data_dir / "drafts"
+    logs_dir = legacy_data_dir / "logs"
     bot_logs_dir = data_dir / "bot-logs"
     mock_provider_drafts_dir = data_dir / "mock-provider-drafts"
 
     return Settings(
         root_dir=root_dir,
         data_dir=data_dir,
+        legacy_data_dir=legacy_data_dir,
         drafts_dir=drafts_dir,
         logs_dir=logs_dir,
         bot_logs_dir=bot_logs_dir,

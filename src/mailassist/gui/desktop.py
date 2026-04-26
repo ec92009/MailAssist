@@ -2,82 +2,42 @@ from __future__ import annotations
 
 import json
 import sys
-import time
 from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, QProcess, QThread, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QIcon
+from PySide6.QtCore import QProcess, Qt, QTimer
+from PySide6.QtGui import QFont, QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
     QFormLayout,
     QGroupBox,
-    QHeaderView,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QPlainTextEdit,
     QFrame,
+    QScrollArea,
     QSizePolicy,
-    QSplitter,
     QStackedWidget,
-    QTableWidget,
-    QTableWidgetItem,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from mailassist.config import load_settings, read_env_file, write_env_file
 from mailassist.background_bot import TONE_OPTIONS, build_prompt_preview, tone_label
-from mailassist.gui.server import (
-    FILTER_LABELS,
-    SET_ASIDE_CLASSIFICATIONS,
-    STATUS_FILTER_LABELS,
-    filtered_and_sorted_threads,
-    find_thread_state,
-    load_review_state,
-    load_visible_version,
-    normalize_classification,
-    normalize_review_status,
-    payload_to_thread,
-    save_review_state,
-    stream_candidate_for_tone,
-    update_thread_status,
-    update_candidate,
-)
+from mailassist.review_state import load_visible_version
 from mailassist.models import utc_now_iso
 from mailassist.llm.ollama import OllamaClient
 from mailassist.providers.gmail import GmailProvider
-
-CLASSIFICATION_TINTS = {
-    "urgent": ("#ffe3db", "#973522"),
-    "reply_needed": ("#e0f0ff", "#1e5f94"),
-    "automated": ("#fff0bf", "#8a6112"),
-    "no_response": ("#eaedf2", "#556170"),
-    "spam": ("#ffdce9", "#95244b"),
-    "unclassified": ("#f4ede6", "#5e6978"),
-}
-ROW_BACKGROUNDS = ("#fffaf4", "#ecdcca")
-SORT_VALUE_ROLE = Qt.ItemDataRole.UserRole + 1
-THREAD_ID_ROLE = Qt.ItemDataRole.UserRole + 2
-CHECK_COLUMN = 0
-SUBJECT_COLUMN = 1
-CLASSIFICATION_COLUMN = 2
-RECEIVED_COLUMN = 3
-SENDER_COLUMN = 4
-INBOX_ROW_HEIGHT = 30
-INBOX_INITIAL_VISIBLE_ROWS = 6
-INBOX_INITIAL_HEIGHT = 34 + (INBOX_ROW_HEIGHT * INBOX_INITIAL_VISIBLE_ROWS)
 
 
 def _configure_form(form: QFormLayout) -> QFormLayout:
@@ -96,39 +56,6 @@ def _wide_line_edit(value: str = "", *, min_width: int = 560) -> QLineEdit:
 
 def _humanize(token: str) -> str:
     return token.replace("_", " ").title()
-
-
-def _status_label(status: str) -> str:
-    normalized = normalize_review_status(status)
-    if normalized == "use_draft":
-        return "Draft selected"
-    if normalized == "ignored":
-        return "Ignored"
-    if normalized == "user_replied":
-        return "User replied"
-    return "Needs review"
-
-
-def _latest_message(thread_state: dict[str, Any]) -> dict[str, Any]:
-    messages = thread_state.get("thread", {}).get("messages", [])
-    if not messages:
-        return {}
-    return max(messages, key=lambda message: message.get("sent_at", ""))
-
-
-def _received_label(thread_state: dict[str, Any]) -> str:
-    sent_at = str(_latest_message(thread_state).get("sent_at", "")).strip()
-    if not sent_at:
-        return "Unknown date"
-    try:
-        parsed = datetime.fromisoformat(sent_at.replace("Z", "+00:00"))
-    except ValueError:
-        return sent_at
-    return parsed.strftime("%b %d, %H:%M")
-
-
-def _sender_label(thread_state: dict[str, Any]) -> str:
-    return str(_latest_message(thread_state).get("from", "")).strip() or "Unknown sender"
 
 
 def _format_model_size(size_value: object) -> str:
@@ -245,209 +172,28 @@ def _log_action_label(action: str) -> str:
     labels = {
         "gmail-inbox-preview": "Gmail inbox preview",
         "ollama-check": "Ollama check",
-        "process-mock-inbox": "Mock inbox pass",
-        "queue-status": "Queue status",
-        "regenerate-thread": "Regenerate draft",
-        "sync-review-state": "Review sync",
         "watch-once": "Watch pass",
     }
     return labels.get(action, _humanize(action))
-
-
-class SortableTableItem(QTableWidgetItem):
-    def __lt__(self, other: QTableWidgetItem) -> bool:
-        mine = self.data(SORT_VALUE_ROLE)
-        theirs = other.data(SORT_VALUE_ROLE)
-        if mine is not None and theirs is not None:
-            return mine < theirs
-        return super().__lt__(other)
-
-
-class CandidateRegenerationWorker(QObject):
-    partial_body = Signal(str, str, str)
-    finished = Signal(str, str, str)
-    failed = Signal(str)
-
-    def __init__(
-        self,
-        *,
-        root_dir: Path,
-        thread_id: str,
-        candidate_id: str,
-        base_url: str,
-        selected_model: str,
-    ) -> None:
-        super().__init__()
-        self.root_dir = root_dir
-        self.thread_id = thread_id
-        self.candidate_id = candidate_id
-        self.base_url = base_url
-        self.selected_model = selected_model
-
-    def run(self) -> None:
-        try:
-            state = load_review_state(self.root_dir)
-            thread_state, _ = find_thread_state(state, self.thread_id)
-            thread = payload_to_thread(thread_state["thread"])
-            candidate = next(
-                (item for item in thread_state.get("candidates", []) if item.get("candidate_id") == self.candidate_id),
-                None,
-            )
-            if candidate is None:
-                raise ValueError("Candidate not found.")
-            tone = str(candidate.get("tone", ""))
-            guidance = ""
-            if tone == "direct and executive":
-                guidance = "Keep it concise, confident, and practical. Confirm what can be done now and name one next step."
-            elif tone == "warm and collaborative":
-                guidance = "Sound thoughtful and calm. Acknowledge the ask, explain any nuance briefly, and keep the tone encouraging."
-            updated_candidate, generation_model, generation_error, classification = stream_candidate_for_tone(
-                thread,
-                candidate_id=self.candidate_id,
-                tone=tone,
-                guidance=guidance,
-                base_url=self.base_url,
-                selected_model=self.selected_model,
-                existing_body=str(candidate.get("body", "")),
-                on_body_update=lambda chunk: self._emit_partial_chunk(chunk),
-            )
-            for index, current in enumerate(thread_state.get("candidates", [])):
-                if current.get("candidate_id") == self.candidate_id:
-                    thread_state["candidates"][index] = updated_candidate
-                    break
-            thread_state["candidate_generation_model"] = generation_model
-            thread_state["candidate_generation_error"] = generation_error
-            thread_state["classification"] = classification
-            thread_state["classification_source"] = generation_model or "fallback"
-            thread_state["classification_updated_at"] = utc_now_iso()
-            if thread_state.get("selected_candidate_id") == self.candidate_id:
-                thread_state["selected_candidate_id"] = None
-            if thread_state.get("status") != "ignored":
-                thread_state["status"] = "pending_review"
-            for item in thread_state.get("candidates", []):
-                if item.get("candidate_id") != self.candidate_id and normalize_review_status(item.get("status")) != "ignored":
-                    item["status"] = "pending_review"
-            state["generated_at"] = utc_now_iso()
-            save_review_state(self.root_dir, state)
-            label = next(
-                (
-                    str(item.get("label", "draft"))
-                    for item in thread_state.get("candidates", [])
-                    if item.get("candidate_id") == self.candidate_id
-                ),
-                "draft",
-            )
-            self.finished.emit(self.thread_id, self.candidate_id, label)
-        except Exception as exc:
-            self.failed.emit(str(exc))
-
-    def _emit_partial_chunk(self, chunk: str) -> None:
-        if not chunk:
-            return
-        self.partial_body.emit(self.thread_id, self.candidate_id, chunk)
-        # Give the main thread a chance to paint the streamed chunk before more arrive.
-        time.sleep(0.01)
-
-
-class CandidateEditor(QWidget):
-    def __init__(
-        self,
-        thread_state: dict[str, Any],
-        candidate: dict[str, Any],
-        autosave_callback,
-        reset_callback,
-        use_callback,
-        ignore_callback,
-        close_callback,
-        refresh_callback,
-    ) -> None:
-        super().__init__()
-        self.thread_id = thread_state["thread_id"]
-        self.candidate_id = candidate["candidate_id"]
-        self.last_saved_text = candidate.get("body", "").strip()
-        self.autosave_callback = autosave_callback
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        self.editor = QPlainTextEdit(candidate.get("body", ""))
-        self.editor.setPlaceholderText("No response recommended for this classification.")
-        self.editor.setMinimumHeight(120)
-        layout.addWidget(self.editor, 1)
-
-        self.autosave_timer = QTimer(self)
-        self.autosave_timer.setInterval(450)
-        self.autosave_timer.setSingleShot(True)
-        self.autosave_timer.timeout.connect(self._emit_autosave)
-        self.editor.textChanged.connect(self._schedule_autosave)
-
-    def _schedule_autosave(self) -> None:
-        self.autosave_timer.start()
-
-    def _emit_autosave(self) -> None:
-        if self.current_text() == self.last_saved_text:
-            return
-        self.autosave_callback(self.thread_id, self.candidate_id, self)
-
-    def current_text(self) -> str:
-        return self.editor.toPlainText().strip()
-
-    def mark_saved_text(self, text: str) -> None:
-        self.last_saved_text = text.strip()
-
-    def replace_text(self, text: str) -> None:
-        self.autosave_timer.stop()
-        self.editor.blockSignals(True)
-        self.editor.setPlainText(text)
-        self.editor.blockSignals(False)
-        self.mark_saved_text(text)
-
-    def append_text(self, chunk: str) -> None:
-        if not chunk:
-            return
-        self.autosave_timer.stop()
-        self.editor.blockSignals(True)
-        cursor = self.editor.textCursor()
-        cursor.movePosition(cursor.MoveOperation.End)
-        cursor.insertText(chunk)
-        self.editor.setTextCursor(cursor)
-        self.editor.ensureCursorVisible()
-        self.editor.blockSignals(False)
 
 
 class MailAssistDesktopWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.settings = load_settings()
-        self.review_state = load_review_state(self.settings.root_dir)
-        self.current_thread_id = ""
         self.bot_process: QProcess | None = None
         self.bot_stdout_buffer = ""
         self.latest_bot_log_path: Path | None = None
-        self.settings_dialog: QDialog | None = None
         self.bot_logs_dialog: QDialog | None = None
-        self.candidate_regeneration_thread: QThread | None = None
-        self.candidate_regeneration_worker: CandidateRegenerationWorker | None = None
-        self.active_regeneration_editor: CandidateEditor | None = None
-        self.active_regeneration_thread_id = ""
-        self.active_regeneration_candidate_id = ""
         self.active_progress_label = ""
-        self.candidate_regeneration_active = False
-        self.candidate_regeneration_seen_chunk = False
-        self.candidate_regeneration_char_count = 0
-        self.candidate_regeneration_body = ""
-        self.progress_timer = QTimer(self)
-        self.progress_timer.setInterval(180)
-        self.progress_timer.timeout.connect(self._advance_fake_progress)
-        self.fake_progress_value = 0
-        self.table_sort_column = RECEIVED_COLUMN
-        self.table_sort_order = Qt.SortOrder.DescendingOrder
         self.last_activity_summary = "Idle"
+        self.last_pass_summary = ""
+        self.last_failure_summary = ""
+        self.ollama_health: tuple[str, str] = ("Checking...", "warn")
+        self.provider_health: tuple[str, str] = ("", "warn")
+        self.last_bot_state = "idle"
         self.gmail_signature_import_attempted = False
         self.review_previous_step_index = 3
-        self.settings_group_stable_height = 0
-        self.settings_wizard_stable_height = 0
         setup_value = read_env_file(self.settings.root_dir / ".env").get("MAILASSIST_SETUP_COMPLETE", "false")
         self.setup_finished = setup_value.strip().lower() == "true"
         self.settings_open = not self.setup_finished
@@ -456,12 +202,24 @@ class MailAssistDesktopWindow(QMainWindow):
         icon_path = self.settings.root_dir / "assets" / "brand" / "mailassist_icon.svg"
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
-        self.resize(1120, 680)
+        self.resize(*self._initial_window_size())
 
         self._build_ui()
+        self._install_shortcuts()
         self.refresh_models()
         self.refresh_bot_logs()
         self.refresh_dashboard()
+
+    def _install_shortcuts(self) -> None:
+        shortcuts = (
+            ("Ctrl+,", self.open_settings_wizard),
+            ("Ctrl+R", self.run_mock_watch_once),
+            ("Ctrl+L", self.open_bot_logs_dialog),
+            ("Esc", lambda: self._set_banner("")),
+        )
+        for sequence, slot in shortcuts:
+            shortcut = QShortcut(QKeySequence(sequence), self)
+            shortcut.activated.connect(slot)
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -593,18 +351,25 @@ class MailAssistDesktopWindow(QMainWindow):
         self.tone_status_label = QLabel(tone_label(self.settings.user_tone))
         self.signature_status_label = QLabel("Configured" if self.settings.user_signature.strip() else "Missing")
         self.last_activity_label = QLabel(self.last_activity_summary)
-        for label_text, widget in (
-            ("Bot", self.bot_status_label),
-            ("Provider", self.provider_status_label),
-            ("Ollama", self.ollama_status_label),
-            ("Tone", self.tone_status_label),
-            ("Signature", self.signature_status_label),
-            ("Last activity", self.last_activity_label),
+        self.last_pass_label = QLabel("No watch pass yet")
+        self.last_failure_label = QLabel("None")
+        plain_style = "color: #1d2430; font-size: 14px;"
+        for label_text, widget, style in (
+            ("Bot", self.bot_status_label, ""),
+            ("Provider", self.provider_status_label, ""),
+            ("Ollama", self.ollama_status_label, ""),
+            ("Tone", self.tone_status_label, plain_style),
+            ("Signature", self.signature_status_label, plain_style),
+            ("Last activity", self.last_activity_label, plain_style),
+            ("Last pass", self.last_pass_label, plain_style),
+            ("Last failure", self.last_failure_label, plain_style),
         ):
             label = QLabel(label_text)
             label.setStyleSheet("color: #5e6978; font-size: 12px;")
-            widget.setStyleSheet("color: #1d2430; font-size: 14px;")
+            if style:
+                widget.setStyleSheet(style)
             status_grid.addRow(label, widget)
+        self._set_bot_state("idle")
         control_layout.addLayout(status_grid)
 
         bot_actions = QHBoxLayout()
@@ -612,11 +377,8 @@ class MailAssistDesktopWindow(QMainWindow):
         run_mock_pass_button.clicked.connect(self.run_mock_watch_once)
         gmail_draft_test_button = QPushButton("Create Gmail Test Draft")
         gmail_draft_test_button.clicked.connect(self.run_gmail_draft_test)
-        queue_status_button = QPushButton("Queue Status")
-        queue_status_button.clicked.connect(self.run_queue_status)
         bot_actions.addWidget(run_mock_pass_button)
         bot_actions.addWidget(gmail_draft_test_button)
-        bot_actions.addWidget(queue_status_button)
         bot_actions.addStretch(1)
         control_layout.addLayout(bot_actions)
         shell.addWidget(self.control_group)
@@ -637,37 +399,6 @@ class MailAssistDesktopWindow(QMainWindow):
         self.setCentralWidget(root)
         self._refresh_setup_visibility()
 
-    def _build_settings_dialog(self) -> None:
-        dialog = QDialog(self)
-        dialog.setModal(True)
-        dialog.setWindowTitle("MailAssist Settings")
-        dialog.resize(760, 620)
-
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(18, 18, 18, 18)
-        layout.setSpacing(12)
-
-        intro = QLabel("Configure the background draft bot.")
-        intro.setWordWrap(True)
-        intro.setStyleSheet("color: #5e6978; font-size: 14px;")
-        layout.addWidget(intro)
-
-        settings_tabs = QTabWidget()
-        settings_tabs.addTab(self._build_ollama_settings_panel(), "Ollama")
-        settings_tabs.addTab(self._build_provider_settings_panel(), "Providers")
-        settings_tabs.addTab(self._build_signature_settings_panel(), "Signature")
-        settings_tabs.addTab(self._build_prompt_preview_panel(), "Prompt")
-        layout.addWidget(settings_tabs, 1)
-
-        footer = QHBoxLayout()
-        footer.addStretch(1)
-        close_button = QPushButton("Done")
-        close_button.clicked.connect(dialog.accept)
-        footer.addWidget(close_button)
-        layout.addLayout(footer)
-
-        self.settings_dialog = dialog
-
     def _build_bot_logs_dialog(self) -> None:
         dialog = QDialog(self)
         dialog.setModal(False)
@@ -678,10 +409,6 @@ class MailAssistDesktopWindow(QMainWindow):
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(12)
 
-        intro = QLabel("Inspect live stdout and recent bot log files without crowding the review workspace.")
-        intro.setWordWrap(True)
-        intro.setStyleSheet("color: #5e6978; font-size: 14px;")
-        layout.addWidget(intro)
         layout.addWidget(self._build_bot_panel(), 1)
 
         footer = QHBoxLayout()
@@ -732,17 +459,9 @@ class MailAssistDesktopWindow(QMainWindow):
         layout.addWidget(self.bot_log_viewer, 1)
         return widget
 
-    def open_settings_dialog(self) -> None:
-        if hasattr(self, "settings_tabs"):
-            self.settings_tabs.setCurrentIndex(0)
-            self._set_banner("Settings are available in the main window.", level="info")
-        self.refresh_models()
-
     def open_settings_wizard(self) -> None:
-        geometry = self.geometry()
         self.settings_open = True
         self._refresh_setup_visibility()
-        self._restore_geometry_after_layout(geometry)
         self._set_banner("Settings are open. Press Finish when you are done.", level="info")
 
     def open_bot_logs_dialog(self) -> None:
@@ -771,6 +490,7 @@ class MailAssistDesktopWindow(QMainWindow):
         self.settings_step_help = QLabel("")
         self.settings_step_help.setWordWrap(True)
         self.settings_step_help.setMinimumWidth(0)
+        self.settings_step_help.setMinimumHeight(46)
         self.settings_step_help.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Maximum)
         self.settings_step_help.setStyleSheet(
             "background: #fff3df; border: 1px solid #dfc7ad; border-radius: 10px; padding: 6px; color: #5e6978;"
@@ -778,7 +498,7 @@ class MailAssistDesktopWindow(QMainWindow):
         layout.addWidget(self.settings_step_help)
 
         self.settings_stack = QStackedWidget()
-        self.settings_stack.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        self.settings_stack.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.settings_steps: list[tuple[str, str, bool]] = []
         self.advanced_settings_enabled = False
         self._add_settings_step(
@@ -812,7 +532,14 @@ class MailAssistDesktopWindow(QMainWindow):
             self._build_wizard_summary_page(),
         )
         layout.insertWidget(0, self._build_settings_progress_line())
-        layout.addWidget(self.settings_stack, 0, Qt.AlignmentFlag.AlignTop)
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_area.setWidget(self.settings_stack)
+        scroll_area.setMinimumHeight(420)
+        layout.addWidget(scroll_area, 1)
+        self.settings_stack_scroll = scroll_area
 
         nav = QHBoxLayout()
         nav.setSpacing(10)
@@ -888,7 +615,6 @@ class MailAssistDesktopWindow(QMainWindow):
         if hasattr(self, "advanced_settings_details"):
             self.advanced_settings_details.setVisible(checked)
         self._refresh_settings_progress_line()
-        self._sync_settings_stack_height()
 
     def _add_settings_step(
         self,
@@ -949,12 +675,6 @@ class MailAssistDesktopWindow(QMainWindow):
         self.ollama_models_hint.setWordWrap(True)
         self.ollama_models_hint.setStyleSheet("color: #5e6978; font-size: 13px;")
         self.ollama_models_hint.hide()
-        self.ollama_metadata_hint = QLabel(
-            "The dropdown shows local model size and when Ollama last modified/downloaded the local copy."
-        )
-        self.ollama_metadata_hint.setWordWrap(True)
-        self.ollama_metadata_hint.setStyleSheet("color: #5e6978; font-size: 13px;")
-        model_layout.addWidget(self.ollama_metadata_hint)
         self.ollama_model_hint = QLabel("")
         self.ollama_model_hint.setWordWrap(True)
         self.ollama_model_hint.setStyleSheet(
@@ -1060,11 +780,9 @@ class MailAssistDesktopWindow(QMainWindow):
         self.ollama_url_input = _wide_line_edit(self.settings.ollama_url)
         self.gmail_credentials_input = _wide_line_edit(str(self.settings.gmail_credentials_file), min_width=620)
         self.gmail_token_input = _wide_line_edit(str(self.settings.gmail_token_file), min_width=620)
-        self.poll_seconds_input = _wide_line_edit(str(self.settings.bot_poll_seconds), min_width=160)
         advanced_layout.addRow("Ollama URL", self.ollama_url_input)
         advanced_layout.addRow("Client secret", self.gmail_credentials_input)
         advanced_layout.addRow("Local token", self.gmail_token_input)
-        advanced_layout.addRow("Poll interval (seconds)", self.poll_seconds_input)
         layout.addWidget(advanced_group)
 
         refresh_button = QPushButton("Check connection and refresh models")
@@ -1097,8 +815,10 @@ class MailAssistDesktopWindow(QMainWindow):
         visible_position = visible_indices.index(self.settings_step_index) + 1
         self.settings_step_label.setText(f"Step {visible_position} of {len(visible_indices)}")
         self.settings_step_title.setText(title)
-        self.settings_step_help.setText(help_text)
-        self.settings_step_help.setVisible(bool(help_text.strip()))
+        if help_text.strip():
+            self.settings_step_help.setText(help_text)
+        else:
+            self.settings_step_help.setText(" ")
         self.settings_back_button.setEnabled(self.settings_step_index > 0)
         is_last = self._next_visible_settings_index(self.settings_step_index) == self.settings_step_index
         self.settings_next_button.setVisible(not is_last)
@@ -1111,47 +831,6 @@ class MailAssistDesktopWindow(QMainWindow):
         elif title == "Set Signature" and not self.gmail_signature_import_attempted:
             self.gmail_signature_import_attempted = True
             QTimer.singleShot(0, lambda: self._import_gmail_signature(force=False))
-        self._sync_settings_stack_height()
-
-    def _sync_settings_stack_height(self) -> None:
-        if not hasattr(self, "settings_stack"):
-            return
-        if self.settings_stack.currentWidget() is None:
-            return
-        target_height = max(
-            max(
-                (self.settings_stack.widget(index).sizeHint().height() for index in range(self.settings_stack.count())),
-                default=24,
-            )
-            + 8,
-            397,
-        )
-        self.settings_stack.setMinimumHeight(target_height)
-        self.settings_stack.setMaximumHeight(target_height)
-        if hasattr(self, "settings_wizard"):
-            self.settings_wizard.adjustSize()
-            wizard_height = max(
-                self.settings_wizard.sizeHint().height(),
-                self.settings_wizard_stable_height,
-                target_height + 96,
-                569,
-            )
-            self.settings_wizard_stable_height = wizard_height
-            self.settings_wizard.setMinimumHeight(wizard_height)
-            self.settings_wizard.setMaximumHeight(wizard_height)
-            self.settings_wizard.updateGeometry()
-        if hasattr(self, "settings_group"):
-            self.settings_group.adjustSize()
-            group_height = max(
-                self.settings_group.sizeHint().height(),
-                self.settings_group_stable_height,
-                self.settings_wizard_stable_height + 42,
-                611,
-            )
-            self.settings_group_stable_height = group_height
-            self.settings_group.setMinimumHeight(group_height)
-            self.settings_group.setMaximumHeight(group_height)
-            self.settings_group.updateGeometry()
 
     def _import_gmail_signature(self, *, force: bool) -> None:
         if not hasattr(self, "signature_input") or not hasattr(self, "gmail_signature_status"):
@@ -1163,7 +842,6 @@ class MailAssistDesktopWindow(QMainWindow):
             self.gmail_signature_status.setText("Using your saved MailAssist signature. Use Import from Gmail to replace it.")
             return
         self.gmail_signature_status.setText("Checking Gmail for a saved signature...")
-        QApplication.processEvents()
         provider = GmailProvider(
             Path(self.gmail_credentials_input.text().strip()),
             Path(self.gmail_token_input.text().strip()),
@@ -1222,13 +900,6 @@ class MailAssistDesktopWindow(QMainWindow):
         self.settings_button.setVisible(not self.settings_open)
         self.control_group.setVisible(self.setup_finished and not self.settings_open)
         self.activity_group.setVisible(self.setup_finished and not self.settings_open)
-        if self.settings_open:
-            self._sync_settings_stack_height()
-
-    def _restore_geometry_after_layout(self, geometry) -> None:
-        self.setGeometry(geometry)
-        QTimer.singleShot(0, lambda saved=geometry: self.setGeometry(saved))
-        QTimer.singleShot(60, lambda saved=geometry: self.setGeometry(saved))
 
     def _next_settings_step(self) -> None:
         self.save_settings(announce=False)
@@ -1290,7 +961,6 @@ class MailAssistDesktopWindow(QMainWindow):
             f"Local AI model: {selected_model}",
             f"Default tone: {self.tone_combo.currentText()}",
             f"Signature: {signature_state}",
-            f"Check interval: every {self.poll_seconds_input.text().strip() or '60'} seconds",
             "",
             "MailAssist will watch for new mail and prepare drafts for messages that need a reply.",
             "",
@@ -1299,64 +969,6 @@ class MailAssistDesktopWindow(QMainWindow):
             self._prompt_preview_text(),
         ]
         self.settings_summary.setPlainText("\n".join(lines))
-
-    def _build_ollama_settings_panel(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.setSpacing(12)
-
-        model_group = QGroupBox("Local AI Model")
-        model_layout = QVBoxLayout(model_group)
-        model_layout.setSpacing(8)
-        model_form = _configure_form(QFormLayout())
-        self.ollama_model_picker = QComboBox()
-        self.ollama_model_picker.currentIndexChanged.connect(self._refresh_ollama_model_hint)
-        model_form.addRow("Model", self.ollama_model_picker)
-        self.ollama_connection_status = QLabel("Checking Ollama...")
-        self.ollama_connection_status.setStyleSheet("color: #5e6978; font-size: 13px;")
-        model_form.addRow("Status", self.ollama_connection_status)
-        model_layout.addLayout(model_form)
-
-        self.ollama_models_hint = QLabel("")
-        self.ollama_models_hint.setWordWrap(True)
-        self.ollama_models_hint.setStyleSheet("color: #5e6978; font-size: 13px;")
-        model_layout.addWidget(self.ollama_models_hint)
-
-        self.ollama_model_hint = QLabel("")
-        self.ollama_model_hint.setWordWrap(True)
-        self.ollama_model_hint.setStyleSheet(
-            "background: #fffaf4; border: 1px solid #dccbbb; border-radius: 10px; padding: 8px; color: #1d2430;"
-        )
-        model_layout.addWidget(self.ollama_model_hint)
-
-        actions = QHBoxLayout()
-        save_button = QPushButton("Save settings")
-        save_button.clicked.connect(self.save_settings)
-        refresh_models_button = QPushButton("Refresh model list")
-        refresh_models_button.clicked.connect(self.refresh_models)
-        test_button = QPushButton("Test selected model")
-        test_button.clicked.connect(self.test_ollama)
-        actions.addWidget(save_button)
-        actions.addWidget(refresh_models_button)
-        actions.addWidget(test_button)
-        actions.addStretch(1)
-        model_layout.addLayout(actions)
-        layout.addWidget(model_group)
-
-        advanced_group = QGroupBox("Advanced Connection")
-        advanced_layout = _configure_form(QFormLayout(advanced_group))
-        self.ollama_url_input = _wide_line_edit(self.settings.ollama_url)
-        advanced_layout.addRow("Ollama URL", self.ollama_url_input)
-        layout.addWidget(advanced_group)
-
-        result_label = QLabel("Model check result")
-        result_label.setStyleSheet("font-size: 13px; color: #5e6978;")
-        layout.addWidget(result_label)
-        self.ollama_result = QPlainTextEdit()
-        self.ollama_result.setReadOnly(True)
-        self.ollama_result.setMinimumHeight(90)
-        layout.addWidget(self.ollama_result, 1)
-        return widget
 
     def _refresh_ollama_model_hint(self) -> None:
         if not hasattr(self, "ollama_model_hint"):
@@ -1374,112 +986,6 @@ class MailAssistDesktopWindow(QMainWindow):
             message = "No model selected."
         self.ollama_model_hint.setText(message)
 
-    def _build_provider_settings_panel(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.setSpacing(12)
-
-        provider_group = QGroupBox("Email Provider")
-        provider_layout = _configure_form(QFormLayout(provider_group))
-        self.default_provider_combo = QComboBox()
-        self.default_provider_combo.addItem("Gmail", "gmail")
-        self.default_provider_combo.addItem("Outlook", "outlook")
-        self.default_provider_combo.setCurrentIndex(0 if self.settings.default_provider == "gmail" else 1)
-
-        self.gmail_enabled = QCheckBox("Enable Gmail")
-        self.gmail_enabled.setChecked(self.settings.gmail_enabled)
-        self.outlook_enabled = QCheckBox("Enable Outlook (coming later)")
-        self.outlook_enabled.setChecked(self.settings.outlook_enabled)
-        self.outlook_enabled.setEnabled(False)
-        provider_layout.addRow("Draft provider", self.default_provider_combo)
-        provider_layout.addRow("", self.gmail_enabled)
-        provider_layout.addRow("", self.outlook_enabled)
-        layout.addWidget(provider_group)
-
-        advanced_group = QGroupBox("Gmail OAuth Files")
-        advanced_layout = _configure_form(QFormLayout(advanced_group))
-        self.gmail_credentials_input = _wide_line_edit(str(self.settings.gmail_credentials_file), min_width=720)
-        self.gmail_token_input = _wide_line_edit(str(self.settings.gmail_token_file), min_width=720)
-        advanced_layout.addRow("Client secret", self.gmail_credentials_input)
-        advanced_layout.addRow("Local token", self.gmail_token_input)
-        layout.addWidget(advanced_group)
-
-        save_button = QPushButton("Save provider settings")
-        save_button.clicked.connect(self.save_settings)
-        layout.addWidget(save_button)
-        layout.addStretch(1)
-        return widget
-
-    def _build_signature_settings_panel(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.setSpacing(12)
-
-        style_group = QGroupBox("Writing Style")
-        style_layout = _configure_form(QFormLayout(style_group))
-        self.tone_combo = QComboBox()
-        for value, (label, _guidance) in TONE_OPTIONS.items():
-            self.tone_combo.addItem(label, value)
-        tone_index = self.tone_combo.findData(self.settings.user_tone)
-        if tone_index >= 0:
-            self.tone_combo.setCurrentIndex(tone_index)
-        self.tone_combo.currentIndexChanged.connect(self._refresh_prompt_preview)
-        self.poll_seconds_input = _wide_line_edit(str(self.settings.bot_poll_seconds), min_width=160)
-        style_layout.addRow("Default tone", self.tone_combo)
-        style_layout.addRow("Poll interval (seconds)", self.poll_seconds_input)
-        layout.addWidget(style_group)
-
-        intro = QLabel(
-            "MailAssist appends this signature itself after the local model drafts the body. "
-            "The model is asked not to write or modify the signature."
-        )
-        intro.setWordWrap(True)
-        intro.setStyleSheet("color: #5e6978; font-size: 13px;")
-        layout.addWidget(intro)
-
-        self.signature_input = QPlainTextEdit(self.settings.user_signature)
-        self.signature_input.setPlaceholderText("Best regards,\nYour Name")
-        self.signature_input.setMinimumHeight(120)
-        self.signature_input.textChanged.connect(self._refresh_prompt_preview)
-        layout.addWidget(self.signature_input)
-
-        save_button = QPushButton("Save writing settings")
-        save_button.clicked.connect(self.save_settings)
-        layout.addWidget(save_button)
-        layout.addStretch(1)
-        return widget
-
-    def _build_prompt_preview_panel(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.setSpacing(12)
-
-        intro = QLabel(
-            "Read-only preview of the bot drafting prompt. Real Gmail prompts use the actual "
-            "incoming thread; this preview uses a sanitized sample email with your current tone. "
-            "The saved signature is not included in the prompt because MailAssist appends it after drafting."
-        )
-        intro.setWordWrap(True)
-        intro.setStyleSheet("color: #5e6978; font-size: 13px;")
-        layout.addWidget(intro)
-
-        self.prompt_preview = QPlainTextEdit()
-        self.prompt_preview.setReadOnly(True)
-        self.prompt_preview.setMinimumHeight(360)
-        font = QFont("Menlo")
-        font.setStyleHint(QFont.StyleHint.Monospace)
-        self.prompt_preview.setFont(font)
-        layout.addWidget(self.prompt_preview, 1)
-
-        actions = QHBoxLayout()
-        refresh_button = QPushButton("Refresh preview")
-        refresh_button.clicked.connect(self._refresh_prompt_preview)
-        actions.addWidget(refresh_button)
-        actions.addStretch(1)
-        layout.addLayout(actions)
-
-        self._refresh_prompt_preview()
-        return widget
 
     def _refresh_prompt_preview(self) -> None:
         preview_text = self._prompt_preview_text()
@@ -1527,120 +1033,98 @@ class MailAssistDesktopWindow(QMainWindow):
         cursor.movePosition(cursor.MoveOperation.End)
         self.bot_console.setTextCursor(cursor)
 
-    def _current_view_is_regenerating_candidate(self) -> bool:
-        editor = self._current_candidate_editor()
-        return (
-            self.candidate_regeneration_active
-            and editor is not None
-            and editor.thread_id == self.active_regeneration_thread_id
-            and editor.candidate_id == self.active_regeneration_candidate_id
-        )
-
-    def _refresh_candidate_action_state(self) -> None:
-        editor = self._current_candidate_editor()
-        running = self._current_view_is_regenerating_candidate()
-        if editor is not None:
-            editor.setEnabled(not running)
-        self.reset_candidate_button.setEnabled(not running)
-        self.use_candidate_button.setEnabled(not running)
-        self.ignore_thread_button.setEnabled(not running)
-        self.close_thread_button.setEnabled(not running)
-        self.regenerate_candidate_button.setEnabled(not self.candidate_regeneration_active or running)
-        self.use_candidate_button.setVisible(not running)
-        self.ignore_thread_button.setVisible(not running)
-        self.close_thread_button.setVisible(not running)
-        if running:
-            if self.candidate_regeneration_seen_chunk:
-                self.regenerate_candidate_button.setText("Streaming from Ollama...")
-                self.candidate_action_status.setText(
-                    "Streaming response from Ollama.\n"
-                    f"{self.candidate_regeneration_char_count} characters received. "
-                    "You can click another email and keep working while this finishes."
-                )
-            else:
-                self.regenerate_candidate_button.setText("Waiting for Ollama...")
-                self.candidate_action_status.setText(
-                    "Waiting for Ollama to return the first chunk.\n"
-                    "This can take a couple of minutes. You can click another email and keep working."
-                )
-            self.regenerate_candidate_button.setStyleSheet(
-                "background: #d7e6f4; color: #1d2430; border: 1px solid #9fbad3; padding: 8px 16px;"
-            )
-            self.candidate_action_status.show()
-        else:
-            self.regenerate_candidate_button.setText("Regenerate with Ollama")
-            self.regenerate_candidate_button.setStyleSheet("")
-            self.candidate_action_status.hide()
-            self.candidate_action_status.setText("")
-
-    def _start_fake_progress(self, label: str) -> None:
+    def _start_indeterminate_progress(self, label: str) -> None:
         self.active_progress_label = label
-        self.fake_progress_value = 0
-        self.candidate_regeneration_active = True
-        self.candidate_regeneration_seen_chunk = False
-        self.candidate_regeneration_char_count = 0
-        self.candidate_regeneration_body = ""
         self.banner.hide()
         self.progress_bar.setRange(0, 0)
         self.progress_bar.setFormat(self.active_progress_label)
-        self.progress_bar.setValue(0)
         self.progress_bar.show()
         self._refresh_status_overlay_visibility()
-        self._refresh_candidate_action_state()
-        self.progress_timer.start()
 
-    def _advance_fake_progress(self) -> None:
-        if self.candidate_regeneration_seen_chunk:
-            self.progress_bar.setFormat(
-                f"{self.active_progress_label} Streaming... {self.candidate_regeneration_char_count} chars"
-            )
-        else:
-            self.progress_bar.setFormat(
-                f"{self.active_progress_label} Waiting for first chunk..."
-            )
-        self._refresh_candidate_action_state()
-
-    def _finish_fake_progress(self) -> None:
-        self.progress_timer.stop()
+    def _finish_indeterminate_progress(self) -> None:
         self.progress_bar.setRange(0, 100)
-        self.progress_bar.setFormat(self.active_progress_label)
         self.progress_bar.setValue(100)
+        self.progress_bar.setFormat("")
         self.progress_bar.hide()
         self.active_progress_label = ""
-        self.candidate_regeneration_active = False
-        self.candidate_regeneration_seen_chunk = False
-        self.candidate_regeneration_char_count = 0
-        self.candidate_regeneration_body = ""
         self._refresh_status_overlay_visibility()
-        self._refresh_candidate_action_state()
 
-    def _review_state_needs_sync(self) -> bool:
-        return any(not thread_state.get("candidates") for thread_state in self.review_state.get("threads", []))
+    _PILL_STYLES = {
+        "ok": "background: #e6f1ec; color: #1e7a61; border: 1px solid #a9cfc0;",
+        "running": "background: #fff3df; color: #8a5d2b; border: 1px solid #dfc7ad;",
+        "warn": "background: #fdf3e7; color: #8a5d2b; border: 1px solid #dfc7ad;",
+        "error": "background: #fbe6dd; color: #8c4029; border: 1px solid #e7b9a4;",
+        "idle": "background: #eef0f4; color: #5e6978; border: 1px solid #cfd5dd;",
+    }
+
+    def _paint_status_pill(self, widget: QLabel, level: str) -> None:
+        base = self._PILL_STYLES.get(level, self._PILL_STYLES["idle"])
+        widget.setStyleSheet(
+            f"{base} border-radius: 10px; padding: 3px 10px; font-size: 13px; font-weight: 600;"
+        )
+
+    def _set_bot_state(self, state: str, text: str | None = None) -> None:
+        labels = {"idle": "Idle", "running": "Running", "error": "Error"}
+        display = text if text is not None else labels.get(state, state.title())
+        self.bot_status_label.setText(display)
+        self._paint_status_pill(self.bot_status_label, "running" if state == "running" else state)
+        self.last_bot_state = state
 
     def _current_bot_ollama_settings(self) -> tuple[str, str]:
         base_url = self.ollama_url_input.text().strip() or self.settings.ollama_url
         selected_model = str(self.ollama_model_picker.currentData() or self.settings.ollama_model).strip()
         return base_url, selected_model
 
-    def _hide_detail_panel(self, message: str) -> None:
-        self.detail_panel.hide()
-        self.detail_placeholder.setText(message)
-        self.detail_placeholder.show()
-
-    def _show_detail_panel(self) -> None:
-        self.detail_placeholder.hide()
-        self.detail_panel.show()
+    def _initial_window_size(self) -> tuple[int, int]:
+        fallback_width, fallback_height = 1120, 680
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            return fallback_width, fallback_height
+        available = screen.availableGeometry()
+        width = min(fallback_width, max(900, available.width() - 120))
+        height = min(fallback_height, max(620, available.height() - 120))
+        return width, height
 
     def refresh_dashboard(self) -> None:
-        if hasattr(self, "provider_status_label"):
-            self.provider_status_label.setText(self.settings.default_provider)
-            self.ollama_status_label.setText(self.settings.ollama_model)
-            self.tone_status_label.setText(tone_label(self.settings.user_tone))
-            self.signature_status_label.setText(
-                "Configured" if self.settings.user_signature.strip() else "Missing"
-            )
-            self.last_activity_label.setText(self.last_activity_summary)
-            self.bot_status_label.setText("Running" if self.bot_process is not None else "Idle")
+        if not hasattr(self, "provider_status_label"):
+            return
+        self._refresh_provider_health()
+        provider_text, provider_level = self.provider_health
+        self.provider_status_label.setText(provider_text or self.settings.default_provider)
+        self._paint_status_pill(self.provider_status_label, provider_level)
+
+        ollama_text, ollama_level = self.ollama_health
+        model = self.settings.ollama_model or "no model"
+        self.ollama_status_label.setText(f"{model} — {ollama_text}" if ollama_text else model)
+        self._paint_status_pill(self.ollama_status_label, ollama_level)
+
+        self.tone_status_label.setText(tone_label(self.settings.user_tone))
+        self.signature_status_label.setText(
+            "Configured" if self.settings.user_signature.strip() else "Missing"
+        )
+        self.last_activity_label.setText(self.last_activity_summary)
+        self.last_pass_label.setText(self.last_pass_summary or "No watch pass yet")
+        self.last_failure_label.setText(self.last_failure_summary or "None")
+
+        if self.bot_process is not None:
+            self._set_bot_state("running")
+        elif self.last_bot_state == "error":
+            self._set_bot_state("error")
+        else:
+            self._set_bot_state("idle")
+
+    def _refresh_provider_health(self) -> None:
+        provider = self.settings.default_provider
+        if provider == "gmail":
+            token_path = self.settings.gmail_token_file
+            if token_path and Path(token_path).exists():
+                self.provider_health = (f"gmail — connected", "ok")
+            elif self.settings.gmail_credentials_file and Path(self.settings.gmail_credentials_file).exists():
+                self.provider_health = ("gmail — sign-in pending", "warn")
+            else:
+                self.provider_health = ("gmail — not configured", "warn")
+        else:
+            self.provider_health = (f"{provider} — not yet supported", "warn")
 
     def _append_recent_activity(self, message: str) -> None:
         if not hasattr(self, "recent_activity"):
@@ -1662,6 +1146,7 @@ class MailAssistDesktopWindow(QMainWindow):
         for path in log_paths:
             self.bot_log_selector.addItem(self._bot_log_selector_label(path), str(path))
         self.bot_log_selector.blockSignals(False)
+        self._refresh_summary_from_logs(log_paths)
 
         if self.latest_bot_log_path is not None:
             index = self.bot_log_selector.findData(str(self.latest_bot_log_path))
@@ -1674,6 +1159,40 @@ class MailAssistDesktopWindow(QMainWindow):
             self.load_selected_bot_log()
         else:
             self.bot_log_viewer.clear()
+
+    def _refresh_summary_from_logs(self, log_paths: list[Path]) -> None:
+        latest_pass = ""
+        latest_failure = ""
+        for path in log_paths:
+            events = self._read_bot_log_events(path)
+            if not latest_pass:
+                completed = next(
+                    (event for event in reversed(events)
+                     if event.get("type") == "completed" and "draft_count" in event),
+                    None,
+                )
+                if completed:
+                    when = _event_day_time_label(completed.get("timestamp"))
+                    latest_pass = (
+                        f"{when} · {completed.get('draft_count', 0)} drafts · "
+                        f"{completed.get('skipped_count', 0)} skipped · "
+                        f"{completed.get('already_handled_count', 0)} already handled"
+                    )
+            if not latest_failure:
+                err = next(
+                    (event for event in reversed(events) if event.get("type") == "error"),
+                    None,
+                )
+                if err:
+                    when = _event_day_time_label(err.get("timestamp"))
+                    message = str(err.get("message") or "Bot error.").strip()
+                    latest_failure = f"{when} · {message}"
+            if latest_pass and latest_failure:
+                break
+        if latest_pass:
+            self.last_pass_summary = latest_pass
+        if latest_failure:
+            self.last_failure_summary = latest_failure
 
     def _bot_log_selector_label(self, path: Path) -> str:
         events = self._read_bot_log_events(path)
@@ -1728,18 +1247,26 @@ class MailAssistDesktopWindow(QMainWindow):
             self.ollama_connection_status.setText(f"Connected, {len(models)} installed")
             self.ollama_connection_status.setStyleSheet("color: #215f4a; font-size: 13px;")
             self.ollama_models_hint.setText(f"Found {len(models)} installed model(s).")
+            self.ollama_health = (f"connected ({len(models)})", "ok")
         else:
             self.ollama_connection_status.setText("No models found")
             self.ollama_connection_status.setStyleSheet("color: #8c4029; font-size: 13px;")
             self.ollama_models_hint.setText("No installed Ollama models were detected.")
+            self.ollama_health = ("no models", "warn")
         if model_error:
             self.ollama_connection_status.setText("Not reachable")
             self.ollama_connection_status.setStyleSheet("color: #8c4029; font-size: 13px;")
+            self.ollama_health = ("not reachable", "error")
             if not self.ollama_result.toPlainText().startswith("Sending a tiny test prompt"):
                 self._set_ollama_result_text(model_error)
         elif not models and not self.ollama_result.toPlainText().strip():
             self.ollama_result.clear()
         self._refresh_ollama_model_hint()
+        if hasattr(self, "provider_status_label"):
+            ollama_text, ollama_level = self.ollama_health
+            model = self.settings.ollama_model or "no model"
+            self.ollama_status_label.setText(f"{model} — {ollama_text}" if ollama_text else model)
+            self._paint_status_pill(self.ollama_status_label, ollama_level)
 
     def _list_available_model_details(self) -> tuple[list[dict[str, Any]], str]:
         base_url = self.ollama_url_input.text().strip()
@@ -1753,470 +1280,6 @@ class MailAssistDesktopWindow(QMainWindow):
         self.ollama_result.setPlainText(text)
         self.ollama_result_label.show()
         self.ollama_result.show()
-        self._sync_settings_stack_height()
-
-    def current_context(self) -> dict[str, str]:
-        return {
-            "filter_classification": str(self.classification_filter.currentData()),
-            "filter_status": str(self.status_filter.currentData()),
-            "show_archived": "true" if self.show_archived.isChecked() else "false",
-        }
-
-    def visible_threads(self) -> list[dict[str, Any]]:
-        context = self.current_context()
-        return filtered_and_sorted_threads(
-            self.review_state["threads"],
-            filter_classification=context["filter_classification"],
-            filter_status=context["filter_status"],
-            sort_order="received_at",
-            show_archived=context["show_archived"] == "true",
-        )
-
-    def _populate_thread_row(self, row_index: int, thread_state: dict[str, Any]) -> None:
-        classification = normalize_classification(thread_state.get("classification"))
-        status = normalize_review_status(thread_state.get("status"))
-        _, foreground = CLASSIFICATION_TINTS.get(
-            classification,
-            CLASSIFICATION_TINTS["unclassified"],
-        )
-        row_background = QColor(ROW_BACKGROUNDS[row_index % len(ROW_BACKGROUNDS)])
-        row_foreground = QColor(foreground)
-        if status == "use_draft":
-            row_foreground = QColor("#215f4a")
-        elif status == "ignored":
-            row_foreground = QColor("#8c4029")
-        elif status == "user_replied":
-            row_foreground = QColor("#2f6da3")
-
-        font = QFont()
-        font.setBold(status == "pending_review")
-
-        status_suffix = ""
-        if status == "use_draft":
-            status_suffix = " [Draft selected]"
-        elif status == "ignored":
-            status_suffix = " [Ignored]"
-        elif status == "user_replied":
-            status_suffix = " [User replied]"
-        if thread_state.get("archived"):
-            status_suffix += " [Archived]"
-        sender = _sender_label(thread_state)
-        received_at = _received_label(thread_state)
-        classification_label = _humanize(classification)
-        tooltip = "\n".join(
-            [
-                f"Classification: {classification_label}",
-                f"Received: {received_at}",
-                f"Sender: {sender}",
-                f"Status: {_status_label(status)}",
-            ]
-        )
-        checked = bool(
-            thread_state.get(
-                "archive_selected",
-                normalize_review_status(thread_state.get("status")) in {
-                    "use_draft",
-                    "ignored",
-                    "user_replied",
-                },
-            )
-        )
-
-        check_item = SortableTableItem("")
-        check_item.setData(THREAD_ID_ROLE, thread_state["thread_id"])
-        check_item.setData(SORT_VALUE_ROLE, 1 if checked else 0)
-        check_item.setFlags(
-            Qt.ItemFlag.ItemIsEnabled
-            | Qt.ItemFlag.ItemIsSelectable
-            | Qt.ItemFlag.ItemIsUserCheckable
-        )
-        check_item.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
-
-        subject_item = SortableTableItem(f"{thread_state['subject']}{status_suffix}")
-        subject_item.setData(THREAD_ID_ROLE, thread_state["thread_id"])
-        subject_item.setData(SORT_VALUE_ROLE, thread_state["subject"].lower())
-
-        classification_item = SortableTableItem(classification_label)
-        classification_item.setData(THREAD_ID_ROLE, thread_state["thread_id"])
-        classification_item.setData(SORT_VALUE_ROLE, classification_label.lower())
-
-        received_item = SortableTableItem(received_at)
-        received_item.setData(THREAD_ID_ROLE, thread_state["thread_id"])
-        received_item.setData(SORT_VALUE_ROLE, str(_latest_message(thread_state).get("sent_at", "")))
-
-        sender_item = SortableTableItem(sender)
-        sender_item.setData(THREAD_ID_ROLE, thread_state["thread_id"])
-        sender_item.setData(SORT_VALUE_ROLE, sender.lower())
-
-        for column, item in (
-            (CHECK_COLUMN, check_item),
-            (SUBJECT_COLUMN, subject_item),
-            (CLASSIFICATION_COLUMN, classification_item),
-            (RECEIVED_COLUMN, received_item),
-            (SENDER_COLUMN, sender_item),
-        ):
-            item.setBackground(row_background)
-            item.setForeground(row_foreground)
-            item.setFont(font)
-            item.setToolTip(tooltip)
-            self.thread_table.setItem(row_index, column, item)
-
-    def refresh_queue(self) -> None:
-        visible = self.visible_threads()
-        selected_thread_id = self.current_thread_id
-
-        self.thread_table.blockSignals(True)
-        self.thread_table.setSortingEnabled(False)
-        self.thread_table.clearContents()
-        self.thread_table.setRowCount(len(visible))
-        for index, thread_state in enumerate(visible):
-            self._populate_thread_row(index, thread_state)
-            self.thread_table.setRowHeight(index, INBOX_ROW_HEIGHT)
-        self.thread_table.setSortingEnabled(True)
-        self.thread_table.sortByColumn(self.table_sort_column, self.table_sort_order)
-        self.thread_table.blockSignals(False)
-
-        if not visible:
-            self.current_thread_id = ""
-            self._hide_detail_panel("No emails match the current filters.")
-            return
-
-        if not selected_thread_id:
-            self.thread_table.clearSelection()
-            self._hide_detail_panel("Select an email to review.")
-            return
-
-        for row_index in range(self.thread_table.rowCount()):
-            item = self.thread_table.item(row_index, SUBJECT_COLUMN)
-            if item is not None and item.data(THREAD_ID_ROLE) == selected_thread_id:
-                self.thread_table.selectRow(row_index)
-                return
-
-        self.current_thread_id = ""
-        self.thread_table.clearSelection()
-        self._hide_detail_panel("Select an email to review.")
-
-    def _handle_thread_selection(self) -> None:
-        selected_rows = self.thread_table.selectionModel().selectedRows() if self.thread_table.selectionModel() else []
-        if not selected_rows:
-            self.current_thread_id = ""
-            self._hide_detail_panel("Select an email to review.")
-            return
-        current = self.thread_table.item(selected_rows[0].row(), SUBJECT_COLUMN)
-        if current is None:
-            self.current_thread_id = ""
-            self._hide_detail_panel("Select an email to review.")
-            return
-        self.current_thread_id = str(current.data(THREAD_ID_ROLE))
-        self.render_current_thread()
-
-    def _handle_thread_item_changed(self, item: QTableWidgetItem) -> None:
-        if item.column() != CHECK_COLUMN:
-            return
-        thread_id = item.data(THREAD_ID_ROLE)
-        if not thread_id:
-            return
-        thread_state, _ = find_thread_state(self.review_state, str(thread_id))
-        thread_state["archive_selected"] = item.checkState() == Qt.CheckState.Checked
-        save_review_state(self.settings.root_dir, self.review_state)
-
-    def _handle_table_sort_changed(self, section: int, order: Qt.SortOrder) -> None:
-        self.table_sort_column = section
-        self.table_sort_order = order
-
-    def render_current_thread(self) -> None:
-        if not self.current_thread_id:
-            self._hide_detail_panel("Select an email to review.")
-            return
-
-        thread_state, _ = find_thread_state(self.review_state, self.current_thread_id)
-        thread = payload_to_thread(thread_state["thread"])
-        classification = normalize_classification(thread_state.get("classification"))
-
-        self.thread_title.setText(thread.subject)
-        if classification in SET_ASIDE_CLASSIFICATIONS:
-            self.candidates_group.hide()
-            self.candidate_actions_panel.hide()
-        else:
-            self.candidates_group.show()
-            self.candidate_actions_panel.show()
-
-        message_chunks = []
-        for index, message in enumerate(thread.messages, start=1):
-            message_chunks.append(
-                "\n".join(
-                    [
-                        f"Message {index}",
-                        f"From: {message.sender}",
-                        f"To: {', '.join(message.to)}",
-                        f"Sent: {message.sent_at}",
-                        "",
-                        message.text,
-                    ]
-                )
-            )
-        self.thread_body.setPlainText(("\n\n" + ("-" * 60) + "\n\n").join(message_chunks))
-
-        self.candidate_tabs.clear()
-        if classification not in SET_ASIDE_CLASSIFICATIONS:
-            selected_candidate_id = thread_state.get("selected_candidate_id")
-            selected_index = 0
-            for index, candidate in enumerate(thread_state.get("candidates", [])):
-                editor = CandidateEditor(
-                    thread_state,
-                    candidate,
-                    self.autosave_candidate,
-                    self.reset_candidate,
-                    self.use_candidate,
-                    self.ignore_current_thread,
-                    self.close_current_thread,
-                    self.regenerate_candidate_from_editor,
-                )
-                if (
-                    self.candidate_regeneration_active
-                    and self.current_thread_id == self.active_regeneration_thread_id
-                    and candidate["candidate_id"] == self.active_regeneration_candidate_id
-                ):
-                    editor.replace_text(self.candidate_regeneration_body)
-                self.candidate_tabs.addTab(editor, candidate["label"])
-                if candidate["candidate_id"] == selected_candidate_id:
-                    selected_index = index
-            if self.candidate_tabs.count():
-                self.candidate_tabs.setCurrentIndex(selected_index)
-            self._refresh_candidate_action_state()
-
-        self._show_detail_panel()
-
-    def autosave_candidate(self, thread_id: str, candidate_id: str, editor: CandidateEditor) -> None:
-        thread_state, _ = find_thread_state(self.review_state, thread_id)
-        try:
-            candidate = update_candidate(thread_state, candidate_id, editor.current_text(), "save")
-            save_review_state(self.settings.root_dir, self.review_state)
-        except ValueError as exc:
-            self._set_banner(str(exc), level="error")
-            return
-        editor.mark_saved_text(candidate["body"])
-
-    def _current_candidate_editor(self) -> CandidateEditor | None:
-        widget = self.candidate_tabs.currentWidget()
-        if isinstance(widget, CandidateEditor):
-            return widget
-        return None
-
-    def reset_selected_candidate(self) -> None:
-        editor = self._current_candidate_editor()
-        if editor is None:
-            self._set_banner("Select a draft before resetting it.", level="error")
-            return
-        self.reset_candidate(editor.thread_id, editor.candidate_id, editor)
-
-    def use_selected_candidate(self) -> None:
-        editor = self._current_candidate_editor()
-        if editor is None:
-            self._set_banner("Select a draft before using it.", level="error")
-            return
-        self.use_candidate(editor.thread_id, editor.candidate_id, editor)
-
-    def regenerate_selected_candidate(self) -> None:
-        editor = self._current_candidate_editor()
-        if editor is None:
-            self._set_banner("Select a draft before regenerating it.", level="error")
-            return
-        self.regenerate_candidate_from_editor(editor.thread_id, editor.candidate_id, editor)
-
-    def reset_candidate(self, thread_id: str, candidate_id: str, editor: CandidateEditor) -> None:
-        thread_state, _ = find_thread_state(self.review_state, thread_id)
-        candidate = next(
-            (item for item in thread_state.get("candidates", []) if item["candidate_id"] == candidate_id),
-            None,
-        )
-        if candidate is None:
-            self._set_banner("Candidate not found.", level="error")
-            return
-
-        try:
-            updated = update_candidate(
-                thread_state,
-                candidate_id,
-                candidate.get("original_body", ""),
-                "reset",
-            )
-            save_review_state(self.settings.root_dir, self.review_state)
-        except ValueError as exc:
-            self._set_banner(str(exc), level="error")
-            return
-
-        editor.replace_text(updated["body"])
-        self._set_banner("Draft reset to the original proposal.", level="info")
-
-    def use_candidate(self, thread_id: str, candidate_id: str, editor: CandidateEditor) -> None:
-        thread_state, _ = find_thread_state(self.review_state, thread_id)
-        try:
-            update_candidate(thread_state, candidate_id, editor.current_text(), "use_this")
-            save_review_state(self.settings.root_dir, self.review_state)
-        except ValueError as exc:
-            self._set_banner(str(exc), level="error")
-            return
-
-        self._set_banner("Draft selected.", level="info")
-        self.current_thread_id = ""
-        self.thread_table.blockSignals(True)
-        self.thread_table.clearSelection()
-        self.thread_table.blockSignals(False)
-        self.refresh_queue()
-
-    def regenerate_candidate_from_editor(
-        self,
-        thread_id: str,
-        candidate_id: str,
-        editor: CandidateEditor,
-    ) -> None:
-        if self.candidate_regeneration_thread is not None:
-            self._set_banner(
-                "An Ollama draft refresh is already running. These can take 1-2 minutes.",
-                level="error",
-            )
-            return
-
-        self.current_thread_id = thread_id
-        self.active_regeneration_editor = editor
-        self.active_regeneration_thread_id = thread_id
-        self.active_regeneration_candidate_id = candidate_id
-        self.candidate_regeneration_body = ""
-        self.active_regeneration_editor.setEnabled(False)
-        self.active_regeneration_editor.replace_text("")
-        save_review_state(self.settings.root_dir, self.review_state)
-        base_url, selected_model = self._current_bot_ollama_settings()
-        self.candidate_regeneration_thread = QThread(self)
-        self.candidate_regeneration_worker = CandidateRegenerationWorker(
-            root_dir=self.settings.root_dir,
-            thread_id=thread_id,
-            candidate_id=candidate_id,
-            base_url=base_url,
-            selected_model=selected_model,
-        )
-        self.candidate_regeneration_worker.moveToThread(self.candidate_regeneration_thread)
-        self.candidate_regeneration_thread.started.connect(self.candidate_regeneration_worker.run)
-        self.candidate_regeneration_worker.partial_body.connect(self._handle_candidate_regeneration_stream)
-        self.candidate_regeneration_worker.finished.connect(self._handle_candidate_regeneration_finished)
-        self.candidate_regeneration_worker.failed.connect(self._handle_candidate_regeneration_failed)
-        self.candidate_regeneration_worker.finished.connect(self.candidate_regeneration_thread.quit)
-        self.candidate_regeneration_worker.failed.connect(self.candidate_regeneration_thread.quit)
-        self.candidate_regeneration_thread.finished.connect(self._cleanup_candidate_regeneration)
-
-        self._start_fake_progress(
-            "Generating a new alternate with Ollama. This can take 1-2 minutes, but the window should stay responsive."
-        )
-        self.candidate_regeneration_thread.start()
-
-    def _handle_candidate_regeneration_stream(
-        self,
-        thread_id: str,
-        candidate_id: str,
-        chunk: str,
-    ) -> None:
-        if (
-            thread_id != self.active_regeneration_thread_id
-            or candidate_id != self.active_regeneration_candidate_id
-        ):
-            return
-        self.candidate_regeneration_seen_chunk = True
-        self.candidate_regeneration_char_count += len(chunk)
-        self.candidate_regeneration_body += chunk
-        self._refresh_candidate_action_state()
-        editor = self._current_candidate_editor()
-        if self._current_view_is_regenerating_candidate() and editor is not None:
-            editor.append_text(chunk)
-        QApplication.processEvents()
-
-    def _handle_candidate_regeneration_finished(
-        self,
-        thread_id: str,
-        candidate_id: str,
-        label: str,
-    ) -> None:
-        self._finish_fake_progress()
-        self.settings = load_settings()
-        self.review_state = load_review_state(self.settings.root_dir)
-        self.current_thread_id = thread_id
-        self.refresh_models()
-        self.refresh_queue()
-        self.render_current_thread()
-        self._set_banner(f"Generated a new {label.lower()} draft option.", level="info")
-
-    def _handle_candidate_regeneration_failed(self, message: str) -> None:
-        self._finish_fake_progress()
-        self.review_state = load_review_state(self.settings.root_dir)
-        self.refresh_queue()
-        self.render_current_thread()
-        self._set_banner(message, level="error")
-
-    def _cleanup_candidate_regeneration(self) -> None:
-        if self.candidate_regeneration_worker is not None:
-            self.candidate_regeneration_worker.deleteLater()
-        if self.candidate_regeneration_thread is not None:
-            self.candidate_regeneration_thread.deleteLater()
-        self.candidate_regeneration_worker = None
-        self.candidate_regeneration_thread = None
-        self.active_regeneration_editor = None
-        self.active_regeneration_thread_id = ""
-        self.active_regeneration_candidate_id = ""
-        self.candidate_regeneration_active = False
-        self.candidate_regeneration_body = ""
-        self._refresh_candidate_action_state()
-
-    def close_current_thread(self) -> None:
-        self.current_thread_id = ""
-        self.thread_table.blockSignals(True)
-        self.thread_table.clearSelection()
-        self.thread_table.blockSignals(False)
-        self._hide_detail_panel("Select an email to review.")
-
-    def ignore_current_thread(self, thread_id: str | None = None) -> None:
-        if thread_id:
-            self.current_thread_id = thread_id
-        if not self.current_thread_id:
-            self._set_banner("Select an email before ignoring it.", level="error")
-            return
-        thread_state, _ = find_thread_state(self.review_state, self.current_thread_id)
-        try:
-            update_thread_status(thread_state, "ignore")
-            save_review_state(self.settings.root_dir, self.review_state)
-        except ValueError as exc:
-            self._set_banner(str(exc), level="error")
-            return
-        self._set_banner("Email marked ignored.", level="info")
-        self.close_current_thread()
-        self.refresh_queue()
-
-    def archive_checked_threads(self) -> None:
-        archived_subjects = []
-        for thread_state in self.review_state.get("threads", []):
-            if thread_state.get("archived"):
-                continue
-            if not thread_state.get("archive_selected"):
-                continue
-            update_thread_status(thread_state, "archive")
-            archived_subjects.append(thread_state["subject"])
-
-        if not archived_subjects:
-            self._set_banner("No checked emails were ready to archive.", level="error")
-            return
-
-        save_review_state(self.settings.root_dir, self.review_state)
-        if self.current_thread_id and any(
-            item["thread_id"] == self.current_thread_id and item.get("archived")
-            for item in self.review_state.get("threads", [])
-        ):
-            self.close_current_thread()
-        self.refresh_queue()
-        self._set_banner(f"Archived {len(archived_subjects)} email(s).", level="info")
-
-    def regenerate_current_thread(self) -> None:
-        if not self.current_thread_id:
-            self._set_banner("Select an email before refreshing candidates.", level="error")
-            return
-        self.run_bot_action("regenerate-thread", thread_id=self.current_thread_id)
 
     def save_settings(
         self,
@@ -2228,7 +1291,6 @@ class MailAssistDesktopWindow(QMainWindow):
         env_file = self.settings.root_dir / ".env"
         current = read_env_file(env_file)
         selected_model = str(self.ollama_model_picker.currentData() or self.settings.ollama_model).strip()
-        poll_seconds = self.poll_seconds_input.text().strip() or "60"
         setup_complete = "true" if mark_complete else ("true" if self.setup_finished else "false")
         provider = "gmail" if self.gmail_enabled.isChecked() else "outlook"
         current.update(
@@ -2237,7 +1299,9 @@ class MailAssistDesktopWindow(QMainWindow):
                 "MAILASSIST_OLLAMA_MODEL": selected_model,
                 "MAILASSIST_USER_SIGNATURE": self.signature_input.toPlainText().strip().replace("\n", "\\n"),
                 "MAILASSIST_USER_TONE": str(self.tone_combo.currentData() or "direct_concise"),
-                "MAILASSIST_BOT_POLL_SECONDS": poll_seconds,
+                "MAILASSIST_BOT_POLL_SECONDS": current.get(
+                    "MAILASSIST_BOT_POLL_SECONDS", str(self.settings.bot_poll_seconds)
+                ),
                 "MAILASSIST_DEFAULT_PROVIDER": provider,
                 "MAILASSIST_GMAIL_ENABLED": "true" if self.gmail_enabled.isChecked() else "false",
                 "MAILASSIST_OUTLOOK_ENABLED": "true" if self.outlook_enabled.isChecked() else "false",
@@ -2255,15 +1319,12 @@ class MailAssistDesktopWindow(QMainWindow):
         write_env_file(env_file, current)
         self.settings = load_settings()
         if mark_complete:
-            geometry = self.geometry()
             self.setup_finished = True
             self.settings_open = False
         self.refresh_models()
         self.refresh_dashboard()
         self._refresh_prompt_preview()
         self._refresh_setup_visibility()
-        if mark_complete:
-            self._restore_geometry_after_layout(geometry)
         if announce:
             self._set_banner("Settings saved.", level="info")
 
@@ -2278,17 +1339,26 @@ class MailAssistDesktopWindow(QMainWindow):
             f"Sending a tiny test prompt to {model}...\n\nPrompt: {prompt}\n\nResponse: waiting..."
         )
         self._set_banner("Sending a small test prompt to Ollama. This can take a moment.", level="info")
-        QApplication.processEvents()
         self.run_bot_action("ollama-check", prompt=prompt)
 
     def run_mock_watch_once(self) -> None:
         self.run_bot_action("watch-once", provider="mock")
 
     def run_gmail_draft_test(self) -> None:
+        confirmation = QMessageBox.question(
+            self,
+            "Create Gmail Test Draft",
+            (
+                "MailAssist will create one real draft in your connected Gmail account using sanitized mock "
+                "content. Continue?"
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirmation != QMessageBox.StandardButton.Yes:
+            self._set_banner("Gmail test draft canceled.", level="info")
+            return
         self.run_bot_action("watch-once", provider="gmail", thread_id="thread-008", force=True)
-
-    def run_queue_status(self) -> None:
-        self.run_bot_action("queue-status")
 
     def run_bot_action(
         self,
@@ -2337,7 +1407,7 @@ class MailAssistDesktopWindow(QMainWindow):
             f"Starting bot action: {action}. Ollama work can take 1-2 minutes.",
             level="info",
         )
-        self.bot_status_label.setText("Running")
+        self._set_bot_state("running")
         self.bot_process.start(sys.executable, args)
 
     def _handle_bot_stdout(self) -> None:
@@ -2381,23 +1451,25 @@ class MailAssistDesktopWindow(QMainWindow):
             self._append_recent_activity(
                 f"Already handled: {event.get('subject', 'Unknown subject')}"
             )
-        elif event_type == "queue_status":
-            counts = event.get("counts", {})
-            self._append_recent_activity(f"Queue status: {counts}")
         elif event_type == "completed":
             self._set_banner(str(event.get("message", "Bot action completed.")), level="info")
             self.settings = load_settings()
             self.refresh_models()
             self.refresh_bot_logs()
-            self.refresh_dashboard()
             if "draft_count" in event:
-                self._append_recent_activity(
-                    f"Watch pass: {event.get('draft_count', 0)} drafts, "
-                    f"{event.get('skipped_count', 0)} skipped, "
-                    f"{event.get('already_handled_count', 0)} already handled."
+                draft_count = event.get("draft_count", 0)
+                skipped_count = event.get("skipped_count", 0)
+                already_count = event.get("already_handled_count", 0)
+                self.last_pass_summary = (
+                    f"{draft_count} drafts · {skipped_count} skipped · {already_count} already handled"
                 )
+                self._append_recent_activity(f"Watch pass: {self.last_pass_summary}.")
+            self.refresh_dashboard()
         elif event_type == "error":
-            self._set_banner(str(event.get("message", "Bot action failed.")), level="error")
+            failure = str(event.get("message", "Bot action failed."))
+            self.last_failure_summary = failure
+            self._set_banner(failure, level="error")
+            self._set_bot_state("error")
         elif event_type == "info":
             self._set_banner(str(event.get("message", "")), level="info")
 
@@ -2405,9 +1477,14 @@ class MailAssistDesktopWindow(QMainWindow):
         if self.bot_stdout_buffer.strip():
             self._append_bot_console(self.bot_stdout_buffer.strip())
             self.bot_stdout_buffer = ""
-        if exit_code != 0:
-            self._set_banner(f"Bot action exited with code {exit_code}.", level="error")
         self.bot_process = None
+        if exit_code != 0:
+            failure = f"Bot exited with code {exit_code}."
+            self.last_failure_summary = failure
+            self._set_banner(failure, level="error")
+            self._set_bot_state("error")
+        elif self.last_bot_state != "error":
+            self._set_bot_state("idle")
         self.refresh_dashboard()
         self.refresh_bot_logs()
 
@@ -2514,9 +1591,7 @@ class MailAssistDesktopWindow(QMainWindow):
                 ("draft_count", "Drafts created"),
                 ("skipped_count", "Skipped"),
                 ("already_handled_count", "Already handled"),
-                ("processed_count", "Processed"),
                 ("message_count", "Messages read"),
-                ("generated_threads", "Drafts refreshed"),
             ):
                 if key in completed:
                     lines.append(f"{label}: {completed.get(key)}")
@@ -2546,20 +1621,9 @@ class MailAssistDesktopWindow(QMainWindow):
             return f'Already handled "{subject}".' if subject else "Already handled an email."
         if event_type == "skipped_email":
             return message or (f'Skipped "{subject}".' if subject else "Skipped an email.")
-        if event_type == "processed_email":
-            detail = f'Processed "{subject}" for GUI review.' if subject else "Processed an email for GUI review."
-            if classification:
-                detail += f" Classification: {_humanize(classification)}."
-            return detail
         if event_type == "gmail_message_preview":
             sender = event.get("sender") or event.get("from") or "unknown sender"
             return f'Previewed Gmail message "{subject or event.get("snippet", "")}" from {sender}.'
-        if event_type == "queue_status":
-            counts = event.get("counts")
-            if isinstance(counts, dict):
-                readable = ", ".join(f"{_humanize(str(key))}: {value}" for key, value in counts.items())
-                return f"Queue status: {readable}."
-            return "Read queue status."
         if event_type == "ollama_result":
             result = str(event.get("result") or "").strip()
             return f"Ollama replied: {result}" if result else "Ollama returned an empty reply."

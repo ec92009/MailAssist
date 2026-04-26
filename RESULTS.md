@@ -18,17 +18,27 @@ The bot watches provider inboxes, uses a local Ollama model to classify new thre
 - Outlook remains a stub.
 - A native `PySide6` desktop app exists.
 - The visible desktop app is now a compact control panel with a setup wizard, bot controls, readable logs, and recent activity.
+- The old web review GUI and `serve-config` path have been removed.
 - Settings are first-run friendly and collapse after completion.
-- Settings include provider choice, Ollama model, preferred tone, signature, advanced paths, and poll interval.
+- Settings include provider choice, Ollama model, preferred tone, signature, and advanced file/path fields.
 - The model picker shows local model size and local modified/downloaded age when Ollama provides that metadata.
 - The logs view has a human-readable summary/timeline view and a raw JSONL fallback.
 - The bot has JSONL stdout/log event reporting.
-- The bot has `process-mock-inbox`, `queue-status`, `watch-once`, and Gmail preview/test paths.
+- The bot has `watch-once` and Gmail preview/test paths.
+- The bot now has a polling `watch-loop` path that uses `MAILASSIST_BOT_POLL_SECONDS`.
 - The bot has a simplified `watch-once` pass that classifies mock threads, skips non-response mail, and creates one provider draft per actionable thread.
-- The bot can run controlled Gmail draft tests from sanitized mock input.
+- Live watcher state now lives in `data/live-state.json` with migration from the older `data/bot-state.json` path.
+- Live watcher state now keeps provider-scoped thread records, a provider account-email map, and recent activity summaries in one file.
+- The live watcher now persists a discovered provider account email when the provider exposes one and uses it for reply-recipient selection and quoted review context.
+- The live watcher now marks threads as `user_replied` when the latest visible message is already from the user account, instead of drafting again.
+- The bot can run controlled Gmail draft tests from sanitized mock input, and the desktop app now confirms before creating one live Gmail draft.
 - `watch-once` supports `--batch-size`; batch 5 and batch 10 have both been tested with Gmail draft creation.
 - Gmail draft records carry recipient headers so provider drafts can include `To`, `Cc`, and `Bcc`.
-- Runtime queue folders exist with `.gitkeep` placeholders.
+- Legacy review-state and local draft/log artifacts now live under `data/legacy/` instead of the main runtime path.
+- Shared drafting/review-state helpers now live in `mailassist.review_state` instead of a web-server module.
+- The dead legacy local draft pipeline (`draft-thread`, `list-drafts`, `list-logs`, `core/orchestrator.py`, `storage/filesystem.py`, `ExecutionLog`) has been removed.
+- `review_state.py` no longer migrates files on every path lookup, saves atomically, and takes signatures explicitly in low-level generation helpers.
+- The desktop app sizes from available screen space instead of a fixed large default.
 - Generated runtime artifacts are ignored by git.
 - Gmail setup PDFs exist under `docs/`.
 - Mac/Gmail packaging exists under `packaging/macos/`.
@@ -46,7 +56,7 @@ The bot watches provider inboxes, uses a local Ollama model to classify new thre
 - Batch-size 10 processed the same 11 actionable mock emails plus 2 skipped automated emails in about 150 seconds end to end.
 - The batching result is acceptable for backlog catch-up, but live mode should not wait for a batch because first-draft latency matters more than average throughput.
 - The Apple order email confirms the local test machine is a 16-inch MacBook Pro with M1 Max, 10-core CPU, 24-core GPU, 32GB unified memory, and 2TB SSD.
-- Full local test suite passed with 61 tests on April 25, 2026.
+- Full local test suite passed with 62 tests on April 26, 2026.
 - `dist/MailAssist-v56.46-mac-gmail.dmg` was built locally at about 253 MB, well under GitHub Releases' 2 GiB per-asset limit.
 
 ## Draft Quality Findings
@@ -92,12 +102,13 @@ These were useful experiments, but the lighter product should not build on them 
 ## Latest Verified State
 
 - Latest visible version: `v56.46`.
-- Latest test run: 61 passing tests.
+- Latest test run: 62 passing tests.
 - Current visible GUI surface is the compact bot control panel and setup wizard.
 - Gmail optional dependencies are installed in the local virtualenv.
 - Local Gmail setup has been proven for draft creation and readonly inbox preview.
 - Mac/Gmail DMG artifact was published as a GitHub release asset.
 - The next implementation phase should clean up shared bot architecture while waiting for Magali's Outlook account-type details.
+- The latest cleanup slices moved old review/runtime artifacts into a legacy subtree, removed the unused queue-phase lifecycle, deleted the old web review GUI path, removed the dead legacy local draft pipeline, and introduced a dedicated live-state store for watcher runtime data.
 
 ## Conclusion
 

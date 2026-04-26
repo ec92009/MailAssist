@@ -1,139 +1,99 @@
-# GUI Critique — MailAssist
+# GUI Critique — MailAssist Desktop App
 
-Two GUIs exist: a **PySide6 desktop app** (`gui/desktop.py`) and a **web-based config/review GUI** (`gui/server.py`). Each has distinct issues.
+*Reviewed 2026-04-26 against `src/mailassist/gui/desktop.py` (1768 lines).*
 
----
-
-## Desktop GUI (`gui/desktop.py`)
-
-### CRITICAL: Review pane is missing entirely
-
-`_build_ui` only builds the hero, status overlay, Bot Control group, and Recent Activity log. It never constructs `self.thread_table`, `self.detail_panel`, `self.candidate_tabs`, `self.thread_title`, `self.thread_body`, `self.classification_filter`, `self.status_filter`, `self.show_archived`, or any of the candidate action buttons (`use_candidate_button`, `ignore_thread_button`, etc.).
-
-All of those are referenced in `refresh_queue`, `render_current_thread`, `current_context`, and `_refresh_candidate_action_state` — but they don't exist. Any bot action that completes and calls `self.refresh_queue()` will crash with `AttributeError`. The desktop GUI cannot review emails at all in its current form.
-
-**Fix needed:** Either build the review pane inside `_build_ui` (thread table + splitter + detail panel + candidate tabs + action buttons), or remove the dead review-related methods and rename the desktop app to a "bot control monitor" with no pretense of review.
+The web GUI (`gui/server.py`) was removed. The only GUI is the PySide6 desktop app. It is a bot control panel: it shows bot status, runs mock/live passes, and hosts the settings wizard. There is no review pane. This is the correct scoped direction per TODO P4.
 
 ---
 
-### Bot Control is the only visible section
+## 1. Dead method: `_build_settings_dialog`
 
-The sole thing a user sees is: bot status labels, three action buttons (Run Mock Pass, Create Gmail Test Draft, Queue Status), and a large read-only activity log. There is no way to open an email, read a thread, or act on a draft from the desktop app.
+`_build_settings_dialog` (line 384–413) builds a tab-based QDialog with tabs for Ollama, Providers, Signature, and Prompt. This dialog is never shown. The wizard (`_build_settings_wizard`) replaced it. `open_settings_dialog` (line 479–483) references `self.settings_tabs` which does not exist and only falls through to show a banner.
 
-This is either a design gap or an intentional constraint. Either way, it should be reflected in the window title and help text — "MailAssist Desktop Review" is misleading if no review is possible.
-
----
-
-### Settings dialog mixes concerns across tabs
-
-The **Signature** tab (`_build_signature_settings_panel`) contains three unrelated things: the signature block, the default tone, and the bot poll interval. Tone and poll interval belong in a "Bot behavior" or "General" tab, not under "Signature."
+Both `_build_settings_dialog` and `open_settings_dialog` are dead code. Remove them.
 
 ---
 
-### Fake progress bar with `time.sleep` in the worker thread
+## 2. "Create Gmail Test Draft" has no confirmation
 
-`CandidateRegenerationWorker._emit_partial_chunk` calls `time.sleep(0.01)` to "give the main thread a chance to paint." This is fragile: it blocks the worker thread unnecessarily and is not a reliable cross-thread coordination mechanism. The progress bar is also set to indeterminate (`setRange(0, 0)`) and then uses `setFormat` to fake a char-count display that isn't really progress. A pulsing indeterminate bar with a clear label ("Streaming from Ollama — 382 chars") would be cleaner and honest.
+```python
+# desktop.py:1495
+def run_gmail_draft_test(self) -> None:
+    self.run_bot_action("watch-once", provider="gmail", thread_id="thread-008", force=True)
+```
 
----
-
-### Hard-coded 1440×980 initial window size
-
-`self.resize(1440, 980)` will overflow or look bad on a 1280×800 or 13" laptop. No minimum size is set. Use a percentage of the screen or `showMaximized()` with a sensible minimum.
-
----
-
-### No keyboard shortcuts
-
-Common review actions (select next thread, accept draft, ignore, close) have no keyboard bindings. For a review tool that processes multiple emails daily, keyboard-first navigation is essential.
+Clicking this button immediately triggers a live Gmail draft on the user's connected account with no confirmation dialog. It sits next to "Run Mock Pass" in the Bot Control panel. An accidental click has no undo path. It should either require a confirmation dialog or be moved to a developer/debug section, as already identified in TODO P3.
 
 ---
 
-### Bot status label has no visual differentiation
+## 3. Bot status label is visually undifferentiated
 
-"Running" and "Idle" are rendered identically in plain text. Running should at minimum be a different color (green or amber) so the bot state is visible at a glance without reading the label.
+```python
+# desktop.py:353
+widget.setStyleSheet("color: #1d2430; font-size: 14px;")
+```
 
----
-
-### "Create Gmail Test Draft" in the main Bot Control panel
-
-`gmail_draft_test_button` creates a draft in a live Gmail account. This is a destructive test action. It should be behind a confirmation dialog or moved to a developer/debug section, not placed next to "Run Mock Pass."
-
----
-
-## Web GUI (`gui/server.py`)
-
-### Filters require an explicit "Apply" button
-
-Changing a filter dropdown does not apply the filter immediately — the user must click "Apply queue view." On a review tool used repeatedly, this is friction. Filters should auto-submit on change (a small `onchange="this.form.submit()"` on each select), or at minimum, the button should be positioned directly below the filters and labeled "Filter" not "Apply queue view."
+"Running" and "Idle" are rendered with the same style. Bot state is not visually scannable — the user must read the label to know whether a process is active. Running should use a distinct color (e.g., amber or green). This is already in TODO P4.
 
 ---
 
-### Synchronous Ollama calls block the browser
+## 4. Progress bar advances on a timer, not on actual progress
 
-`/regenerate-thread` and `/test-ollama` call Ollama synchronously inside the request handler thread. Ollama can take 1–3 minutes. The browser will appear completely frozen with no feedback — no spinner, no loading state, nothing. For a local tool this is survivable, but there is zero indication to the user that work is happening. At minimum, the form buttons should be disabled via JS on submit and replaced with "Working…"
+```python
+# desktop.py:189–191
+self.progress_timer = QTimer(self)
+self.progress_timer.setInterval(180)
+self.progress_timer.timeout.connect(self._advance_fake_progress)
+```
 
----
-
-### Hero description is developer changelog copy
-
-The hero `<p>` reads: *"The operator flow is now centered on green lights and red lights, with queue triage up front. Use Ollama's classification signal to separate urgent mail from automated or spammy threads before anyone spends time editing a response."*
-
-This is a developer changelog note, not UI copy. A real user doesn't need to know how the flow was redesigned. Replace it with a one-sentence description of what the tool does and what the user should do next.
-
----
-
-### ISO timestamps in email message cards
-
-Message cards display raw ISO 8601 timestamps (`2026-04-24T08:30:00Z`) in the summary line. These should be formatted as relative or human-readable dates ("Apr 24, 8:30 AM" or "2 hours ago").
+The bar advances on a 180ms timer regardless of what Ollama is doing. For operations that take 1–2 minutes this is decorative. A pulsing indeterminate bar (`setRange(0, 0)`) with a label like "Waiting for Ollama..." would be more honest and eliminate the timer state. This is already in TODO P4.
 
 ---
 
-### "Green light" / "Red light" terminology is unexplained
+## 5. Hard-coded 1120×680 initial window size
 
-The primary actions are "Green light this draft" and "Red light this draft." These are not standard email client terms. There is no tooltip, no legend, and no explanation anywhere on the page. First-time users will be confused about what "green light" actually does (it marks the draft as selected and sets the thread to `use_draft`). Rename to "Select this draft" and "Dismiss this draft" — or keep the branding but add a tooltip.
+```python
+# desktop.py:206
+self.resize(1120, 680)
+```
 
----
-
-### Internal metadata shown in candidate cards
-
-Every candidate card header displays: the raw `tone` string (e.g., `direct and executive`), the model name (e.g., `qwen3:8b-instruct` or `fallback`), and a classification pill inside the card itself. This is implementation metadata. Users acting on a draft don't need to know which model generated it or see the classification repeated inside each card (it's already shown at the thread level). Hide these behind a disclosure or remove them from the card header.
-
----
-
-### Thread status labels not normalized to user-friendly strings
-
-Thread list cards show `pending_review` as "pending review" and `use_draft` as "use draft" — just via `.replace('_', ' ')`. "use draft" is not a meaningful status phrase for a user. Use the same human labels already defined elsewhere (`_status_label` in `desktop.py`): "Needs review," "Draft selected," "Ignored," "User replied."
+No minimum size is set against the screen. On a 13" laptop at non-retina scaling this can overflow. `QScreen.availableGeometry()` should constrain the initial size, or `showMaximized()` with a reasonable minimum should be used. This is already in TODO P4.
 
 ---
 
-### No confirmation before red-light or ignore
+## 6. `QApplication.processEvents()` in `test_ollama`
 
-"Red light this draft" is an immediate POST form submit. Clicking it by accident has no undo. At minimum, add a `onclick="return confirm('Mark this draft as red-lit?')"` to destructive actions, or introduce an undo banner ("Draft red-lit. [Undo]") that reverses the action within a few seconds.
+```python
+# desktop.py:1489
+QApplication.processEvents()
+self.run_bot_action("ollama-check", prompt=prompt)
+```
 
----
-
-### Settings buried in collapsible at page bottom
-
-"Operator settings" (Ollama URL, model selection, provider config) is in a `<details>` element at the very bottom of the page, collapsed by default. On first run, the user must scroll past the hero, the inbox, the thread body, and the candidate cards before reaching Ollama configuration. If Ollama isn't configured, no drafts will generate. Settings should surface on an empty-state screen or at minimum be linked from a visible "Settings" button near the top.
-
----
-
-### Inbox panel has no explicit overflow scroll
-
-The inbox panel is `position: sticky; top: 18px`. If there are many threads, the `.thread-list` container grows taller than the viewport with no scroll container. Add `max-height: calc(100vh - 60px); overflow-y: auto;` to the inbox panel's thread list.
+`processEvents()` is called to force the UI to update before launching the bot subprocess. This is a pattern that typically indicates missing proper async or signal/slot wiring. It works here because `run_bot_action` immediately returns after starting `QProcess`, but the explicit `processEvents()` call suggests the UI update path is fragile. The banner update before it should be sufficient without forcing event processing.
 
 ---
 
-## Shared Issues (Both GUIs)
+## 7. No keyboard shortcuts
 
-| Issue | Desktop | Web |
-|---|---|---|
-| No keyboard shortcuts for review actions | Yes | Yes |
-| No confirmation for destructive actions | Yes | Yes |
-| No empty state when candidate list is empty | Yes | Yes |
-| Ollama model name ("fallback") exposed to user | Yes | Yes |
-| Tone options ("direct and executive") shown verbatim | Yes | Yes |
+There are no `QShortcut` or `QAction` bindings. Common macOS conventions like ⌘, for Settings, ⌘R for Run Mock Pass, and Escape to dismiss the banner are missing. Lower priority than correctness issues, but expected by macOS users.
 
 ---
 
-*Critique generated 2026-04-26 from code review of `src/mailassist/gui/desktop.py` and `src/mailassist/gui/server.py`.*
+## 8. Settings wizard stable-height bookkeeping is complex
+
+The wizard tracks `settings_group_stable_height` and `settings_wizard_stable_height`, calls `_sync_settings_stack_height()` and `_restore_geometry_after_layout()` in several places to prevent the window from resizing as wizard pages change. This machinery is fragile — any page that changes its preferred height unexpectedly can cause layout jumps. A `QScrollArea` wrapping the wizard content would make this unnecessary.
+
+---
+
+## Summary
+
+| Issue | Severity |
+|---|---|
+| Dead `_build_settings_dialog` method and `open_settings_dialog` referencing non-existent widget | Medium |
+| "Create Gmail Test Draft" triggers live account action with no confirmation | High |
+| Bot status "Running"/"Idle" visually identical | Medium |
+| Progress bar advances on timer, not actual progress | Medium |
+| Hard-coded 1120×680 initial size with no screen constraint | Low |
+| `QApplication.processEvents()` in `test_ollama` — fragile UI update pattern | Low |
+| No keyboard shortcuts | Low |
+| Wizard stable-height bookkeeping is fragile; a scroll area would be simpler | Low |

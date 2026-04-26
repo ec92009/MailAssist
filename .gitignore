@@ -18,6 +18,7 @@ data/bot-logs/*.jsonl
 data/drafts/*.json
 data/mock-provider-drafts/*.json
 data/bot-state.json
+data/live-state.json
 data/review-inbox.json
 data/bot_processed/*.json
 data/gui_acquired/*.json
@@ -25,5 +26,10 @@ data/user_reviewed/*.json
 data/provider_drafted/*.json
 data/user_replied/*.json
 data/previews/
+data/legacy/logs/*.json
+data/legacy/logs/*.txt
+data/legacy/drafts/*.json
+data/legacy/queue/*/*.json
 
 .pytest_cache/
+.claude/

@@ -98,21 +98,3 @@ class DraftRecord:
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
-
-
-@dataclass
-class ExecutionLog:
-    run_id: str
-    thread_id: str
-    provider: str
-    model: str
-    status: str
-    started_at: str
-    completed_at: str
-    prompt_preview: str
-    response_preview: str
-    provider_draft_id: Optional[str] = None
-    error: Optional[str] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)

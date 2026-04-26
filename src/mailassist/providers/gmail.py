@@ -178,6 +178,20 @@ class GmailProvider(DraftProvider):
             raise
         return "ok"
 
+    def get_account_email(self) -> str | None:
+        _, _, _, build = self._load_google_modules()
+        creds = self._credentials(allow_interactive_auth=False)
+        service = build("gmail", "v1", credentials=creds)
+        profile = service.users().getProfile(userId="me").execute()
+        email_address = str(profile.get("emailAddress", "")).strip()
+        if email_address:
+            return email_address
+
+        signature = self.get_default_signature(allow_interactive_auth=False)
+        if signature is None:
+            return None
+        return signature.send_as_email.strip() or None
+
 
 def _credentials_cover_scopes(creds: Any, scopes: list[str]) -> bool:
     has_scopes = getattr(creds, "has_scopes", None)

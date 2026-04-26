@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 from mailassist.config import default_root_dir, load_settings, parse_bool, parse_int, read_env_file, write_env_file
-from mailassist.gui.server import (
+from mailassist.review_state import (
     OPTION_A_SEPARATOR,
     OPTION_B_SEPARATOR,
     build_single_review_candidate_prompt,
@@ -17,10 +17,32 @@ from mailassist.gui.server import (
     load_review_state,
     merge_classification,
     payload_to_thread,
-    render_page,
+    save_review_state,
     stream_candidate_for_tone,
     update_candidate,
 )
+
+
+def test_load_settings_migrates_legacy_runtime_artifacts(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "review-inbox.json").write_text("{}", encoding="utf-8")
+    (data_dir / "drafts").mkdir(parents=True)
+    (data_dir / "drafts" / "draft-001.json").write_text("{}", encoding="utf-8")
+    (data_dir / "logs").mkdir()
+    (data_dir / "logs" / "log-001.json").write_text("{}", encoding="utf-8")
+    (data_dir / "bot_processed").mkdir()
+    (data_dir / "bot_processed" / "mock__thread-001.json").write_text("{}", encoding="utf-8")
+
+    settings = load_settings()
+
+    assert settings.legacy_data_dir == tmp_path / "data" / "legacy"
+    assert (settings.legacy_data_dir / "review-inbox.json").exists()
+    assert (settings.drafts_dir / "draft-001.json").exists()
+    assert (settings.logs_dir / "log-001.json").exists()
+    assert (settings.legacy_data_dir / "queue" / "bot_processed" / "mock__thread-001.json").exists()
+    assert not (data_dir / "review-inbox.json").exists()
 
 
 def populated_state() -> dict:
@@ -262,8 +284,9 @@ def test_load_review_state_normalizes_tone_labels(tmp_path: Path) -> None:
         }
     ]
     (tmp_path / "data").mkdir()
-    (tmp_path / "data" / "review-inbox.json").write_text(json.dumps(state), encoding="utf-8")
-
+    legacy_dir = tmp_path / "data" / "legacy"
+    legacy_dir.mkdir(parents=True)
+    (legacy_dir / "review-inbox.json").write_text(json.dumps(state), encoding="utf-8")
     loaded = load_review_state(tmp_path)
 
     assert loaded["threads"][0]["candidates"][0]["label"] == candidate_display_label(
@@ -271,62 +294,17 @@ def test_load_review_state_normalizes_tone_labels(tmp_path: Path) -> None:
     )
 
 
-def test_render_page_includes_queue_filters_and_classification(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.chdir(tmp_path)
-    write_env_file(
-        tmp_path / ".env",
-        {
-            "MAILASSIST_OLLAMA_URL": "http://localhost:11434",
-            "MAILASSIST_OLLAMA_MODEL": "mistral:latest",
-        },
-    )
+def test_save_review_state_writes_atomic_json_with_trailing_newline(tmp_path: Path) -> None:
+    state = default_review_state()
 
-    page = render_page(review_state=populated_state(), models=["mistral:latest"])
+    save_review_state(tmp_path, state)
 
-    assert "Apply queue view" in page
-    assert "classification: urgent" in page
-    assert "Set aside" in page
-    assert "Order" in page
-
-
-def test_render_page_can_filter_to_set_aside_queue(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.chdir(tmp_path)
-    write_env_file(
-        tmp_path / ".env",
-        {
-            "MAILASSIST_OLLAMA_URL": "http://localhost:11434",
-            "MAILASSIST_OLLAMA_MODEL": "mistral:latest",
-        },
-    )
-
-    page = render_page(
-        review_state=populated_state(),
-        models=["mistral:latest"],
-        filter_classification="set_aside",
-        selected_thread_id="thread-003",
-    )
-
-    assert "Your weekly analytics digest" in page
-    assert "Project kickoff follow-up" not in page
-
-
-def test_render_page_shows_editable_candidates_and_actions(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.chdir(tmp_path)
-    write_env_file(
-        tmp_path / ".env",
-        {
-            "MAILASSIST_OLLAMA_URL": "http://localhost:11434",
-            "MAILASSIST_OLLAMA_MODEL": "mistral:latest",
-        },
-    )
-
-    page = render_page(review_state=populated_state(), models=["mistral:latest"])
-
-    assert "Response Drafts" in page
-    assert "Editable draft" in page
-    assert "Green light this draft" in page
-    assert "Red light this draft" in page
-    assert "Save edits" in page
+    path = tmp_path / "data" / "legacy" / "review-inbox.json"
+    assert path.exists()
+    assert not path.with_suffix(".json.tmp").exists()
+    text = path.read_text(encoding="utf-8")
+    assert text.endswith("\n")
+    assert json.loads(text)["schema_version"] == state["schema_version"]
 
 
 def test_filtered_and_sorted_threads_can_sort_by_received_date() -> None:
@@ -397,14 +375,14 @@ def test_stream_candidate_for_tone_emits_incremental_chunks(monkeypatch, tmp_pat
             yield " there"
 
     monkeypatch.setattr(
-        "mailassist.gui.server.list_available_models",
+        "mailassist.review_state.list_available_models",
         lambda base_url, selected_model: (["mistral:latest"], ""),
     )
     monkeypatch.setattr(
-        "mailassist.gui.server.resolve_generation_model",
+        "mailassist.review_state.resolve_generation_model",
         lambda selected_model, models: "mistral:latest",
     )
-    monkeypatch.setattr("mailassist.gui.server.OllamaClient", FakeOllamaClient)
+    monkeypatch.setattr("mailassist.review_state.OllamaClient", FakeOllamaClient)
 
     updates: list[str] = []
     candidate, generation_model, generation_error, classification = stream_candidate_for_tone(
@@ -415,6 +393,7 @@ def test_stream_candidate_for_tone_emits_incremental_chunks(monkeypatch, tmp_pat
         base_url="http://localhost:11434",
         selected_model="mistral:latest",
         on_body_update=updates.append,
+        signature="Best regards,\nEthan",
     )
 
     assert updates == ["Hello", " there"]

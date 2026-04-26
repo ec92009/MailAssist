@@ -1,4 +1,4 @@
-from mailassist.gui.server import (
+from mailassist.review_state import (
     default_review_state,
     normalize_review_status,
     regenerate_candidate_for_thread,
@@ -127,10 +127,7 @@ def test_regenerate_candidate_for_thread_clears_selected_candidate(monkeypatch) 
             "reply_needed",
         )
 
-    monkeypatch.setattr(
-        "mailassist.gui.server.generate_candidate_for_tone",
-        fake_generate_candidate_for_tone,
-    )
+    monkeypatch.setattr("mailassist.review_state.generate_candidate_for_tone", fake_generate_candidate_for_tone)
 
     regenerate_candidate_for_thread(
         state,

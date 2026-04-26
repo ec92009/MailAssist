@@ -10,8 +10,12 @@ from mailassist.providers.base import DraftProvider
 class MockProvider(DraftProvider):
     name = "mock"
 
-    def __init__(self, drafts_dir: Path) -> None:
+    def __init__(self, drafts_dir: Path, account_email: str | None = None) -> None:
         self.drafts_dir = drafts_dir
+        self.account_email = (account_email or "").strip() or None
+
+    def get_account_email(self) -> str | None:
+        return self.account_email
 
     def create_draft(self, draft: DraftRecord) -> ProviderDraftReference:
         self.drafts_dir.mkdir(parents=True, exist_ok=True)
