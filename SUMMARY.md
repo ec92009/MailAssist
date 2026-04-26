@@ -4,30 +4,39 @@ MailAssist is still the same product at the top level: a local background draft 
 
 ## This Conversation
 
-- We reviewed the current backlog and separated blocked Outlook work from unblocked backend work.
-- We tagged backlog ownership in `TODO.md` as `Managed by Codex` or `Managed by Claude`, and marked the Outlook-account discovery items as `Waiting on Magali`.
-- We confirmed there was no separate Claude branch to merge; Claude's work was already present in the working tree on `main`.
-- We then pushed through the unblocked watcher/runtime work instead of waiting on Outlook details.
+- Worked through every GUI item in `TODO.md` (P2 GUI line, P3 confirmation line, all of P4) while the prior conversation's backend work was still uncommitted.
+- Tagged the GUI items in `TODO.md` as `(managed by Claude)` so Codex stays clear of them.
+- Shipped the GUI polish in a single bot-control-panel pass on top of the now-stable `live_state` work from the prior conversation.
 
-## Backend Work Completed
+## GUI Work Completed
 
-- Added a dedicated live watcher state module at `src/mailassist/live_state.py`.
-- Moved watcher runtime state to `data/live-state.json`.
-- Added migration from the older `data/bot-state.json` path.
-- Normalized provider runtime state into provider-scoped slots with `threads` and room for future cursors.
-- Persisted discovered provider account email in live state.
-- Used the discovered account email for reply-recipient selection and quoted review context in the watcher path.
-- Added `user_replied` detection when the latest visible message is already from the user.
-- Added a polling `watch-loop` bot action that uses `MAILASSIST_BOT_POLL_SECONDS`.
-- Added explicit loop events for failed passes, retry scheduling, and sleeping between passes.
-- Kept recent watcher activity in the same live-state store.
+- Bot, provider, and Ollama statuses render as colored pills (running/idle/error/ok), driven by a single `_set_bot_state` + `_paint_status_pill` helper.
+- Provider connection status (Gmail token presence) and Ollama health (cached from `refresh_models`) now show on the bot control panel, not only the wizard.
+- Two new dashboard rows surface the last watch pass result (drafts/skipped/already-handled) and the most recent failure, read from existing JSONL logs.
+- Settings wizard now lives inside a `QScrollArea`. Removed the fragile `settings_*_stable_height` and `_sync_settings_stack_height` / `_restore_geometry_after_layout` machinery.
+- Removed the leftover `progress_timer` / `_advance_fake_progress` machinery; the bar uses `setRange(0, 0)` for honest indeterminate progress.
+- Removed explanatory subtitles from the bot logs dialog and the Ollama metadata hint.
+- Added keyboard shortcuts: `⌘,` settings, `⌘R` mock pass, `⌘L` logs, `Esc` dismiss banner.
+- Updated `tests/test_desktop_layout.py` to assert stability against the new scroll-area surface; full suite passes (62 tests).
+
+## Backend Work Carried Forward From Prior Cycle
+
+- `src/mailassist/live_state.py`: dedicated live watcher state module.
+- Watcher runtime state moved to `data/live-state.json` with migration from older `data/bot-state.json`.
+- Provider runtime state normalized into provider-scoped slots with `threads` and room for future cursors.
+- Discovered provider account email persisted in live state and used for reply-recipient selection and quoted review context.
+- `user_replied` detection when the latest visible message is already from the user.
+- Polling `watch-loop` bot action driven by `MAILASSIST_BOT_POLL_SECONDS`, with explicit loop events for failed passes, retry scheduling, and sleeping between passes.
+- Old paths relegated to `data/legacy/`; `bot_queue.py`, `core/orchestrator.py`, `gui/server.py`, `storage/filesystem.py` and matching tests retired.
+- TODO.md ownership tagged `Managed by Codex` for unblocked backend work and `Waiting on Magali` for Outlook discovery.
 
 ## Current Verified State
 
-- Full test suite passed with 62 tests on April 26, 2026.
+- Visible version: `v56.47`.
+- Full test suite: 62 passing tests.
 - Gmail draft creation, Gmail inbox preview, and Gmail signature import remain working sandbox capabilities.
-- The compact desktop control panel remains the visible UI direction.
-- The watcher now has better runtime footing for future real provider polling work.
+- Compact desktop control panel is the visible UI direction, now with colored status, surfaced provider/Ollama health, last-pass and last-failure rows, and keyboard shortcuts.
+- The watcher has better runtime footing for future real provider polling work.
 
 ## What Is Still Blocked
 
@@ -36,9 +45,9 @@ MailAssist is still the same product at the top level: a local background draft 
 
 ## Best Next Step
 
-- Let Claude's GUI/documentation follow-through settle.
-- Then resume on the next clear Codex-owned backend slice: real provider inbox/thread polling on top of the normalized live-state store.
+- Resume on the next clear Codex-owned backend slice: real provider inbox/thread polling on top of the normalized live-state store.
+- When Magali's Outlook account details land, take the chosen Outlook provider path and start the Windows packaging spike.
 
-Project shorthand:
+## Project Shorthand
 
 - `rscp` means: refresh docs, summarize the current conversation to `SUMMARY.md`, commit, and push.

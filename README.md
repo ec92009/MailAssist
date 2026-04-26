@@ -51,7 +51,7 @@ This build is useful for proving the background drafting loop, Ollama behavior, 
 
 If you are reading this on GitHub, download the latest Mac/Gmail `.dmg`:
 
-[Download MailAssist-v56.46-mac-gmail.dmg](https://github.com/ec92009/MailAssist/releases/download/v56.46/MailAssist-v56.46-mac-gmail.dmg)
+[Download MailAssist-v56.47-mac-gmail.dmg](https://github.com/ec92009/MailAssist/releases/download/v56.47/MailAssist-v56.47-mac-gmail.dmg)
 
 If that direct link is not available yet, open the [MailAssist Releases page](https://github.com/ec92009/MailAssist/releases) and download the latest Mac/Gmail `.dmg`.
 
@@ -177,7 +177,14 @@ It still does not send email.
 ./.venv/bin/mailassist desktop-gui
 ```
 
-The desktop app is now a compact bot control panel with settings, bot controls, readable logs, and recent activity.
+The desktop app is now a compact bot control panel with settings, bot controls, readable logs, and recent activity. Bot, provider, and Ollama states render as colored pills so a glance is enough. The dashboard also surfaces the last watch pass result and the most recent failure read straight from the bot logs.
+
+Keyboard shortcuts:
+
+- `⌘,` open settings wizard
+- `⌘R` run a mock pass
+- `⌘L` open the bot logs window
+- `Esc` dismiss the status banner
 
 ## Bot Commands
 
@@ -247,8 +254,8 @@ When running the packaged Mac app, the same runtime data lives under:
 
 ## Current Verified Baseline
 
-- Visible version: `v56.46`.
-- Test suite: 61 passing tests.
+- Visible version: `v56.47`.
+- Test suite: 62 passing tests.
 - `gemma4:31b` works locally after MailAssist sends `think: false` to Ollama.
 - Controlled mock-to-Gmail draft creation has been tested with batch sizes 1, 5, and 10.
 - MailAssist creates drafts only; it does not send email.
