@@ -1,23 +1,25 @@
 # MailAssist
 
-MailAssist is a local background email drafting assistant. It watches connected inboxes, uses a local Ollama model to decide whether a message needs a reply, and creates a draft directly in Gmail when useful.
+MailAssist is a local background email drafting assistant. It watches connected inboxes, uses a local Ollama model to decide whether a message needs a reply, and creates a provider-native draft when useful.
 
 The user reviews, edits, sends, or deletes drafts in the normal mail client. MailAssist does not send email.
 
 ## Current Product Direction
 
 - Bot runs continuously.
-- Bot watches Gmail or mock input. Outlook is planned next.
+- Bot watches provider inboxes, with Gmail/mock working today and Outlook/Windows now the north-star target.
 - Bot classifies new mail.
 - Bot skips mail that does not need a response.
 - Bot creates one provider draft for mail that needs a response.
 - GUI configures and supervises the bot.
-- Gmail remains the review and editing surface for the first packaged build.
+- Outlook or Gmail remains the review and editing surface.
 - Live watching favors one-at-a-time first-draft latency; batching is for backlog catch-up.
+- Mac/Gmail is the current proving ground. Windows/Outlook is the more important destination for the north-star user.
 
 ## Current Docs
 
 - [STRATEGY.md](~/Dev/MailAssist/STRATEGY.md): product direction and architecture
+- [NORTH_STAR.md](~/Dev/MailAssist/NORTH_STAR.md): Magali-centered product compass
 - [REALISM.md](~/Dev/MailAssist/REALISM.md): constraints and safety posture
 - [RESEARCH.md](~/Dev/MailAssist/RESEARCH.md): provider, prompt, and GUI questions
 - [RESULTS.md](~/Dev/MailAssist/RESULTS.md): current implementation status
@@ -35,15 +37,15 @@ Historical docs from the heavier review-queue direction are archived under:
 archived/2026-04-24-pre-background-bot/
 ```
 
-## Download And Run: Mac/Gmail Preview
+## Current Preview: Mac/Gmail Sandbox
 
-The first downloadable target is:
+The current downloadable preview is:
 
 ```text
 macOS + Gmail + local Ollama
 ```
 
-Windows and Outlook are planned after this Mac/Gmail loop is stable.
+This build is useful for proving the background drafting loop, Ollama behavior, logs, settings, packaging, and provider-native draft creation. It is not the final destination. The north-star target is Windows + Outlook for a CPA/business-owner workflow.
 
 ### Download From GitHub
 

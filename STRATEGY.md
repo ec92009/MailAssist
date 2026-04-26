@@ -6,12 +6,14 @@ MailAssist exists because local LLMs are useful but slow.
 
 The bot's job is to spend that minute before the user needs the answer. It should watch the inbox continuously, classify new mail, and pre-create provider-native draft replies for messages that need a response. The user's normal mail client remains the review and editing surface.
 
-MailAssist should feel like a quiet local assistant that keeps Gmail or Outlook prepared, not like a second inbox the user has to manage.
+MailAssist should feel like a quiet local assistant that keeps Outlook or Gmail prepared, not like a second inbox the user has to manage.
+
+The north-star user is Magali: a CPA in San Diego who runs her own business, uses Windows, and gets business email in Outlook Desktop. Mac/Gmail remains a useful proving ground because it is available locally and already exercises the core loop, but Windows/Outlook is the more important product destination.
 
 ## Core Workflow
 
 1. The bot runs continuously on the user's machine.
-2. It polls or watches connected providers: Gmail first, Outlook later, mock while developing.
+2. It polls or watches connected providers: Outlook/Windows as the target path, Gmail/Mac as the current sandbox, mock while developing.
 3. It detects new or changed threads that have not already been handled.
 4. It sends each candidate thread to the local LLM for classification.
 5. If the thread does not need a response, the bot records that decision locally and does nothing else.
@@ -83,7 +85,7 @@ Provider writes should preserve:
 - provider draft ID
 - provider thread/message IDs
 
-Gmail is first. Outlook follows once the Gmail loop is stable.
+Outlook/Microsoft 365 is the destination for the north-star user. Gmail remains useful for local testing, personal use, and proving provider-native draft behavior, but it should not monopolize implementation priorities.
 
 ## Local State
 

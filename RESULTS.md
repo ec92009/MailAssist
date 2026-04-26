@@ -4,7 +4,7 @@
 
 MailAssist is a background draft creator.
 
-The bot watches Gmail or mock input, uses a local Ollama model to classify new threads, creates one provider-native Gmail draft when a reply is needed, and otherwise stays quiet. Outlook is planned after the Mac/Gmail loop is stable. The GUI configures and supervises the bot; it is not a second inbox or a draft editor.
+The bot watches provider inboxes, uses a local Ollama model to classify new threads, creates one provider-native draft when a reply is needed, and otherwise stays quiet. Gmail/mock work today and remain useful as the sandbox. The north-star destination is Windows/Outlook for Magali, a CPA/business owner who uses Outlook Desktop for company email. The GUI configures and supervises the bot; it is not a second inbox or a draft editor.
 
 ## Current Implementation
 
@@ -35,6 +35,7 @@ The bot watches Gmail or mock input, uses a local Ollama model to classify new t
 - The release builder creates `MailAssist.app`, a release folder, and `MailAssist-vX.Y-mac-gmail.dmg`.
 - The packaged app stores runtime data under `~/Library/Application Support/MailAssist/`.
 - The README now points GitHub users to the `.dmg` through GitHub Releases.
+- `NORTH_STAR.md` now captures the Magali/Windows/Outlook product compass.
 
 ## Recent Verified Experiments
 
@@ -66,9 +67,16 @@ The bot watches Gmail or mock input, uses a local Ollama model to classify new t
 - Bot stdout/log events.
 - Human-readable logs window.
 - Native desktop app entrypoint.
-- Mac/Gmail `.app` and `.dmg` packaging.
+- Mac/Gmail `.app` and `.dmg` packaging as a sandbox artifact.
 - Sanitized mock email data for testing.
 - Versioning SOP and environment SOP.
+
+## New Priority
+
+- Learn Magali's actual Outlook account type before picking an Outlook provider strategy.
+- Move Windows/Outlook research and implementation earlier than real-user Gmail OAuth verification or Mac notarization.
+- Keep Gmail support useful for local testing and Dad's personal workflow, but do not let it define the whole product shape.
+- Treat Mac/Gmail packaging as optional sandbox distribution unless it gets broader use.
 
 ## Pieces To Simplify Or Retire
 
@@ -88,9 +96,9 @@ These were useful experiments, but the lighter product should not build on them 
 - Current visible GUI surface is the compact bot control panel and setup wizard.
 - Gmail optional dependencies are installed in the local virtualenv.
 - Local Gmail setup has been proven for draft creation and readonly inbox preview.
-- Mac/Gmail DMG artifact exists locally and is ready to upload as a GitHub release asset.
-- The next implementation phase should add real Gmail polling/drafting behind the same conservative guardrails.
+- Mac/Gmail DMG artifact was published as a GitHub release asset.
+- The next implementation phase should clean up shared bot architecture while waiting for Magali's Outlook account-type details.
 
 ## Conclusion
 
-The product remains clear: the bot exists to hide local LLM latency. The GUI exists to configure and supervise the bot. Gmail is where users review, edit, and send drafts. MailAssist creates drafts only; it does not send email.
+The product remains clear: the bot exists to hide local LLM latency. The GUI exists to configure and supervise the bot. The mail provider is where users review, edit, and send drafts. MailAssist creates drafts only; it does not send email.

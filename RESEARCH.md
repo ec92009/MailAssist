@@ -4,13 +4,24 @@
 
 Open questions:
 
+- Outlook: identify Magali's actual account type: Microsoft 365/Exchange, Outlook.com, IMAP/SMTP, Gmail/Google Workspace inside Outlook, or another provider.
+- Outlook: determine whether Microsoft Graph, local Outlook automation, IMAP/SMTP, or another route is the least painful first provider.
+- Outlook: confirm whether her tenant allows third-party apps and whether admin consent is needed.
+- Outlook: Microsoft Graph delta queries vs periodic polling.
+- Outlook: required permissions for read + draft creation.
 - Gmail: polling interval vs push notifications.
 - Gmail: which query best finds actionable new mail without reprocessing old threads.
 - Gmail: how to detect whether the user already replied manually.
 - Gmail: how aggressively to import the Gmail send-as signature into MailAssist settings.
-- Outlook: Microsoft Graph delta queries vs periodic polling.
-- Outlook: required permissions for read + draft creation.
 - Mock provider: how closely it should mimic provider IDs, thread updates, and duplicates.
+
+Current product research checkpoint:
+
+- Magali is the north-star user: a CPA in San Diego, Windows user, Outlook Desktop business email.
+- Mac/Gmail is a useful sandbox, not the main product destination.
+- The immediate Outlook research blocker is account type. Screenshots requested: Outlook `File` > `Account Settings` > `Account Settings...` > `Email` tab for classic Outlook, or `Settings` > `Accounts` > `Email accounts` > `Manage` for new Outlook.
+- If the account is Microsoft-hosted, prefer Microsoft Graph.
+- If the account is IMAP/SMTP, evaluate whether direct IMAP/SMTP drafting is possible and safe enough, or whether Outlook local automation is more appropriate.
 
 Current Gmail research checkpoint:
 
@@ -19,7 +30,7 @@ Current Gmail research checkpoint:
 - Gmail read-only inbox preview has been validated.
 - Gmail send-as settings can be queried to obtain a signature candidate for the local signature setting.
 - Batch-size 5 and 10 have been tested against Gmail draft creation with `gemma4:31b`.
-- The next real-mail step is a conservative Gmail watcher that deduplicates, classifies, and drafts only when the thread clearly needs a reply.
+- The next Gmail step is no longer the top product priority. Keep Gmail as a sandbox and regression path while Windows/Outlook research proceeds.
 - The project now has two setup PDFs for the Google Cloud/OAuth steps because the Google Console is dense enough to need explicit navigation cues.
 
 ## Deduplication
@@ -95,7 +106,7 @@ Avoid large empty descriptions; the app is an operational tool.
 
 ## Packaging
 
-Mac/Gmail is the first packaging target.
+Mac/Gmail was the first packaging target because it was locally available and useful for proving the loop. Windows/Outlook packaging is now more important for the north-star user.
 
 Research decisions:
 
@@ -105,6 +116,7 @@ Research decisions:
 - Upload the `.dmg` as a GitHub Releases asset. GitHub release assets support files under 2 GiB, which is enough for the current roughly 253 MB DMG.
 - The README should link to `releases/latest/download/MailAssist-vX.Y-mac-gmail.dmg` and explain the Releases-page fallback.
 - The preview app is ad-hoc signed but not notarized yet, so README instructions include the current macOS Privacy & Security override path for unsigned apps.
+- Windows packaging/signing/installer research should move earlier than Mac notarization unless the Mac/Gmail sandbox gets broader use.
 
 ## Success Criteria
 
