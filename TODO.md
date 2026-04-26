@@ -74,7 +74,6 @@ Mac/Gmail remains the proving ground because it is already working locally and e
 
 ## P6: Architecture Cleanup
 
-- Move mock thread fixtures out of `gui/server.py` into a dedicated fixtures module.
 - Relegate `review-inbox.json`, queue phase directories, and old draft storage away from the main product path.
 - Retire the old two-candidate review flow from the main product path; provider drafts are now the review surface.
 - Remove or quarantine legacy review-table helper code once the compact control panel is stable.

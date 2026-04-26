@@ -13,7 +13,7 @@ from mailassist.bot_queue import (
 )
 from mailassist.bot_runtime import command_review_bot
 from mailassist.config import write_env_file
-from mailassist.gui.server import build_mock_threads
+from mailassist.fixtures.mock_threads import build_mock_threads
 
 
 def test_queue_filename_sanitizes_provider_and_thread_id() -> None:

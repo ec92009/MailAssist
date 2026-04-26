@@ -12,9 +12,9 @@ from typing import Any
 from uuid import uuid4
 
 from mailassist.config import Settings
+from mailassist.fixtures.mock_threads import build_mock_threads
 from mailassist.gui.server import (
     SET_ASIDE_CLASSIFICATIONS,
-    build_mock_threads,
     fallback_classification_for_thread,
     format_thread_context,
     generate_candidate_for_tone,

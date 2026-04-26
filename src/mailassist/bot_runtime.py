@@ -14,8 +14,8 @@ from mailassist.bot_queue import (
     write_queue_item,
 )
 from mailassist.config import load_settings
+from mailassist.fixtures.mock_threads import build_mock_threads
 from mailassist.gui.server import (
-    build_mock_threads,
     load_review_state,
     regenerate_thread_candidates,
     save_review_state,

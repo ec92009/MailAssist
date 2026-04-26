@@ -16,6 +16,7 @@ from mailassist.background_bot import (
     run_mock_watch_pass,
 )
 from mailassist.config import load_settings, write_env_file
+from mailassist.fixtures.mock_threads import build_mock_threads
 from mailassist.providers.mock import MockProvider
 
 
@@ -32,8 +33,6 @@ def test_mock_watch_pass_creates_one_provider_draft_and_skips_second_run(
     )
 
     def fake_build_mock_threads():
-        from mailassist.gui.server import build_mock_threads
-
         return [item for item in build_mock_threads() if item.thread_id == "thread-008"]
 
     def fake_generate_candidate_for_tone(*args, **kwargs):
@@ -79,16 +78,12 @@ def test_mock_watch_pass_creates_one_provider_draft_and_skips_second_run(
 
 
 def test_reply_recipients_for_thread_targets_latest_sender() -> None:
-    from mailassist.gui.server import build_mock_threads
-
     thread = next(item for item in build_mock_threads() if item.thread_id == "thread-008")
 
     assert reply_recipients_for_thread(thread) == ["ops@harborhq.com"]
 
 
 def test_body_with_review_context_adds_latest_mock_message() -> None:
-    from mailassist.gui.server import build_mock_threads
-
     thread = next(item for item in build_mock_threads() if item.thread_id == "thread-001")
 
     body = body_with_review_context(thread, "I will send the kickoff notes today.")
@@ -101,8 +96,6 @@ def test_body_with_review_context_adds_latest_mock_message() -> None:
 
 
 def test_body_with_review_context_includes_recent_incoming_messages() -> None:
-    from mailassist.gui.server import build_mock_threads
-
     thread = next(item for item in build_mock_threads() if item.thread_id == "thread-009")
 
     body = body_with_review_context(thread, "I will check and update you.")
@@ -113,8 +106,6 @@ def test_body_with_review_context_includes_recent_incoming_messages() -> None:
 
 
 def test_signature_only_candidate_gets_conservative_body() -> None:
-    from mailassist.gui.server import build_mock_threads
-
     thread = next(item for item in build_mock_threads() if item.thread_id == "thread-010")
     signature = "Best,\nElie\ne@example.com"
 
@@ -126,8 +117,6 @@ def test_signature_only_candidate_gets_conservative_body() -> None:
 
 
 def test_promise_shaped_candidate_gets_conservative_body() -> None:
-    from mailassist.gui.server import build_mock_threads
-
     thread = next(item for item in build_mock_threads() if item.thread_id == "thread-009")
     signature = "Best,\nElie\ne@example.com"
 
@@ -141,8 +130,6 @@ def test_promise_shaped_candidate_gets_conservative_body() -> None:
 
 
 def test_substantive_candidate_gets_configured_signature_appended() -> None:
-    from mailassist.gui.server import build_mock_threads
-
     thread = next(item for item in build_mock_threads() if item.thread_id == "thread-010")
     signature = "Best,\nElie\ne@example.com"
 
@@ -230,8 +217,6 @@ BODY:
 
 
 def test_build_batch_candidate_prompt_forbids_domain_company_names() -> None:
-    from mailassist.gui.server import build_mock_threads
-
     threads = [item for item in build_mock_threads() if item.thread_id in {"thread-007", "thread-008"}]
 
     prompt = build_batch_candidate_prompt(
@@ -279,8 +264,6 @@ def test_mock_watch_pass_batches_actionable_threads(monkeypatch, tmp_path: Path)
     )
 
     def fake_build_mock_threads():
-        from mailassist.gui.server import build_mock_threads
-
         return [item for item in build_mock_threads() if item.thread_id in {"thread-001", "thread-002"}]
 
     def fake_generate_batch_candidates_for_tone(threads, **kwargs):
