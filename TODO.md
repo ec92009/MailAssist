@@ -4,6 +4,36 @@ This backlog is ordered around the north-star user: Magali, a CPA in San Diego w
 
 Mac/Gmail remains the proving ground because it is already working locally and exercises the drafting loop. Windows/Outlook is the more important destination, but Outlook provider choices are blocked until Magali's account details are known.
 
+## Handoff
+
+- Quick start for next operator or machine:
+  ```bash
+  work in ~/Dev/MailAssist, synchronize with Github ec92009/MailAssist, catch up; open TODO.md and execute the handoff instructions
+  ```
+- Operator checklist for a new machine:
+  - Repository: `/Users/ecohen/Dev/MailAssist`
+  - Origin: `git@github.com:ec92009/MailAssist.git`
+  - Branch policy: work on `main` unless explicitly told otherwise.
+  - Sync steps:
+    - `cd /Users/ecohen/Dev/MailAssist`
+    - `git checkout main`
+    - `git pull origin main`
+    - `uv sync`
+    - `sed -n '1,220p' TODO.md`
+    - `sed -n '1,180p' SUMMARY.md`
+- Current baseline at handoff:
+  - Last synchronized commit: `d11de8d`
+  - Current visible version: `v58.0`
+  - Local app/dev entrypoint: `./.venv/bin/mailassist desktop`
+  - Packaged app path: no current packaged app handoff; Mac/Gmail DMG remains a sandbox artifact.
+- Known open issue to continue:
+  - Highest unblocked implementation work is P1 live watcher MVP, starting with Gmail provider inbox/thread polling on top of the existing provider-scoped live-state store.
+  - Immediate next implementation step: read `RESEARCH.md`, `RESULTS.md`, `src/mailassist/background_bot.py`, `src/mailassist/providers/gmail.py`, and `src/mailassist/live_state.py`; then add the first Gmail thread polling contract and tests.
+- Handoff protocol for this repo:
+  - Run `prepare for handoff` before switching machines or ending a work block that should resume elsewhere.
+  - Keep `SUMMARY.md` and this `Handoff` block current.
+  - Commit and push to `main` before reporting handoff ready.
+
 ## Recently Completed
 
 - Added a dedicated live watcher state store at `data/live-state.json` with migration from the older `data/bot-state.json` path. (Managed by Codex)

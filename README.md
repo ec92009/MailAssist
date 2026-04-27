@@ -30,6 +30,8 @@ The user reviews, edits, sends, or deletes drafts in the normal mail client. Mai
 - [ENVIRONMENT_SOP.md](~/Dev/MailAssist/ENVIRONMENT_SOP.md): local Python workflow
 - [VERSIONING_SOP.md](~/Dev/MailAssist/VERSIONING_SOP.md): visible version rules
 - [SHOW_ME_SOP.md](~/Dev/MailAssist/SHOW_ME_SOP.md): local UI launch workflow
+- [HANDOFF_SOP.md](~/Dev/MailAssist/HANDOFF_SOP.md): cross-machine handoff procedure
+- [PICKUP_WHERE_LEFT_OFF_SOP.md](~/Dev/MailAssist/PICKUP_WHERE_LEFT_OFF_SOP.md): resume procedure after syncing
 
 Historical docs from the heavier review-queue direction are archived under:
 

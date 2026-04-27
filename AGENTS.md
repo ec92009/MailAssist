@@ -17,6 +17,18 @@ Working preferences for `~/Dev/MailAssist`.
 - Full procedure lives in [SHOW_ME_SOP.md](~/Dev/MailAssist/SHOW_ME_SOP.md).
 - Apply `SHOW_ME_SOP.md` whenever the user asks to see the local UI.
 
+## Handoff SOP
+
+- Trigger phrase: `prepare for handoff`.
+- Full procedure lives in [HANDOFF_SOP.md](~/Dev/MailAssist/HANDOFF_SOP.md).
+- When that phrase appears, execute `HANDOFF_SOP.md` exactly.
+
+## Pick Up Where We Left Off SOP
+
+- Trigger phrase: `pick up where we left off`.
+- Full procedure lives in [PICKUP_WHERE_LEFT_OFF_SOP.md](~/Dev/MailAssist/PICKUP_WHERE_LEFT_OFF_SOP.md).
+- When that phrase appears, execute `PICKUP_WHERE_LEFT_OFF_SOP.md` exactly.
+
 ## `rscp`
 
 - `rscp` means: refresh docs, summarize the current conversation to `SUMMARY.md`, commit, and push.
