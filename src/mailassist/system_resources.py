@@ -239,9 +239,9 @@ def memory_recommendation_message(
             model_details,
             total_memory_bytes,
         )
-        loaded_part = f", including {format_size(loaded_bytes)} already used by loaded Ollama model(s)"
+        loaded_part = f"; {format_size(loaded_bytes)} is already used by loaded Ollama model(s)"
         if effective_memory:
-            loaded_part = f"{loaded_part}; effective model budget starts from {format_size(effective_memory)}"
+            loaded_part = f"{loaded_part}, so the effective model budget is about {format_size(effective_memory)}"
         memory_part = f"{memory_part}{loaded_part}"
     recommended, oversized = recommended_model_names(
         model_details,

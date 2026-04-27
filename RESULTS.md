@@ -22,7 +22,9 @@ The bot watches provider inboxes, uses a local Ollama model to classify new thre
 - Settings are first-run friendly and collapse after completion.
 - Settings include provider choice, Ollama model, preferred tone, signature, and advanced file/path fields.
 - The model picker shows local model size and local modified/downloaded age when Ollama provides that metadata.
+- The model picker preserves the user's selected model when the list refreshes after a small test prompt.
 - The setup wizard now checks available RAM and recommends installed local models that fit the current memory budget, with a clear warning when none look small enough.
+- RAM guidance now distinguishes currently free RAM from the effective model budget when Ollama already has a loaded model in memory.
 - The settings schema now includes the first RTF-signature, watcher-filter, and attribution fields for the next GUI polish slice.
 - Email threads now carry an `unread` flag, defaulting to true for existing mock and fixture paths.
 - The logs view has a human-readable summary/timeline view and a raw JSONL fallback.
@@ -108,8 +110,8 @@ These were useful experiments, but the lighter product should not build on them 
 
 ## Latest Verified State
 
-- Latest visible version: `v58.5`.
-- Latest test run: 84 passing tests.
+- Latest visible version: `v58.6`.
+- Latest test run: 89 passing tests.
 - Current visible GUI surface is the compact bot control panel and setup wizard.
 - Gmail optional dependencies are installed in the local virtualenv.
 - Local Gmail setup has been proven for draft creation and readonly inbox preview.

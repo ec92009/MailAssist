@@ -62,6 +62,21 @@ def _wide_line_edit(value: str = "", *, min_width: int = 560) -> QLineEdit:
     return field
 
 
+def _time_window_combo(current_value: str) -> QComboBox:
+    combo = QComboBox()
+    for label, value in (
+        ("All inbox mail", "all"),
+        ("Last 24 hours", "24h"),
+        ("Last 7 days", "7d"),
+        ("Last 30 days", "30d"),
+    ):
+        combo.addItem(label, value)
+    current_index = combo.findData(current_value)
+    if current_index >= 0:
+        combo.setCurrentIndex(current_index)
+    return combo
+
+
 def _humanize(token: str) -> str:
     return token.replace("_", " ").title()
 
@@ -386,10 +401,10 @@ class MailAssistDesktopWindow(QMainWindow):
         self.recent_activity = QPlainTextEdit()
         self.recent_activity.setReadOnly(True)
         self.recent_activity.setMinimumHeight(80)
+        self.recent_activity.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.recent_activity.setPlainText("No bot activity yet.")
-        activity_layout.addWidget(self.recent_activity)
+        activity_layout.addWidget(self.recent_activity, 1)
         shell.addWidget(self.activity_group, 1)
-        shell.addStretch(1)
 
         self._build_bot_logs_dialog()
 
@@ -629,6 +644,17 @@ class MailAssistDesktopWindow(QMainWindow):
             self.advanced_settings_details.setVisible(checked)
         self._refresh_settings_progress_line()
 
+    def _provider_settings_changed(self, _checked: bool = False) -> None:
+        if not hasattr(self, "gmail_enabled") or not hasattr(self, "outlook_enabled"):
+            return
+        sender = self.sender()
+        if not self.gmail_enabled.isChecked() and not self.outlook_enabled.isChecked():
+            if sender is self.outlook_enabled:
+                self.gmail_enabled.setChecked(True)
+            else:
+                self.outlook_enabled.setChecked(True)
+        self._refresh_prompt_preview()
+
     def _add_settings_step(
         self,
         title: str,
@@ -642,25 +668,80 @@ class MailAssistDesktopWindow(QMainWindow):
 
     def _build_wizard_provider_page(self) -> QWidget:
         widget = QWidget()
-        widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout = QVBoxLayout(widget)
-        layout.setSpacing(8)
+        layout.setSpacing(10)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        provider_group = QGroupBox("Email Provider")
-        provider_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
-        provider_group.setMaximumHeight(128)
-        provider_layout = QVBoxLayout(provider_group)
-        provider_layout.setSpacing(8)
-        provider_layout.setContentsMargins(18, 16, 18, 16)
         self.gmail_enabled = QCheckBox("Gmail")
-        self.gmail_enabled.setChecked(self.settings.gmail_enabled or self.settings.default_provider == "gmail")
-        self.outlook_enabled = QCheckBox("Outlook (coming later)")
-        self.outlook_enabled.setChecked(False)
-        self.outlook_enabled.setEnabled(False)
-        provider_layout.addWidget(self.gmail_enabled)
-        provider_layout.addWidget(self.outlook_enabled)
-        layout.addWidget(provider_group, 0, Qt.AlignmentFlag.AlignTop)
+        self.outlook_enabled = QCheckBox("Outlook")
+
+        gmail_checked = self.settings.gmail_enabled or (
+            not self.settings.gmail_enabled and not self.settings.outlook_enabled
+        )
+        self.gmail_enabled.setChecked(gmail_checked)
+        self.outlook_enabled.setChecked(self.settings.outlook_enabled)
+
+        self.gmail_watcher_unread_only_checkbox = QCheckBox("Only process unread threads")
+        self.gmail_watcher_unread_only_checkbox.setChecked(self.settings.gmail_watcher_unread_only)
+        self.gmail_watcher_time_window_combo = _time_window_combo(self.settings.gmail_watcher_time_window)
+
+        self.outlook_watcher_unread_only_checkbox = QCheckBox("Only process unread threads")
+        self.outlook_watcher_unread_only_checkbox.setChecked(self.settings.outlook_watcher_unread_only)
+        self.outlook_watcher_time_window_combo = _time_window_combo(self.settings.outlook_watcher_time_window)
+
+        for control in (
+            self.gmail_enabled,
+            self.outlook_enabled,
+            self.gmail_watcher_unread_only_checkbox,
+            self.gmail_watcher_time_window_combo,
+            self.outlook_watcher_unread_only_checkbox,
+            self.outlook_watcher_time_window_combo,
+        ):
+            if isinstance(control, QCheckBox):
+                control.toggled.connect(self._provider_settings_changed)
+            else:
+                control.currentIndexChanged.connect(self._refresh_prompt_preview)
+
+        self.watcher_unread_only_checkbox = self.gmail_watcher_unread_only_checkbox
+        self.watcher_time_window_combo = self.gmail_watcher_time_window_combo
+
+        layout.addWidget(
+            self._build_provider_filter_group(
+                "Gmail",
+                self.gmail_enabled,
+                self.gmail_watcher_unread_only_checkbox,
+                self.gmail_watcher_time_window_combo,
+            )
+        )
+        layout.addWidget(
+            self._build_provider_filter_group(
+                "Outlook",
+                self.outlook_enabled,
+                self.outlook_watcher_unread_only_checkbox,
+                self.outlook_watcher_time_window_combo,
+            )
+        )
+        layout.addStretch(1)
         return widget
+
+    def _build_provider_filter_group(
+        self,
+        title: str,
+        enabled_checkbox: QCheckBox,
+        unread_checkbox: QCheckBox,
+        time_window_combo: QComboBox,
+    ) -> QGroupBox:
+        group = QGroupBox(title)
+        group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        layout = QVBoxLayout(group)
+        layout.setSpacing(8)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.addWidget(enabled_checkbox)
+        form = _configure_form(QFormLayout())
+        form.addRow("Unread", unread_checkbox)
+        form.addRow("Time window", time_window_combo)
+        layout.addLayout(form)
+        return group
 
     def _build_wizard_ollama_model_page(self) -> QWidget:
         widget = QWidget()
@@ -799,31 +880,9 @@ class MailAssistDesktopWindow(QMainWindow):
         self.bot_poll_seconds_input = QSpinBox()
         self.bot_poll_seconds_input.setRange(5, 3600)
         self.bot_poll_seconds_input.setSingleStep(5)
-        self.bot_poll_seconds_input.setSuffix(" seconds")
         self.bot_poll_seconds_input.setValue(max(5, int(self.settings.bot_poll_seconds or 30)))
-        advanced_layout.addRow("Check frequency (seconds, default 30)", self.bot_poll_seconds_input)
+        advanced_layout.addRow("Check frequency (default 30 seconds)", self.bot_poll_seconds_input)
         layout.addWidget(advanced_group)
-
-        filter_group = QGroupBox("Watcher Filters")
-        filter_layout = _configure_form(QFormLayout(filter_group))
-        self.watcher_unread_only_checkbox = QCheckBox("Only process unread threads")
-        self.watcher_unread_only_checkbox.setChecked(self.settings.watcher_unread_only)
-        self.watcher_unread_only_checkbox.toggled.connect(self._refresh_prompt_preview)
-        self.watcher_time_window_combo = QComboBox()
-        for label, value in (
-            ("All inbox mail", "all"),
-            ("Last 24 hours", "24h"),
-            ("Last 7 days", "7d"),
-            ("Last 30 days", "30d"),
-        ):
-            self.watcher_time_window_combo.addItem(label, value)
-        current_window_index = self.watcher_time_window_combo.findData(self.settings.watcher_time_window)
-        if current_window_index >= 0:
-            self.watcher_time_window_combo.setCurrentIndex(current_window_index)
-        self.watcher_time_window_combo.currentIndexChanged.connect(self._refresh_prompt_preview)
-        filter_layout.addRow("Unread", self.watcher_unread_only_checkbox)
-        filter_layout.addRow("Time window", self.watcher_time_window_combo)
-        layout.addWidget(filter_group)
 
         refresh_button = QPushButton("Check connection and refresh models")
         refresh_button.clicked.connect(self.refresh_models)
@@ -832,19 +891,17 @@ class MailAssistDesktopWindow(QMainWindow):
 
     def _build_wizard_summary_page(self) -> QWidget:
         widget = QWidget()
-        widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout = QVBoxLayout(widget)
         layout.setSpacing(0)
-        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.settings_summary = QPlainTextEdit()
         self.settings_summary.setReadOnly(True)
-        self.settings_summary.setMinimumHeight(360)
-        self.settings_summary.setMaximumHeight(360)
-        self.settings_summary.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.settings_summary.setMinimumHeight(240)
+        self.settings_summary.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         font = QFont("Menlo")
         font.setStyleHint(QFont.StyleHint.Monospace)
         self.settings_summary.setFont(font)
-        layout.addWidget(self.settings_summary)
+        layout.addWidget(self.settings_summary, 1)
         return widget
 
     def _show_settings_step(self, index: int) -> None:
@@ -991,12 +1048,14 @@ class MailAssistDesktopWindow(QMainWindow):
         if not hasattr(self, "settings_summary"):
             return
         selected_model = str(self.ollama_model_picker.currentData() or self.settings.ollama_model)
-        provider = "gmail" if self.gmail_enabled.isChecked() else "outlook"
+        provider = self._selected_provider()
+        enabled_providers = self._enabled_provider_label()
         signature_state = "Configured" if self.signature_input.toPlainText().strip() else "Missing"
         lines = [
             "MailAssist will use these settings:",
             "",
-            f"Email provider: {provider.title()}",
+            f"Email providers: {enabled_providers}",
+            f"Active provider: {provider.title()}",
             f"Local AI model: {selected_model}",
             f"Default tone: {self.tone_combo.currentText()}",
             f"Signature: {signature_state}",
@@ -1201,16 +1260,8 @@ class MailAssistDesktopWindow(QMainWindow):
             self._set_bot_state("idle")
 
     def _watcher_filter_label(self) -> str:
-        unread_only = (
-            self.watcher_unread_only_checkbox.isChecked()
-            if hasattr(self, "watcher_unread_only_checkbox")
-            else self.settings.watcher_unread_only
-        )
-        time_window = (
-            str(self.watcher_time_window_combo.currentData() or "all")
-            if hasattr(self, "watcher_time_window_combo")
-            else self.settings.watcher_time_window
-        )
+        provider = self._selected_provider()
+        unread_only, time_window = self._watcher_filter_values(provider)
         pieces = ["unread only" if unread_only else "read and unread"]
         window_labels = {
             "24h": "last 24 hours",
@@ -1220,6 +1271,42 @@ class MailAssistDesktopWindow(QMainWindow):
         }
         pieces.append(window_labels.get(time_window, "all time"))
         return ", ".join(pieces)
+
+    def _selected_provider(self) -> str:
+        if hasattr(self, "gmail_enabled") and self.gmail_enabled.isChecked():
+            return "gmail"
+        if hasattr(self, "outlook_enabled") and self.outlook_enabled.isChecked():
+            return "outlook"
+        return self.settings.default_provider if self.settings.default_provider in {"gmail", "outlook"} else "gmail"
+
+    def _enabled_provider_label(self) -> str:
+        if not hasattr(self, "gmail_enabled") or not hasattr(self, "outlook_enabled"):
+            return self.settings.default_provider.title()
+        enabled = []
+        if self.gmail_enabled.isChecked():
+            enabled.append("Gmail")
+        if self.outlook_enabled.isChecked():
+            enabled.append("Outlook")
+        return " and ".join(enabled) if enabled else "Gmail"
+
+    def _watcher_filter_values(self, provider: str) -> tuple[bool, str]:
+        if provider == "outlook":
+            unread_widget = getattr(self, "outlook_watcher_unread_only_checkbox", None)
+            window_widget = getattr(self, "outlook_watcher_time_window_combo", None)
+            unread_default = self.settings.outlook_watcher_unread_only
+            window_default = self.settings.outlook_watcher_time_window
+        else:
+            unread_widget = getattr(self, "gmail_watcher_unread_only_checkbox", None)
+            window_widget = getattr(self, "gmail_watcher_time_window_combo", None)
+            unread_default = self.settings.gmail_watcher_unread_only
+            window_default = self.settings.gmail_watcher_time_window
+        unread_only = unread_widget.isChecked() if unread_widget is not None else unread_default
+        time_window = (
+            str(window_widget.currentData() or "all")
+            if window_widget is not None
+            else window_default
+        )
+        return unread_only, time_window
 
     def _refresh_provider_health(self) -> None:
         provider = self.settings.default_provider
@@ -1333,6 +1420,9 @@ class MailAssistDesktopWindow(QMainWindow):
         return " - ".join(pieces)
 
     def refresh_models(self) -> None:
+        previous_selection = ""
+        if hasattr(self, "ollama_model_picker"):
+            previous_selection = str(self.ollama_model_picker.currentData() or "").strip()
         model_details, loaded_model_details, model_error = self._list_available_model_state()
         models = [str(item.get("name", "")).strip() for item in model_details if item.get("name")]
         self.ollama_model_details = {
@@ -1357,7 +1447,8 @@ class MailAssistDesktopWindow(QMainWindow):
                 model = str(model_detail.get("name", "")).strip()
                 if model:
                     self.ollama_model_picker.addItem(_model_display_label(model_detail), model)
-            picker_index = self.ollama_model_picker.findData(self.settings.ollama_model)
+            desired_model = previous_selection or self.settings.ollama_model
+            picker_index = self.ollama_model_picker.findData(desired_model)
             if picker_index >= 0:
                 self.ollama_model_picker.setCurrentIndex(picker_index)
         else:
@@ -1418,7 +1509,10 @@ class MailAssistDesktopWindow(QMainWindow):
         current = read_env_file(env_file)
         selected_model = str(self.ollama_model_picker.currentData() or self.settings.ollama_model).strip()
         setup_complete = "true" if mark_complete else ("true" if self.setup_finished else "false")
-        provider = "gmail" if self.gmail_enabled.isChecked() else "outlook"
+        provider = self._selected_provider()
+        gmail_unread, gmail_window = self._watcher_filter_values("gmail")
+        outlook_unread, outlook_window = self._watcher_filter_values("outlook")
+        active_unread, active_window = self._watcher_filter_values(provider)
         current.update(
             {
                 "MAILASSIST_OLLAMA_URL": self.ollama_url_input.text().strip() or "http://localhost:11434",
@@ -1431,12 +1525,12 @@ class MailAssistDesktopWindow(QMainWindow):
                 "MAILASSIST_OUTLOOK_ENABLED": "true" if self.outlook_enabled.isChecked() else "false",
                 "MAILASSIST_GMAIL_CREDENTIALS_FILE": self.gmail_credentials_input.text().strip(),
                 "MAILASSIST_GMAIL_TOKEN_FILE": self.gmail_token_input.text().strip(),
-                "MAILASSIST_WATCHER_UNREAD_ONLY": (
-                    "true" if self.watcher_unread_only_checkbox.isChecked() else "false"
-                ),
-                "MAILASSIST_WATCHER_TIME_WINDOW": str(
-                    self.watcher_time_window_combo.currentData() or "all"
-                ),
+                "MAILASSIST_GMAIL_WATCHER_UNREAD_ONLY": "true" if gmail_unread else "false",
+                "MAILASSIST_GMAIL_WATCHER_TIME_WINDOW": gmail_window,
+                "MAILASSIST_OUTLOOK_WATCHER_UNREAD_ONLY": "true" if outlook_unread else "false",
+                "MAILASSIST_OUTLOOK_WATCHER_TIME_WINDOW": outlook_window,
+                "MAILASSIST_WATCHER_UNREAD_ONLY": "true" if active_unread else "false",
+                "MAILASSIST_WATCHER_TIME_WINDOW": active_window,
                 "MAILASSIST_OUTLOOK_CLIENT_ID": current.get("MAILASSIST_OUTLOOK_CLIENT_ID", ""),
                 "MAILASSIST_OUTLOOK_TENANT_ID": current.get("MAILASSIST_OUTLOOK_TENANT_ID", ""),
                 "MAILASSIST_OUTLOOK_REDIRECT_URI": current.get(

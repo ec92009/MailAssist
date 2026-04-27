@@ -23,7 +23,7 @@ Mac/Gmail remains the proving ground because it is already working locally and e
     - `sed -n '1,180p' SUMMARY.md`
 - Current baseline at handoff:
   - Last synchronized commit before this handoff update: `8d3dd05`
-  - Current visible version: `v58.5`
+  - Current visible version: `v58.6`
   - Local app/dev entrypoint: `./.venv/bin/mailassist desktop-gui`
   - Packaged app path: no current packaged app handoff; Mac/Gmail DMG remains a sandbox artifact.
 - Known open issue to continue:
@@ -48,6 +48,7 @@ Mac/Gmail remains the proving ground because it is already working locally and e
 - Reviewed Magali's Outlook screenshots and confirmed her main business address appears as a Microsoft 365 account in Outlook Desktop; she also has an Outlook.com account visible in the account list. (Managed by Codex)
 - Exercised real Gmail read-only paths with local credentials: inbox preview, full candidate-thread extraction, and actionable-thread extraction all returned body text without missing ids, senders, or dates. (Managed by Codex)
 - Wired Gmail actionable-thread listing to use provider-side Gmail search queries for unread/time-window filters while keeping watcher candidate listing broad enough to emit `filtered_out` activity. (Managed by Codex)
+- Bumped visible version to `v58.6`, rebuilt/opened the installed Mac app, and polished the setup/control-panel layout: expanding Review and Recent Activity fields, provider-specific Gmail/Outlook watcher filter panels, check-frequency copy, model-selection stability, and clearer RAM guidance. (Managed by Codex)
 
 ## P0: Magali Outlook Discovery (Partially Resolved) (Managed by Codex)
 

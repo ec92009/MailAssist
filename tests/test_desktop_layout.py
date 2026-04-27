@@ -86,6 +86,32 @@ def test_settings_dialog_navigation_sits_near_bottom_in_tall_window() -> None:
     window.close()
 
 
+def test_review_summary_expands_to_available_space_in_tall_window() -> None:
+    app = _app()
+    window = MailAssistDesktopWindow()
+    window.settings_dialog.resize(1120, 860)
+    window.setup_finished = False
+    window.open_settings_wizard()
+    app.processEvents()
+
+    window._show_settings_step(window.settings_stack.count() - 1)
+    app.processEvents()
+
+    text, _x, button_y, _width, _height, scroll_height = _button_metrics(window)
+    summary_bottom = window.settings_summary.mapTo(
+        window.settings_dialog,
+        window.settings_summary.rect().bottomLeft(),
+    ).y()
+
+    assert text == "Done"
+    assert window.settings_summary.height() > 520
+    assert scroll_height > 560
+    assert button_y - summary_bottom < 100
+
+    window.settings_dialog.close()
+    window.close()
+
+
 def test_bot_control_is_main_page_when_setup_is_incomplete() -> None:
     app = _app()
     window = MailAssistDesktopWindow()
@@ -97,6 +123,24 @@ def test_bot_control_is_main_page_when_setup_is_incomplete() -> None:
     assert window.control_group.isVisible()
     assert window.activity_group.isVisible()
     assert window.settings_button.isVisible()
+
+    window.close()
+
+
+def test_recent_activity_expands_on_tall_main_window() -> None:
+    app = _app()
+    window = MailAssistDesktopWindow()
+    window.resize(1120, 860)
+    window.show()
+    app.processEvents()
+
+    activity_bottom = window.activity_group.mapTo(
+        window,
+        window.activity_group.rect().bottomLeft(),
+    ).y()
+
+    assert window.recent_activity.height() > 300
+    assert window.height() - activity_bottom < 40
 
     window.close()
 
@@ -152,8 +196,8 @@ def test_memory_recommendation_counts_loaded_model_memory_as_available() -> None
     assert "gemma4:31b" in recommended
     assert "gemma4:31b" not in oversized
     assert "1.5 GB available of 34.4 GB RAM" in message
-    assert "19.9 GB already used by loaded Ollama model(s)" in message
-    assert "effective model budget starts from 21.4 GB" in message
+    assert "19.9 GB is already used by loaded Ollama model(s)" in message
+    assert "effective model budget is about 21.4 GB" in message
 
 
 def test_model_picker_recalculates_memory_when_selection_changes(monkeypatch) -> None:
@@ -192,6 +236,35 @@ def test_model_picker_recalculates_memory_when_selection_changes(monkeypatch) ->
     window.close()
 
 
+def test_model_refresh_preserves_current_picker_selection(monkeypatch) -> None:
+    app = _app()
+    monkeypatch.setattr(
+        MailAssistDesktopWindow,
+        "_list_available_model_state",
+        lambda self: (
+            [
+                {"name": "wizardcoder:33b", "size": 18_800_000_000},
+                {"name": "gemma4:31b", "size": 19_900_000_000},
+            ],
+            [],
+            "",
+        ),
+    )
+    monkeypatch.setattr(
+        "mailassist.gui.desktop.system_memory_snapshot",
+        lambda: (28_000_000_000, 32_000_000_000),
+    )
+
+    window = MailAssistDesktopWindow()
+    app.processEvents()
+    window.ollama_model_picker.setCurrentIndex(window.ollama_model_picker.findData("gemma4:31b"))
+    window.refresh_models()
+
+    assert window.ollama_model_picker.currentData() == "gemma4:31b"
+
+    window.close()
+
+
 def test_watcher_filter_controls_persist_and_show_on_dashboard(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
     write_env_file(
@@ -214,8 +287,13 @@ def test_watcher_filter_controls_persist_and_show_on_dashboard(monkeypatch, tmp_
 
     window = MailAssistDesktopWindow()
     app.processEvents()
-    window.watcher_unread_only_checkbox.setChecked(True)
-    window.watcher_time_window_combo.setCurrentIndex(window.watcher_time_window_combo.findData("7d"))
+    window.gmail_watcher_unread_only_checkbox.setChecked(True)
+    window.gmail_watcher_time_window_combo.setCurrentIndex(window.gmail_watcher_time_window_combo.findData("7d"))
+    window.outlook_enabled.setChecked(True)
+    window.outlook_watcher_unread_only_checkbox.setChecked(False)
+    window.outlook_watcher_time_window_combo.setCurrentIndex(
+        window.outlook_watcher_time_window_combo.findData("30d")
+    )
     window.bot_poll_seconds_input.setValue(45)
     window.save_settings(announce=False)
 
@@ -223,6 +301,10 @@ def test_watcher_filter_controls_persist_and_show_on_dashboard(monkeypatch, tmp_
     assert env_values["MAILASSIST_BOT_POLL_SECONDS"] == "45"
     assert env_values["MAILASSIST_WATCHER_UNREAD_ONLY"] == "true"
     assert env_values["MAILASSIST_WATCHER_TIME_WINDOW"] == "7d"
+    assert env_values["MAILASSIST_GMAIL_WATCHER_UNREAD_ONLY"] == "true"
+    assert env_values["MAILASSIST_GMAIL_WATCHER_TIME_WINDOW"] == "7d"
+    assert env_values["MAILASSIST_OUTLOOK_WATCHER_UNREAD_ONLY"] == "false"
+    assert env_values["MAILASSIST_OUTLOOK_WATCHER_TIME_WINDOW"] == "30d"
     assert window.watcher_filter_status_label.text() == "unread only, last 7 days"
     assert "Watcher filter: unread only, last 7 days" in window.settings_summary.toPlainText()
 
@@ -240,12 +322,32 @@ def test_watcher_filter_controls_persist_and_show_on_dashboard(monkeypatch, tmp_
         "MAILASSIST_GMAIL_TOKEN_FILE",
         "MAILASSIST_WATCHER_UNREAD_ONLY",
         "MAILASSIST_WATCHER_TIME_WINDOW",
+        "MAILASSIST_GMAIL_WATCHER_UNREAD_ONLY",
+        "MAILASSIST_GMAIL_WATCHER_TIME_WINDOW",
+        "MAILASSIST_OUTLOOK_WATCHER_UNREAD_ONLY",
+        "MAILASSIST_OUTLOOK_WATCHER_TIME_WINDOW",
         "MAILASSIST_OUTLOOK_CLIENT_ID",
         "MAILASSIST_OUTLOOK_TENANT_ID",
         "MAILASSIST_OUTLOOK_REDIRECT_URI",
         "MAILASSIST_SETUP_COMPLETE",
     ):
         monkeypatch.delenv(key, raising=False)
+
+
+def test_provider_page_keeps_at_least_one_provider_checked() -> None:
+    app = _app()
+    window = MailAssistDesktopWindow()
+    app.processEvents()
+
+    window.gmail_enabled.setChecked(False)
+    app.processEvents()
+    assert window.outlook_enabled.isChecked()
+
+    window.outlook_enabled.setChecked(False)
+    app.processEvents()
+    assert window.gmail_enabled.isChecked()
+
+    window.close()
 
 
 def test_bot_log_formatter_shows_summary_and_timeline() -> None:

@@ -30,6 +30,10 @@ class Settings:
     outlook_client_id: str
     outlook_tenant_id: str
     outlook_redirect_uri: str
+    gmail_watcher_unread_only: bool
+    gmail_watcher_time_window: str
+    outlook_watcher_unread_only: bool
+    outlook_watcher_time_window: str
     watcher_unread_only: bool
     watcher_time_window: str
     draft_attribution: bool
@@ -143,7 +147,7 @@ def migrate_legacy_runtime_layout(root_dir: Path) -> None:
 
 def load_settings() -> Settings:
     root_dir = default_root_dir()
-    load_dotenv(root_dir / ".env")
+    env_values = read_env_file(root_dir / ".env")
     migrate_legacy_runtime_layout(root_dir)
 
     data_dir = root_dir / "data"
@@ -153,6 +157,40 @@ def load_settings() -> Settings:
     bot_logs_dir = data_dir / "bot-logs"
     mock_provider_drafts_dir = data_dir / "mock-provider-drafts"
 
+    def env(name: str, default: str = "") -> str:
+        return env_values.get(name, os.getenv(name, default))
+
+    def optional_env(name: str) -> str | None:
+        if name in env_values:
+            return env_values[name]
+        return os.environ.get(name)
+
+    default_provider = env("MAILASSIST_DEFAULT_PROVIDER", "gmail")
+    global_watcher_unread_only = parse_bool(env("MAILASSIST_WATCHER_UNREAD_ONLY"), default=False)
+    global_watcher_time_window = env("MAILASSIST_WATCHER_TIME_WINDOW", "all")
+    gmail_watcher_unread_only = parse_bool(
+        optional_env("MAILASSIST_GMAIL_WATCHER_UNREAD_ONLY"),
+        default=global_watcher_unread_only,
+    )
+    gmail_watcher_time_window = env(
+        "MAILASSIST_GMAIL_WATCHER_TIME_WINDOW",
+        global_watcher_time_window,
+    )
+    outlook_watcher_unread_only = parse_bool(
+        optional_env("MAILASSIST_OUTLOOK_WATCHER_UNREAD_ONLY"),
+        default=global_watcher_unread_only,
+    )
+    outlook_watcher_time_window = env(
+        "MAILASSIST_OUTLOOK_WATCHER_TIME_WINDOW",
+        global_watcher_time_window,
+    )
+    if default_provider == "outlook":
+        watcher_unread_only = outlook_watcher_unread_only
+        watcher_time_window = outlook_watcher_time_window
+    else:
+        watcher_unread_only = gmail_watcher_unread_only
+        watcher_time_window = gmail_watcher_time_window
+
     return Settings(
         root_dir=root_dir,
         data_dir=data_dir,
@@ -161,31 +199,35 @@ def load_settings() -> Settings:
         logs_dir=logs_dir,
         bot_logs_dir=bot_logs_dir,
         mock_provider_drafts_dir=mock_provider_drafts_dir,
-        ollama_url=os.getenv("MAILASSIST_OLLAMA_URL", "http://localhost:11434"),
-        ollama_model=os.getenv("MAILASSIST_OLLAMA_MODEL", "llama3.1:8b"),
-        user_signature=os.getenv("MAILASSIST_USER_SIGNATURE", "").replace("\\n", "\n"),
-        user_signature_html=os.getenv("MAILASSIST_USER_SIGNATURE_HTML", ""),
-        user_tone=os.getenv("MAILASSIST_USER_TONE", "direct_concise"),
-        bot_poll_seconds=parse_int(os.getenv("MAILASSIST_BOT_POLL_SECONDS"), 30),
-        default_provider=os.getenv("MAILASSIST_DEFAULT_PROVIDER", "gmail"),
-        gmail_enabled=parse_bool(os.getenv("MAILASSIST_GMAIL_ENABLED"), default=True),
-        outlook_enabled=parse_bool(os.getenv("MAILASSIST_OUTLOOK_ENABLED"), default=False),
+        ollama_url=env("MAILASSIST_OLLAMA_URL", "http://localhost:11434"),
+        ollama_model=env("MAILASSIST_OLLAMA_MODEL", "llama3.1:8b"),
+        user_signature=env("MAILASSIST_USER_SIGNATURE").replace("\\n", "\n"),
+        user_signature_html=env("MAILASSIST_USER_SIGNATURE_HTML"),
+        user_tone=env("MAILASSIST_USER_TONE", "direct_concise"),
+        bot_poll_seconds=parse_int(env("MAILASSIST_BOT_POLL_SECONDS"), 30),
+        default_provider=default_provider,
+        gmail_enabled=parse_bool(env("MAILASSIST_GMAIL_ENABLED"), default=True),
+        outlook_enabled=parse_bool(env("MAILASSIST_OUTLOOK_ENABLED"), default=False),
         gmail_credentials_file=path_from_env(
-            os.getenv("MAILASSIST_GMAIL_CREDENTIALS_FILE"),
+            env("MAILASSIST_GMAIL_CREDENTIALS_FILE"),
             root_dir / "secrets" / "gmail-client-secret.json",
             root_dir=root_dir,
         ),
         gmail_token_file=path_from_env(
-            os.getenv("MAILASSIST_GMAIL_TOKEN_FILE"),
+            env("MAILASSIST_GMAIL_TOKEN_FILE"),
             root_dir / "secrets" / "gmail-token.json",
             root_dir=root_dir,
         ),
-        outlook_client_id=os.getenv("MAILASSIST_OUTLOOK_CLIENT_ID", ""),
-        outlook_tenant_id=os.getenv("MAILASSIST_OUTLOOK_TENANT_ID", ""),
-        outlook_redirect_uri=os.getenv(
+        outlook_client_id=env("MAILASSIST_OUTLOOK_CLIENT_ID"),
+        outlook_tenant_id=env("MAILASSIST_OUTLOOK_TENANT_ID"),
+        outlook_redirect_uri=env(
             "MAILASSIST_OUTLOOK_REDIRECT_URI", "http://localhost:8765/outlook/callback"
         ),
-        watcher_unread_only=parse_bool(os.getenv("MAILASSIST_WATCHER_UNREAD_ONLY"), default=False),
-        watcher_time_window=os.getenv("MAILASSIST_WATCHER_TIME_WINDOW", "all"),
-        draft_attribution=parse_bool(os.getenv("MAILASSIST_DRAFT_ATTRIBUTION"), default=False),
+        gmail_watcher_unread_only=gmail_watcher_unread_only,
+        gmail_watcher_time_window=gmail_watcher_time_window,
+        outlook_watcher_unread_only=outlook_watcher_unread_only,
+        outlook_watcher_time_window=outlook_watcher_time_window,
+        watcher_unread_only=watcher_unread_only,
+        watcher_time_window=watcher_time_window,
+        draft_attribution=parse_bool(env("MAILASSIST_DRAFT_ATTRIBUTION"), default=False),
     )
