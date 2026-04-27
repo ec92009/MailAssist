@@ -16,6 +16,7 @@ APP_PATH = DIST_DIR / f"{APP_NAME}.app"
 INSTALL_DIR = Path.home() / "Applications"
 INSTALL_APP_PATH = INSTALL_DIR / f"{APP_NAME}.app"
 ENTRY_MODULE = "mailassist.cli.main"
+ICNS_PATH = PROJECT_DIR / "build" / "macos-release" / f"{APP_NAME}.icns"
 
 
 def package_version() -> str:
@@ -30,6 +31,7 @@ def write_info_plist(resources_dir: Path) -> None:
         "CFBundleDevelopmentRegion": "en",
         "CFBundleDisplayName": APP_NAME,
         "CFBundleExecutable": APP_NAME,
+        "CFBundleIconFile": ICNS_PATH.name,
         "CFBundleIdentifier": BUNDLE_ID,
         "CFBundleInfoDictionaryVersion": "6.0",
         "CFBundleName": APP_NAME,
@@ -43,6 +45,8 @@ def write_info_plist(resources_dir: Path) -> None:
     with info_path.open("wb") as handle:
         plistlib.dump(info, handle)
     resources_dir.mkdir(parents=True, exist_ok=True)
+    if ICNS_PATH.exists():
+        shutil.copy2(ICNS_PATH, resources_dir / ICNS_PATH.name)
 
 
 def write_launcher(macos_dir: Path) -> None:

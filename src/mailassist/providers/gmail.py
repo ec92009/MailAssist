@@ -5,11 +5,14 @@ import html
 import json
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from email.utils import parseaddr, parsedate_to_datetime
 from email.mime.text import MIMEText
 from pathlib import Path
 from typing import Any
 
-from mailassist.models import DraftRecord, ProviderDraftReference
+from mailassist.live_filters import WatcherFilter, thread_passes_filter
+from mailassist.models import DraftRecord, EmailMessage, EmailThread, ProviderDraftReference
 from mailassist.providers.base import DraftProvider
 
 GMAIL_SCOPES = [
@@ -192,6 +195,38 @@ class GmailProvider(DraftProvider):
             return None
         return signature.send_as_email.strip() or None
 
+    def list_actionable_threads(self, watcher_filter: WatcherFilter) -> list[EmailThread]:
+        return [
+            thread
+            for thread in self.list_candidate_threads()
+            if thread_passes_filter(thread, watcher_filter, now=datetime.now(timezone.utc))[0]
+        ]
+
+    def list_candidate_threads(self) -> list[EmailThread]:
+        _, _, _, build = self._load_google_modules()
+        creds = self._credentials(allow_interactive_auth=False)
+        service = build("gmail", "v1", credentials=creds)
+
+        list_kwargs: dict[str, Any] = {
+            "userId": "me",
+            "labelIds": ["INBOX"],
+            "maxResults": 25,
+        }
+
+        listed = service.users().threads().list(**list_kwargs).execute()
+        threads: list[EmailThread] = []
+        for item in listed.get("threads", []):
+            thread_payload = (
+                service.users()
+                .threads()
+                .get(userId="me", id=item["id"], format="full")
+                .execute()
+            )
+            thread = _gmail_thread_to_email_thread(thread_payload)
+            if thread is not None:
+                threads.append(thread)
+        return threads
+
 
 def _credentials_cover_scopes(creds: Any, scopes: list[str]) -> bool:
     has_scopes = getattr(creds, "has_scopes", None)
@@ -235,3 +270,153 @@ def _gmail_signature_to_text(signature_html: str) -> str:
         if line or (collapsed and collapsed[-1]):
             collapsed.append(line)
     return "\n".join(collapsed).strip()
+
+
+def _build_gmail_thread_query(watcher_filter: WatcherFilter) -> str:
+    parts: list[str] = []
+    if watcher_filter.unread_only:
+        parts.append("is:unread")
+
+    if watcher_filter.max_age_seconds == 24 * 60 * 60:
+        parts.append("newer_than:1d")
+    elif watcher_filter.max_age_seconds == 7 * 24 * 60 * 60:
+        parts.append("newer_than:7d")
+    elif watcher_filter.max_age_seconds == 30 * 24 * 60 * 60:
+        parts.append("newer_than:30d")
+
+    return " ".join(parts)
+
+
+def _gmail_thread_to_email_thread(payload: dict[str, Any]) -> EmailThread | None:
+    raw_messages = payload.get("messages", [])
+    if not raw_messages:
+        return None
+
+    messages: list[EmailMessage] = []
+    participants: list[str] = []
+    subject = ""
+
+    for raw_message in raw_messages:
+        headers = _gmail_headers(raw_message)
+        sender = _first_email_from_header(headers.get("from", ""))
+        recipients = _emails_from_header_values(
+            headers.get("to", ""),
+            headers.get("cc", ""),
+            headers.get("bcc", ""),
+        )
+        if not subject:
+            subject = str(headers.get("subject", "")).strip()
+        for participant in [sender, *recipients]:
+            if participant and participant not in participants:
+                participants.append(participant)
+        messages.append(
+            EmailMessage(
+                message_id=str(raw_message.get("id", "")),
+                sender=sender,
+                to=recipients,
+                sent_at=_gmail_message_sent_at(raw_message, headers.get("date", "")),
+                text=_gmail_message_text(raw_message),
+            )
+        )
+
+    latest_labels = raw_messages[-1].get("labelIds", [])
+    thread_id = str(payload.get("id") or raw_messages[-1].get("threadId") or "").strip()
+    return EmailThread(
+        thread_id=thread_id,
+        subject=subject or "(no subject)",
+        participants=participants,
+        messages=messages,
+        unread="UNREAD" in latest_labels,
+    )
+
+
+def _gmail_headers(message: dict[str, Any]) -> dict[str, str]:
+    return {
+        str(header.get("name", "")).lower(): str(header.get("value", ""))
+        for header in message.get("payload", {}).get("headers", [])
+    }
+
+
+def _first_email_from_header(value: str) -> str:
+    emails = _emails_from_header_values(value)
+    if emails:
+        return emails[0]
+    return value.strip().lower()
+
+
+def _emails_from_header_values(*values: str) -> list[str]:
+    emails: list[str] = []
+    for value in values:
+        for chunk in value.split(","):
+            _, email = parseaddr(chunk.strip())
+            cleaned = email.strip().lower()
+            if cleaned:
+                emails.append(cleaned)
+    deduped: list[str] = []
+    for email in emails:
+        if email not in deduped:
+            deduped.append(email)
+    return deduped
+
+
+def _gmail_message_sent_at(message: dict[str, Any], date_header: str) -> str:
+    internal_date = str(message.get("internalDate", "")).strip()
+    if internal_date.isdigit():
+        sent_at = datetime.fromtimestamp(int(internal_date) / 1000, tz=timezone.utc).replace(
+            microsecond=0
+        )
+        return sent_at.isoformat().replace("+00:00", "Z")
+
+    parsed = _parse_date_header(date_header)
+    if parsed is None:
+        return ""
+    return parsed.isoformat().replace("+00:00", "Z")
+
+
+def _parse_date_header(value: str) -> datetime | None:
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    try:
+        parsed = parsedate_to_datetime(cleaned)
+    except (TypeError, ValueError, IndexError):
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).replace(microsecond=0)
+
+
+def _gmail_message_text(message: dict[str, Any]) -> str:
+    payload = message.get("payload", {})
+    plain = _decode_gmail_body(_find_payload_body(payload, "text/plain"))
+    if plain.strip():
+        return plain.strip()
+
+    rich = _decode_gmail_body(_find_payload_body(payload, "text/html"))
+    if rich.strip():
+        return _gmail_signature_to_text(rich)
+
+    return str(message.get("snippet", "")).strip()
+
+
+def _find_payload_body(payload: dict[str, Any], mime_type: str) -> str:
+    if str(payload.get("mimeType", "")).lower() == mime_type.lower():
+        return str(payload.get("body", {}).get("data", ""))
+
+    for part in payload.get("parts", []) or []:
+        found = _find_payload_body(part, mime_type)
+        if found:
+            return found
+    return ""
+
+
+def _decode_gmail_body(value: str) -> str:
+    cleaned = value.strip()
+    if not cleaned:
+        return ""
+    padding = "=" * (-len(cleaned) % 4)
+    try:
+        raw = base64.urlsafe_b64decode((cleaned + padding).encode("utf-8"))
+    except (ValueError, TypeError):
+        return ""
+    return raw.decode("utf-8", errors="replace")

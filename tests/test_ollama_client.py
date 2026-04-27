@@ -76,3 +76,27 @@ def test_list_model_details_preserves_ollama_metadata(monkeypatch) -> None:
 
     assert result == body["models"]
     assert OllamaClient("http://localhost:11434", "gemma4:31b").list_models() == ["gemma4:31b"]
+
+
+def test_list_loaded_model_details_uses_ollama_ps(monkeypatch) -> None:
+    body = {
+        "models": [
+            {
+                "name": "gemma4:31b",
+                "size": 19_500_000_000,
+                "expires_at": "2026-04-27T12:00:00Z",
+            }
+        ]
+    }
+    paths = []
+
+    def fake_urlopen(req, timeout):
+        paths.append(req.full_url)
+        return FakeResponse(json.dumps(body).encode("utf-8"))
+
+    monkeypatch.setattr("mailassist.llm.ollama.request.urlopen", fake_urlopen)
+
+    result = OllamaClient("http://localhost:11434", "gemma4:31b").list_loaded_model_details()
+
+    assert paths == ["http://localhost:11434/api/ps"]
+    assert result == body["models"]

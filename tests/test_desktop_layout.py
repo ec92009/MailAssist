@@ -5,6 +5,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 
+from mailassist.config import read_env_file, write_env_file
 from mailassist.gui.desktop import MailAssistDesktopWindow
 from mailassist.system_resources import memory_recommendation_message, recommended_model_names
 
@@ -16,27 +17,26 @@ def _app() -> QApplication:
 def _button_metrics(window: MailAssistDesktopWindow) -> tuple[str, int, int, int, int, int]:
     app = _app()
     app.processEvents()
-    button = window.settings_next_button if window.settings_next_button.isVisible() else window.settings_save_button
-    position = button.mapTo(window, button.rect().topLeft())
-    geometry = window.geometry()
+    button = window.settings_next_button if window.settings_next_button.isVisible() else window.settings_done_button
+    container = window.settings_dialog or window
+    position = button.mapTo(container, button.rect().topLeft())
+    geometry = container.geometry()
     return (
         button.text(),
         position.x(),
         position.y(),
         geometry.width(),
         geometry.height(),
-        window.settings_stack_scroll.geometry().height(),
+        window.settings_stack.geometry().height(),
     )
 
 
-def test_settings_wizard_navigation_stays_stable() -> None:
+def test_settings_dialog_navigation_stays_stable() -> None:
     app = _app()
     window = MailAssistDesktopWindow()
-    window.resize(1120, 680)
-    window.settings_open = True
+    window.settings_dialog.resize(1120, 680)
     window.setup_finished = False
-    window._refresh_setup_visibility()
-    window.show()
+    window.open_settings_wizard()
     app.processEvents()
 
     records = []
@@ -63,6 +63,40 @@ def test_settings_wizard_navigation_stays_stable() -> None:
     assert {record[3] for record in records} == {records[0][3]}
     assert {record[4] for record in records} == {records[0][4]}
     assert {record[5] for record in records} == {records[0][5]}
+
+    window.settings_dialog.close()
+    window.close()
+
+
+def test_settings_dialog_navigation_sits_near_bottom_in_tall_window() -> None:
+    app = _app()
+    window = MailAssistDesktopWindow()
+    window.settings_dialog.resize(1120, 860)
+    window.setup_finished = False
+    window.open_settings_wizard()
+    app.processEvents()
+
+    window._show_settings_step(0)
+    text, _x, y, _width, height, scroll_height = _button_metrics(window)
+    assert text == "Next"
+    assert height - y < 80
+    assert scroll_height > 560
+
+    window.settings_dialog.close()
+    window.close()
+
+
+def test_bot_control_is_main_page_when_setup_is_incomplete() -> None:
+    app = _app()
+    window = MailAssistDesktopWindow()
+    window.setup_finished = False
+    window._refresh_setup_visibility()
+    window.show()
+    app.processEvents()
+
+    assert window.control_group.isVisible()
+    assert window.activity_group.isVisible()
+    assert window.settings_button.isVisible()
 
     window.close()
 
@@ -94,6 +128,124 @@ def test_memory_recommendation_mentions_when_no_model_is_small_enough() -> None:
     assert recommended == []
     assert oversized == ["gemma4:31b", "qwen3:32b"]
     assert "None of the installed models look small enough" in message
+
+
+def test_memory_recommendation_counts_loaded_model_memory_as_available() -> None:
+    model_details = [
+        {"name": "gemma3:4b", "size": 3_000_000_000},
+        {"name": "gemma4:31b", "size": 19_900_000_000},
+    ]
+    loaded_model_details = [{"name": "gemma4:31b", "size": 19_900_000_000}]
+
+    recommended, oversized = recommended_model_names(
+        model_details,
+        1_500_000_000,
+        loaded_model_details,
+    )
+    message = memory_recommendation_message(
+        model_details,
+        1_500_000_000,
+        34_400_000_000,
+        loaded_model_details,
+    )
+
+    assert "gemma4:31b" in recommended
+    assert "gemma4:31b" not in oversized
+    assert "1.5 GB available of 34.4 GB RAM" in message
+    assert "19.9 GB already used by loaded Ollama model(s)" in message
+    assert "effective model budget starts from 21.4 GB" in message
+
+
+def test_model_picker_recalculates_memory_when_selection_changes(monkeypatch) -> None:
+    app = _app()
+    snapshots = iter(
+        [
+            (8_000_000_000, 16_000_000_000),
+            (28_000_000_000, 32_000_000_000),
+            (28_000_000_000, 32_000_000_000),
+        ]
+    )
+
+    monkeypatch.setattr(
+        MailAssistDesktopWindow,
+        "_list_available_model_state",
+        lambda self: (
+            [
+                {"name": "gemma3:4b", "size": 3_000_000_000},
+                {"name": "gemma4:31b", "size": 19_900_000_000},
+            ],
+            [],
+            "",
+        ),
+    )
+    monkeypatch.setattr("mailassist.gui.desktop.system_memory_snapshot", lambda: next(snapshots))
+    monkeypatch.setattr("mailassist.gui.desktop.OllamaClient.list_loaded_model_details", lambda self: [])
+
+    window = MailAssistDesktopWindow()
+    app.processEvents()
+    window.ollama_model_picker.setCurrentIndex(window.ollama_model_picker.findData("gemma3:4b"))
+    window.ollama_model_picker.setCurrentIndex(window.ollama_model_picker.findData("gemma4:31b"))
+
+    assert "28.0 GB available of 32.0 GB RAM" in window.ollama_model_hint.text()
+    assert "This model may be too large" not in window.ollama_model_hint.text()
+
+    window.close()
+
+
+def test_watcher_filter_controls_persist_and_show_on_dashboard(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_env_file(
+        tmp_path / ".env",
+        {
+            "MAILASSIST_WATCHER_UNREAD_ONLY": "false",
+            "MAILASSIST_WATCHER_TIME_WINDOW": "all",
+        },
+    )
+    monkeypatch.setattr(
+        MailAssistDesktopWindow,
+        "_list_available_model_state",
+        lambda self: ([{"name": "gemma3:4b", "size": 3_000_000_000}], [], ""),
+    )
+    monkeypatch.setattr(
+        "mailassist.gui.desktop.system_memory_snapshot",
+        lambda: (8_000_000_000, 16_000_000_000),
+    )
+    app = _app()
+
+    window = MailAssistDesktopWindow()
+    app.processEvents()
+    window.watcher_unread_only_checkbox.setChecked(True)
+    window.watcher_time_window_combo.setCurrentIndex(window.watcher_time_window_combo.findData("7d"))
+    window.bot_poll_seconds_input.setValue(45)
+    window.save_settings(announce=False)
+
+    env_values = read_env_file(tmp_path / ".env")
+    assert env_values["MAILASSIST_BOT_POLL_SECONDS"] == "45"
+    assert env_values["MAILASSIST_WATCHER_UNREAD_ONLY"] == "true"
+    assert env_values["MAILASSIST_WATCHER_TIME_WINDOW"] == "7d"
+    assert window.watcher_filter_status_label.text() == "unread only, last 7 days"
+    assert "Watcher filter: unread only, last 7 days" in window.settings_summary.toPlainText()
+
+    window.close()
+    for key in (
+        "MAILASSIST_OLLAMA_URL",
+        "MAILASSIST_OLLAMA_MODEL",
+        "MAILASSIST_USER_SIGNATURE",
+        "MAILASSIST_USER_TONE",
+        "MAILASSIST_BOT_POLL_SECONDS",
+        "MAILASSIST_DEFAULT_PROVIDER",
+        "MAILASSIST_GMAIL_ENABLED",
+        "MAILASSIST_OUTLOOK_ENABLED",
+        "MAILASSIST_GMAIL_CREDENTIALS_FILE",
+        "MAILASSIST_GMAIL_TOKEN_FILE",
+        "MAILASSIST_WATCHER_UNREAD_ONLY",
+        "MAILASSIST_WATCHER_TIME_WINDOW",
+        "MAILASSIST_OUTLOOK_CLIENT_ID",
+        "MAILASSIST_OUTLOOK_TENANT_ID",
+        "MAILASSIST_OUTLOOK_REDIRECT_URI",
+        "MAILASSIST_SETUP_COMPLETE",
+    ):
+        monkeypatch.delenv(key, raising=False)
 
 
 def test_bot_log_formatter_shows_summary_and_timeline() -> None:

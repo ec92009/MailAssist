@@ -50,6 +50,14 @@ def parse_int(value: str | None, default: int) -> int:
         return default
 
 
+def path_from_env(value: str | None, default: Path, *, root_dir: Path) -> Path:
+    raw = (value or "").strip()
+    path = Path(raw).expanduser() if raw else default
+    if path.is_absolute():
+        return path
+    return root_dir / path
+
+
 def load_dotenv(env_file: Path) -> None:
     if not env_file.exists():
         return
@@ -158,21 +166,19 @@ def load_settings() -> Settings:
         user_signature=os.getenv("MAILASSIST_USER_SIGNATURE", "").replace("\\n", "\n"),
         user_signature_html=os.getenv("MAILASSIST_USER_SIGNATURE_HTML", ""),
         user_tone=os.getenv("MAILASSIST_USER_TONE", "direct_concise"),
-        bot_poll_seconds=parse_int(os.getenv("MAILASSIST_BOT_POLL_SECONDS"), 60),
+        bot_poll_seconds=parse_int(os.getenv("MAILASSIST_BOT_POLL_SECONDS"), 30),
         default_provider=os.getenv("MAILASSIST_DEFAULT_PROVIDER", "gmail"),
         gmail_enabled=parse_bool(os.getenv("MAILASSIST_GMAIL_ENABLED"), default=True),
         outlook_enabled=parse_bool(os.getenv("MAILASSIST_OUTLOOK_ENABLED"), default=False),
-        gmail_credentials_file=Path(
-            os.getenv(
-                "MAILASSIST_GMAIL_CREDENTIALS_FILE",
-                str(root_dir / "secrets" / "gmail-client-secret.json"),
-            )
+        gmail_credentials_file=path_from_env(
+            os.getenv("MAILASSIST_GMAIL_CREDENTIALS_FILE"),
+            root_dir / "secrets" / "gmail-client-secret.json",
+            root_dir=root_dir,
         ),
-        gmail_token_file=Path(
-            os.getenv(
-                "MAILASSIST_GMAIL_TOKEN_FILE",
-                str(root_dir / "secrets" / "gmail-token.json"),
-            )
+        gmail_token_file=path_from_env(
+            os.getenv("MAILASSIST_GMAIL_TOKEN_FILE"),
+            root_dir / "secrets" / "gmail-token.json",
+            root_dir=root_dir,
         ),
         outlook_client_id=os.getenv("MAILASSIST_OUTLOOK_CLIENT_ID", ""),
         outlook_tenant_id=os.getenv("MAILASSIST_OUTLOOK_TENANT_ID", ""),

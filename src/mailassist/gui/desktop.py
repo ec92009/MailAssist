@@ -25,8 +25,8 @@ from PySide6.QtWidgets import (
     QPushButton,
     QPlainTextEdit,
     QFrame,
-    QScrollArea,
     QSizePolicy,
+    QSpinBox,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -40,7 +40,9 @@ from mailassist.llm.ollama import OllamaClient
 from mailassist.providers.gmail import GmailProvider
 from mailassist.system_resources import (
     format_size,
+    effective_available_memory_bytes,
     memory_recommendation_message,
+    model_name,
     model_size_bytes,
     system_memory_snapshot,
 )
@@ -185,6 +187,7 @@ class MailAssistDesktopWindow(QMainWindow):
         self.ollama_health: tuple[str, str] = ("Checking...", "warn")
         self.provider_health: tuple[str, str] = ("", "warn")
         self.ollama_model_details: dict[str, dict[str, Any]] = {}
+        self.loaded_ollama_model_details: dict[str, dict[str, Any]] = {}
         self.available_memory_bytes: int | None = None
         self.total_memory_bytes: int | None = None
         self.model_memory_recommendation = ""
@@ -193,7 +196,8 @@ class MailAssistDesktopWindow(QMainWindow):
         self.review_previous_step_index = 3
         setup_value = read_env_file(self.settings.root_dir / ".env").get("MAILASSIST_SETUP_COMPLETE", "false")
         self.setup_finished = setup_value.strip().lower() == "true"
-        self.settings_open = not self.setup_finished
+        self.settings_open = False
+        self.settings_dialog: QDialog | None = None
 
         self.setWindowTitle(f"MailAssist v{load_visible_version(self.settings.root_dir)}")
         icon_path = self.settings.root_dir / "assets" / "brand" / "mailassist_icon.svg"
@@ -328,13 +332,7 @@ class MailAssistDesktopWindow(QMainWindow):
         status_layout.addWidget(self.banner)
         shell.addWidget(self.status_overlay)
 
-        self.settings_group = QGroupBox("Settings")
-        self.settings_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
-        settings_layout = QVBoxLayout(self.settings_group)
-        settings_layout.setContentsMargins(8, 8, 8, 8)
-        settings_layout.setSpacing(6)
-        settings_layout.addWidget(self._build_settings_wizard())
-        shell.addWidget(self.settings_group)
+        self._build_settings_dialog()
 
         self.control_group = QGroupBox("Bot Control")
         control_layout = QVBoxLayout(self.control_group)
@@ -347,6 +345,7 @@ class MailAssistDesktopWindow(QMainWindow):
         self.ollama_status_label = QLabel(self.settings.ollama_model)
         self.tone_status_label = QLabel(tone_label(self.settings.user_tone))
         self.signature_status_label = QLabel("Configured" if self.settings.user_signature.strip() else "Missing")
+        self.watcher_filter_status_label = QLabel("")
         self.last_activity_label = QLabel(self.last_activity_summary)
         self.last_pass_label = QLabel("No watch pass yet")
         self.last_failure_label = QLabel("None")
@@ -357,6 +356,7 @@ class MailAssistDesktopWindow(QMainWindow):
             ("Ollama", self.ollama_status_label, ""),
             ("Tone", self.tone_status_label, plain_style),
             ("Signature", self.signature_status_label, plain_style),
+            ("Watcher filter", self.watcher_filter_status_label, plain_style),
             ("Last activity", self.last_activity_label, plain_style),
             ("Last pass", self.last_pass_label, plain_style),
             ("Last failure", self.last_failure_label, plain_style),
@@ -457,9 +457,31 @@ class MailAssistDesktopWindow(QMainWindow):
         return widget
 
     def open_settings_wizard(self) -> None:
+        if self.settings_dialog is None:
+            self._build_settings_dialog()
         self.settings_open = True
         self._refresh_setup_visibility()
-        self._set_banner("Settings are open. Press Finish when you are done.", level="info")
+        self.settings_dialog.show()
+        self.settings_dialog.raise_()
+        self.settings_dialog.activateWindow()
+        self._set_banner("Settings are open in a separate window.", level="info")
+
+    def _build_settings_dialog(self) -> None:
+        dialog = QDialog(self)
+        dialog.setModal(False)
+        dialog.setWindowTitle("MailAssist Settings")
+        dialog.resize(1120, 720)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(12)
+        layout.addWidget(self._build_settings_wizard(), 1)
+        dialog.finished.connect(self._settings_dialog_closed)
+        self.settings_dialog = dialog
+
+    def _settings_dialog_closed(self, _result: int = 0) -> None:
+        self.settings_open = False
+        self._refresh_setup_visibility()
 
     def open_bot_logs_dialog(self) -> None:
         if self.bot_logs_dialog is None:
@@ -472,7 +494,7 @@ class MailAssistDesktopWindow(QMainWindow):
     def _build_settings_wizard(self) -> QWidget:
         widget = QWidget()
         self.settings_wizard = widget
-        widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(6)
@@ -529,14 +551,8 @@ class MailAssistDesktopWindow(QMainWindow):
             self._build_wizard_summary_page(),
         )
         layout.insertWidget(0, self._build_settings_progress_line())
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll_area.setWidget(self.settings_stack)
-        scroll_area.setMinimumHeight(420)
-        layout.addWidget(scroll_area, 1)
-        self.settings_stack_scroll = scroll_area
+        self.settings_stack.setMinimumHeight(420)
+        layout.addWidget(self.settings_stack, 1)
 
         nav = QHBoxLayout()
         nav.setSpacing(10)
@@ -546,9 +562,9 @@ class MailAssistDesktopWindow(QMainWindow):
         self.settings_next_button = QPushButton("Next")
         self.settings_next_button.setMinimumWidth(120)
         self.settings_next_button.clicked.connect(self._next_settings_step)
-        self.settings_save_button = QPushButton("Finish")
-        self.settings_save_button.setMinimumWidth(140)
-        self.settings_save_button.clicked.connect(self.finish_settings_wizard)
+        self.settings_done_button = QPushButton("Done")
+        self.settings_done_button.setMinimumWidth(140)
+        self.settings_done_button.clicked.connect(self.finish_settings_wizard)
         self.settings_advanced_button = QPushButton("Advanced settings")
         self.settings_advanced_button.setMinimumWidth(160)
         self.settings_advanced_button.clicked.connect(lambda _checked=False: self._open_advanced_settings_step())
@@ -556,7 +572,7 @@ class MailAssistDesktopWindow(QMainWindow):
         nav.addStretch(1)
         nav.addWidget(self.settings_advanced_button)
         nav.addWidget(self.settings_next_button)
-        nav.addWidget(self.settings_save_button)
+        nav.addWidget(self.settings_done_button)
         layout.addLayout(nav)
 
         self.settings_step_index = 0
@@ -662,7 +678,7 @@ class MailAssistDesktopWindow(QMainWindow):
         model_form = _configure_form(QFormLayout())
         self.ollama_model_picker = QComboBox()
         self.ollama_model_picker.setMinimumWidth(520)
-        self.ollama_model_picker.currentIndexChanged.connect(self._refresh_ollama_model_hint)
+        self.ollama_model_picker.currentIndexChanged.connect(self._ollama_model_selection_changed)
         model_form.addRow("Model", self.ollama_model_picker)
         self.ollama_connection_status = QLabel("Checking Ollama...")
         self.ollama_connection_status.setStyleSheet("color: #5e6978; font-size: 13px;")
@@ -780,7 +796,34 @@ class MailAssistDesktopWindow(QMainWindow):
         advanced_layout.addRow("Ollama URL", self.ollama_url_input)
         advanced_layout.addRow("Client secret", self.gmail_credentials_input)
         advanced_layout.addRow("Local token", self.gmail_token_input)
+        self.bot_poll_seconds_input = QSpinBox()
+        self.bot_poll_seconds_input.setRange(5, 3600)
+        self.bot_poll_seconds_input.setSingleStep(5)
+        self.bot_poll_seconds_input.setSuffix(" seconds")
+        self.bot_poll_seconds_input.setValue(max(5, int(self.settings.bot_poll_seconds or 30)))
+        advanced_layout.addRow("Check frequency (seconds, default 30)", self.bot_poll_seconds_input)
         layout.addWidget(advanced_group)
+
+        filter_group = QGroupBox("Watcher Filters")
+        filter_layout = _configure_form(QFormLayout(filter_group))
+        self.watcher_unread_only_checkbox = QCheckBox("Only process unread threads")
+        self.watcher_unread_only_checkbox.setChecked(self.settings.watcher_unread_only)
+        self.watcher_unread_only_checkbox.toggled.connect(self._refresh_prompt_preview)
+        self.watcher_time_window_combo = QComboBox()
+        for label, value in (
+            ("All inbox mail", "all"),
+            ("Last 24 hours", "24h"),
+            ("Last 7 days", "7d"),
+            ("Last 30 days", "30d"),
+        ):
+            self.watcher_time_window_combo.addItem(label, value)
+        current_window_index = self.watcher_time_window_combo.findData(self.settings.watcher_time_window)
+        if current_window_index >= 0:
+            self.watcher_time_window_combo.setCurrentIndex(current_window_index)
+        self.watcher_time_window_combo.currentIndexChanged.connect(self._refresh_prompt_preview)
+        filter_layout.addRow("Unread", self.watcher_unread_only_checkbox)
+        filter_layout.addRow("Time window", self.watcher_time_window_combo)
+        layout.addWidget(filter_group)
 
         refresh_button = QPushButton("Check connection and refresh models")
         refresh_button.clicked.connect(self.refresh_models)
@@ -819,7 +862,7 @@ class MailAssistDesktopWindow(QMainWindow):
         self.settings_back_button.setEnabled(self.settings_step_index > 0)
         is_last = self._next_visible_settings_index(self.settings_step_index) == self.settings_step_index
         self.settings_next_button.setVisible(not is_last)
-        self.settings_save_button.setVisible(is_last)
+        self.settings_done_button.setVisible(True)
         self.settings_advanced_button.setVisible(self.settings_step_index == 3)
         self._refresh_settings_progress_line()
         if title == "Review Choices":
@@ -893,10 +936,9 @@ class MailAssistDesktopWindow(QMainWindow):
     def _refresh_setup_visibility(self) -> None:
         if not hasattr(self, "control_group"):
             return
-        self.settings_group.setVisible(self.settings_open)
-        self.settings_button.setVisible(not self.settings_open)
-        self.control_group.setVisible(self.setup_finished and not self.settings_open)
-        self.activity_group.setVisible(self.setup_finished and not self.settings_open)
+        self.settings_button.setVisible(True)
+        self.control_group.setVisible(True)
+        self.activity_group.setVisible(True)
 
     def _next_settings_step(self) -> None:
         self.save_settings(announce=False)
@@ -958,6 +1000,7 @@ class MailAssistDesktopWindow(QMainWindow):
             f"Local AI model: {selected_model}",
             f"Default tone: {self.tone_combo.currentText()}",
             f"Signature: {signature_state}",
+            f"Watcher filter: {self._watcher_filter_label()}",
             "",
             "MailAssist will watch for new mail and prepare drafts for messages that need a reply.",
             "",
@@ -973,6 +1016,8 @@ class MailAssistDesktopWindow(QMainWindow):
         model = str(self.ollama_model_picker.currentData() or self.settings.ollama_model)
         detail = self.ollama_model_details.get(model, {})
         size = model_size_bytes(detail)
+        loaded_detail = self.loaded_ollama_model_details.get(model)
+        loaded_model_names = sorted(self.loaded_ollama_model_details)
         if model.startswith("gemma4:31b"):
             message = "High quality, slower. Good for background drafting and careful wording."
         elif model.startswith("gemma3:12b"):
@@ -984,15 +1029,48 @@ class MailAssistDesktopWindow(QMainWindow):
         else:
             message = "No model selected."
         if size and self.available_memory_bytes:
-            memory_budget = self.available_memory_bytes * 0.75
-            if size <= memory_budget:
+            effective_memory = effective_available_memory_bytes(
+                self.available_memory_bytes,
+                list(self.loaded_ollama_model_details.values()),
+                list(self.ollama_model_details.values()),
+                self.total_memory_bytes,
+            ) or self.available_memory_bytes
+            memory_budget = effective_memory * 0.75
+            if loaded_detail:
+                selected_memory = "This model is already loaded in Ollama, so low free RAM is expected."
+            elif size <= memory_budget:
                 selected_memory = "This model fits the current memory guidance."
             else:
                 selected_memory = "This model may be too large for the RAM currently available."
             message = f"{message}\n\n{selected_memory}"
+        if loaded_model_names:
+            message = f"{message}\n\nLoaded now: {', '.join(loaded_model_names[:3])}."
         if self.model_memory_recommendation:
             message = f"{message}\n\n{self.model_memory_recommendation}"
         self.ollama_model_hint.setText(message)
+
+    def _ollama_model_selection_changed(self) -> None:
+        if not hasattr(self, "ollama_model_picker"):
+            return
+        self.available_memory_bytes, self.total_memory_bytes = system_memory_snapshot()
+        try:
+            loaded_model_details = OllamaClient(
+                self.ollama_url_input.text().strip(),
+                str(self.ollama_model_picker.currentData() or self.settings.ollama_model),
+            ).list_loaded_model_details()
+        except RuntimeError:
+            loaded_model_details = list(self.loaded_ollama_model_details.values())
+        self.loaded_ollama_model_details = {
+            name: item for item in loaded_model_details if (name := model_name(item))
+        }
+        self.model_memory_recommendation = memory_recommendation_message(
+            list(self.ollama_model_details.values()),
+            self.available_memory_bytes,
+            self.total_memory_bytes,
+            loaded_model_details,
+        )
+        self._refresh_ollama_model_hint()
+        self._refresh_settings_summary()
 
 
     def _refresh_prompt_preview(self) -> None:
@@ -1110,6 +1188,7 @@ class MailAssistDesktopWindow(QMainWindow):
         self.signature_status_label.setText(
             "Configured" if self.settings.user_signature.strip() else "Missing"
         )
+        self.watcher_filter_status_label.setText(self._watcher_filter_label())
         self.last_activity_label.setText(self.last_activity_summary)
         self.last_pass_label.setText(self.last_pass_summary or "No watch pass yet")
         self.last_failure_label.setText(self.last_failure_summary or "None")
@@ -1120,6 +1199,27 @@ class MailAssistDesktopWindow(QMainWindow):
             self._set_bot_state("error")
         else:
             self._set_bot_state("idle")
+
+    def _watcher_filter_label(self) -> str:
+        unread_only = (
+            self.watcher_unread_only_checkbox.isChecked()
+            if hasattr(self, "watcher_unread_only_checkbox")
+            else self.settings.watcher_unread_only
+        )
+        time_window = (
+            str(self.watcher_time_window_combo.currentData() or "all")
+            if hasattr(self, "watcher_time_window_combo")
+            else self.settings.watcher_time_window
+        )
+        pieces = ["unread only" if unread_only else "read and unread"]
+        window_labels = {
+            "24h": "last 24 hours",
+            "7d": "last 7 days",
+            "30d": "last 30 days",
+            "all": "all time",
+        }
+        pieces.append(window_labels.get(time_window, "all time"))
+        return ", ".join(pieces)
 
     def _refresh_provider_health(self) -> None:
         provider = self.settings.default_provider
@@ -1233,10 +1333,13 @@ class MailAssistDesktopWindow(QMainWindow):
         return " - ".join(pieces)
 
     def refresh_models(self) -> None:
-        model_details, model_error = self._list_available_model_details()
+        model_details, loaded_model_details, model_error = self._list_available_model_state()
         models = [str(item.get("name", "")).strip() for item in model_details if item.get("name")]
         self.ollama_model_details = {
             str(item.get("name", "")).strip(): item for item in model_details if item.get("name")
+        }
+        self.loaded_ollama_model_details = {
+            name: item for item in loaded_model_details if (name := model_name(item))
         }
         self.available_memory_bytes, self.total_memory_bytes = system_memory_snapshot()
         self.model_memory_recommendation = ""
@@ -1245,6 +1348,7 @@ class MailAssistDesktopWindow(QMainWindow):
                 model_details,
                 self.available_memory_bytes,
                 self.total_memory_bytes,
+                loaded_model_details,
             )
         self.ollama_model_picker.blockSignals(True)
         self.ollama_model_picker.clear()
@@ -1284,13 +1388,19 @@ class MailAssistDesktopWindow(QMainWindow):
             self.ollama_status_label.setText(f"{model} — {ollama_text}" if ollama_text else model)
             self._paint_status_pill(self.ollama_status_label, ollama_level)
 
-    def _list_available_model_details(self) -> tuple[list[dict[str, Any]], str]:
+    def _list_available_model_state(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
         base_url = self.ollama_url_input.text().strip()
         selected_model = self.settings.ollama_model
+        client = OllamaClient(base_url, selected_model)
         try:
-            return OllamaClient(base_url, selected_model).list_model_details(), ""
+            model_details = client.list_model_details()
         except RuntimeError as exc:
-            return [], str(exc)
+            return [], [], str(exc)
+        try:
+            loaded_model_details = client.list_loaded_model_details()
+        except RuntimeError:
+            loaded_model_details = []
+        return model_details, loaded_model_details, ""
 
     def _set_ollama_result_text(self, text: str) -> None:
         self.ollama_result.setPlainText(text)
@@ -1315,14 +1425,18 @@ class MailAssistDesktopWindow(QMainWindow):
                 "MAILASSIST_OLLAMA_MODEL": selected_model,
                 "MAILASSIST_USER_SIGNATURE": self.signature_input.toPlainText().strip().replace("\n", "\\n"),
                 "MAILASSIST_USER_TONE": str(self.tone_combo.currentData() or "direct_concise"),
-                "MAILASSIST_BOT_POLL_SECONDS": current.get(
-                    "MAILASSIST_BOT_POLL_SECONDS", str(self.settings.bot_poll_seconds)
-                ),
+                "MAILASSIST_BOT_POLL_SECONDS": str(self.bot_poll_seconds_input.value()),
                 "MAILASSIST_DEFAULT_PROVIDER": provider,
                 "MAILASSIST_GMAIL_ENABLED": "true" if self.gmail_enabled.isChecked() else "false",
                 "MAILASSIST_OUTLOOK_ENABLED": "true" if self.outlook_enabled.isChecked() else "false",
                 "MAILASSIST_GMAIL_CREDENTIALS_FILE": self.gmail_credentials_input.text().strip(),
                 "MAILASSIST_GMAIL_TOKEN_FILE": self.gmail_token_input.text().strip(),
+                "MAILASSIST_WATCHER_UNREAD_ONLY": (
+                    "true" if self.watcher_unread_only_checkbox.isChecked() else "false"
+                ),
+                "MAILASSIST_WATCHER_TIME_WINDOW": str(
+                    self.watcher_time_window_combo.currentData() or "all"
+                ),
                 "MAILASSIST_OUTLOOK_CLIENT_ID": current.get("MAILASSIST_OUTLOOK_CLIENT_ID", ""),
                 "MAILASSIST_OUTLOOK_TENANT_ID": current.get("MAILASSIST_OUTLOOK_TENANT_ID", ""),
                 "MAILASSIST_OUTLOOK_REDIRECT_URI": current.get(
@@ -1346,7 +1460,9 @@ class MailAssistDesktopWindow(QMainWindow):
 
     def finish_settings_wizard(self) -> None:
         self.save_settings(announce=True, mark_complete=True)
-        self._set_banner("Settings finished. Bot controls are now available.", level="info")
+        if self.settings_dialog is not None:
+            self.settings_dialog.close()
+        self._set_banner("Settings saved. Bot controls are available.", level="info")
 
     def test_ollama(self) -> None:
         prompt = "Reply with one short sentence confirming MailAssist can use this model."
@@ -1467,6 +1583,10 @@ class MailAssistDesktopWindow(QMainWindow):
             self._append_recent_activity(
                 f"Already handled: {event.get('subject', 'Unknown subject')}"
             )
+        elif event_type == "filtered_out":
+            self._append_recent_activity(
+                f"Filtered out: {event.get('subject', 'Unknown subject')} ({event.get('reason', 'filter')})"
+            )
         elif event_type == "completed":
             self._set_banner(str(event.get("message", "Bot action completed.")), level="info")
             self.settings = load_settings()
@@ -1476,8 +1596,10 @@ class MailAssistDesktopWindow(QMainWindow):
                 draft_count = event.get("draft_count", 0)
                 skipped_count = event.get("skipped_count", 0)
                 already_count = event.get("already_handled_count", 0)
+                filtered_count = event.get("filtered_out_count", 0)
                 self.last_pass_summary = (
-                    f"{draft_count} drafts · {skipped_count} skipped · {already_count} already handled"
+                    f"{draft_count} drafts · {skipped_count} skipped · "
+                    f"{already_count} already handled · {filtered_count} filtered"
                 )
                 self._append_recent_activity(f"Watch pass: {self.last_pass_summary}.")
             self.refresh_dashboard()
@@ -1607,6 +1729,7 @@ class MailAssistDesktopWindow(QMainWindow):
                 ("draft_count", "Drafts created"),
                 ("skipped_count", "Skipped"),
                 ("already_handled_count", "Already handled"),
+                ("filtered_out_count", "Filtered out"),
                 ("message_count", "Messages read"),
             ):
                 if key in completed:
@@ -1637,6 +1760,9 @@ class MailAssistDesktopWindow(QMainWindow):
             return f'Already handled "{subject}".' if subject else "Already handled an email."
         if event_type == "skipped_email":
             return message or (f'Skipped "{subject}".' if subject else "Skipped an email.")
+        if event_type == "filtered_out":
+            reason = str(event.get("reason") or "filter")
+            return f'Filtered out "{subject}" by {reason}.' if subject else f"Filtered out an email by {reason}."
         if event_type == "gmail_message_preview":
             sender = event.get("sender") or event.get("from") or "unknown sender"
             return f'Previewed Gmail message "{subject or event.get("snippet", "")}" from {sender}.'

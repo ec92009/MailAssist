@@ -133,7 +133,7 @@ def command_review_bot(args: argparse.Namespace) -> int:
             provider = get_provider_for_settings(settings, provider_name)
             reporter.emit(
                 "info",
-                message=f"Running one mock-input watch pass for {provider_name} drafts.",
+                message=f"Running one watch pass for {provider_name}.",
                 provider=provider_name,
             )
             events = run_mock_watch_pass(
@@ -149,6 +149,7 @@ def command_review_bot(args: argparse.Namespace) -> int:
             skipped_count = 0
             already_handled_count = 0
             user_replied_count = 0
+            filtered_out_count = 0
             for event in events:
                 event_type = str(event.pop("type"))
                 if event_type == "draft_created":
@@ -159,6 +160,8 @@ def command_review_bot(args: argparse.Namespace) -> int:
                     already_handled_count += 1
                 elif event_type == "user_replied":
                     user_replied_count += 1
+                elif event_type == "filtered_out":
+                    filtered_out_count += 1
                 reporter.emit(event_type, **event)
             reporter.emit(
                 "completed",
@@ -168,19 +171,21 @@ def command_review_bot(args: argparse.Namespace) -> int:
                 skipped_count=skipped_count,
                 already_handled_count=already_handled_count,
                 user_replied_count=user_replied_count,
+                filtered_out_count=filtered_out_count,
             )
             return 0
 
         if args.action == "watch-loop":
             provider_name = getattr(args, "provider", "mock") or "mock"
             provider = get_provider_for_settings(settings, provider_name)
-            poll_seconds = max(1, int(getattr(args, "poll_seconds", 0) or settings.bot_poll_seconds or 60))
+            poll_seconds = max(1, int(getattr(args, "poll_seconds", 0) or settings.bot_poll_seconds or 30))
             max_passes = max(0, int(getattr(args, "max_passes", 0) or 0))
             completed_passes = 0
             total_draft_count = 0
             total_skipped_count = 0
             total_already_handled_count = 0
             total_user_replied_count = 0
+            total_filtered_out_count = 0
             failed_pass_count = 0
             retry_count = 0
             reporter.emit(
@@ -219,6 +224,8 @@ def command_review_bot(args: argparse.Namespace) -> int:
                             total_already_handled_count += 1
                         elif event_type == "user_replied":
                             total_user_replied_count += 1
+                        elif event_type == "filtered_out":
+                            total_filtered_out_count += 1
                         reporter.emit(event_type, **event)
                     reporter.emit(
                         "watch_pass_completed",
@@ -260,6 +267,7 @@ def command_review_bot(args: argparse.Namespace) -> int:
                 skipped_count=total_skipped_count,
                 already_handled_count=total_already_handled_count,
                 user_replied_count=total_user_replied_count,
+                filtered_out_count=total_filtered_out_count,
                 failed_pass_count=failed_pass_count,
                 retry_count=retry_count,
             )

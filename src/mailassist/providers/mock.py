@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
+from mailassist.fixtures.mock_threads import build_mock_threads
+from mailassist.live_filters import WatcherFilter, thread_passes_filter
+from mailassist.models import EmailThread
 from mailassist.models import DraftRecord, ProviderDraftReference
 from mailassist.providers.base import DraftProvider
 
@@ -16,6 +20,17 @@ class MockProvider(DraftProvider):
 
     def get_account_email(self) -> str | None:
         return self.account_email
+
+    def list_actionable_threads(self, watcher_filter: WatcherFilter) -> list[EmailThread]:
+        now = datetime.now(timezone.utc)
+        return [
+            thread
+            for thread in build_mock_threads()
+            if thread_passes_filter(thread, watcher_filter, now=now)[0]
+        ]
+
+    def list_candidate_threads(self) -> list[EmailThread]:
+        return build_mock_threads()
 
     def create_draft(self, draft: DraftRecord) -> ProviderDraftReference:
         self.drafts_dir.mkdir(parents=True, exist_ok=True)

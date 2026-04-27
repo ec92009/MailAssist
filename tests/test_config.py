@@ -149,6 +149,15 @@ def test_load_settings_decodes_multiline_signature(monkeypatch, tmp_path: Path) 
     assert settings.bot_poll_seconds == 120
 
 
+def test_load_settings_defaults_poll_seconds_to_30(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("MAILASSIST_BOT_POLL_SECONDS", raising=False)
+
+    settings = load_settings()
+
+    assert settings.bot_poll_seconds == 30
+
+
 def test_default_root_dir_uses_explicit_env(monkeypatch, tmp_path: Path) -> None:
     configured = tmp_path / "MailAssist Data"
     monkeypatch.setenv("MAILASSIST_ROOT_DIR", str(configured))

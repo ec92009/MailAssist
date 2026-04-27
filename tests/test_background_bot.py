@@ -452,3 +452,104 @@ def test_mock_watch_pass_skips_threads_when_latest_message_is_from_user(monkeypa
     assert state["providers"]["mock"]["threads"]["thread-001"]["action"] == "user_replied"
     assert state["recent_activity"][-1]["type"] == "user_replied"
     assert not (tmp_path / "data" / "mock-provider-drafts" / "thread-001.json").exists()
+
+
+def test_watch_pass_uses_provider_thread_listing(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_env_file(
+        tmp_path / ".env",
+        {
+            "MAILASSIST_USER_TONE": "brief_casual",
+            "MAILASSIST_USER_SIGNATURE": "Best,\\nTest",
+        },
+    )
+
+    thread = next(item for item in build_mock_threads() if item.thread_id == "thread-008")
+
+    def fake_generate_candidate_for_tone(*args, **kwargs):
+        return (
+            {
+                "candidate_id": "option-a",
+                "body": "I am reviewing this.\n\nBest,\nTest",
+                "generated_by": "mock-model",
+            },
+            "mock-model",
+            None,
+            "urgent",
+        )
+
+    class ProviderWithThreads(MockProvider):
+        name = "gmail"
+
+        def list_candidate_threads(self):
+            return [thread]
+
+    monkeypatch.setattr(
+        "mailassist.background_bot.build_mock_threads",
+        lambda: (_ for _ in ()).throw(AssertionError("fixture fallback should not be used")),
+    )
+    monkeypatch.setattr(
+        "mailassist.background_bot.generate_candidate_for_tone",
+        fake_generate_candidate_for_tone,
+    )
+
+    settings = load_settings()
+    provider = ProviderWithThreads(settings.mock_provider_drafts_dir, account_email="magali@example.com")
+
+    events = run_mock_watch_pass(
+        settings=settings,
+        provider=provider,
+        base_url="http://localhost:11434",
+        selected_model="mock-model",
+    )
+
+    assert events[0]["type"] == "draft_created"
+    state = load_bot_state(tmp_path)
+    assert state["providers"]["gmail"]["threads"]["thread-008"]["action"] == "draft_created"
+
+
+def test_watch_pass_records_filtered_out_threads(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_env_file(
+        tmp_path / ".env",
+        {
+            "MAILASSIST_WATCHER_UNREAD_ONLY": "true",
+        },
+    )
+
+    thread = next(item for item in build_mock_threads() if item.thread_id == "thread-008")
+    thread.unread = False
+
+    class ProviderWithReadThread(MockProvider):
+        name = "gmail"
+
+        def list_candidate_threads(self):
+            return [thread]
+
+    monkeypatch.setattr(
+        "mailassist.background_bot.generate_candidate_for_tone",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("filtered thread should not generate")),
+    )
+
+    settings = load_settings()
+    provider = ProviderWithReadThread(settings.mock_provider_drafts_dir, account_email="magali@example.com")
+
+    events = run_mock_watch_pass(
+        settings=settings,
+        provider=provider,
+        base_url="http://localhost:11434",
+        selected_model="mock-model",
+    )
+
+    assert events == [
+        {
+            "type": "filtered_out",
+            "thread_id": "thread-008",
+            "subject": thread.subject,
+            "classification": "filtered",
+            "reason": "unread",
+        }
+    ]
+    state = load_bot_state(tmp_path)
+    assert state["providers"]["gmail"]["threads"]["thread-008"]["action"] == "filtered_out"
+    assert state["recent_activity"][-1]["type"] == "filtered_out"

@@ -3,10 +3,12 @@ from email import message_from_bytes
 from types import ModuleType
 from pathlib import Path
 
+from mailassist.live_filters import WatcherFilter
 from mailassist.models import DraftRecord
 from mailassist.providers.gmail import (
     GMAIL_SCOPES,
     GmailProvider,
+    _build_gmail_thread_query,
     _gmail_signature_to_text,
     _select_send_as_entry,
 )
@@ -122,3 +124,80 @@ def test_gmail_signature_prefers_default_send_as_entry() -> None:
     )
 
     assert selected["sendAsEmail"] == "main@example.com"
+
+
+def test_gmail_thread_query_reflects_unread_and_time_window() -> None:
+    query = _build_gmail_thread_query(
+        WatcherFilter(unread_only=True, max_age_seconds=7 * 24 * 60 * 60)
+    )
+
+    assert query == "is:unread newer_than:7d"
+
+
+def test_gmail_provider_lists_actionable_threads(monkeypatch, tmp_path: Path) -> None:
+    captured = {}
+
+    class FakeThreadsApi:
+        def list(self, **kwargs):
+            captured["list_kwargs"] = kwargs
+            return self
+
+        def get(self, *, userId, id, format):
+            assert userId == "me"
+            assert id == "thread-1"
+            assert format == "full"
+            return self
+
+        def execute(self):
+            if "list_kwargs" in captured and "thread_payload" not in captured:
+                captured["thread_payload"] = True
+                return {"threads": [{"id": "thread-1"}]}
+            return {
+                "id": "thread-1",
+                "messages": [
+                    {
+                        "id": "msg-1",
+                        "internalDate": "1777284000000",
+                        "labelIds": ["INBOX", "UNREAD"],
+                        "snippet": "Can you review this?",
+                        "payload": {
+                            "headers": [
+                                {"name": "From", "value": "Sender <sender@example.com>"},
+                                {"name": "To", "value": "You <you@example.com>"},
+                                {"name": "Subject", "value": "Need review"},
+                            ],
+                            "mimeType": "text/plain",
+                            "body": {"data": "Q2FuIHlvdSByZXZpZXcgdGhpcz8="},
+                        },
+                    }
+                ],
+            }
+
+    class FakeUsers:
+        def threads(self):
+            return FakeThreadsApi()
+
+    class FakeService:
+        def users(self):
+            return FakeUsers()
+
+    provider = GmailProvider(tmp_path / "credentials.json", tmp_path / "token.json")
+    monkeypatch.setattr(provider, "_credentials", lambda **kwargs: object())
+    monkeypatch.setattr(
+        provider,
+        "_load_google_modules",
+        lambda: (object, object, object, lambda *args, **kwargs: FakeService()),
+    )
+
+    threads = provider.list_actionable_threads(
+        WatcherFilter(unread_only=True, max_age_seconds=7 * 24 * 60 * 60)
+    )
+
+    assert captured["list_kwargs"]["labelIds"] == ["INBOX"]
+    assert "q" not in captured["list_kwargs"]
+    assert len(threads) == 1
+    assert threads[0].thread_id == "thread-1"
+    assert threads[0].subject == "Need review"
+    assert threads[0].unread is True
+    assert threads[0].participants == ["sender@example.com", "you@example.com"]
+    assert threads[0].messages[0].text == "Can you review this?"

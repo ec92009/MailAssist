@@ -116,3 +116,24 @@ class OllamaClient:
             for item in data.get("models", [])
             if isinstance(item, dict) and item.get("name")
         ]
+
+    def list_loaded_model_details(self) -> list[dict[str, Any]]:
+        req = request.Request(
+            f"{self.base_url}/api/ps",
+            headers={"Content-Type": "application/json"},
+            method="GET",
+        )
+        try:
+            with request.urlopen(req, timeout=LIST_MODELS_TIMEOUT_SECONDS) as response:
+                body = response.read().decode("utf-8")
+        except error.URLError as exc:
+            raise RuntimeError(
+                f"Unable to reach Ollama at {self.base_url}. Is the server running?"
+            ) from exc
+
+        data = json.loads(body)
+        return [
+            item
+            for item in data.get("models", [])
+            if isinstance(item, dict) and (item.get("name") or item.get("model"))
+        ]

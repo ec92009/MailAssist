@@ -5,7 +5,7 @@ import locale
 import platform
 import re
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from mailassist.config import Settings
 from mailassist.fixtures.mock_threads import build_mock_threads
+from mailassist.live_filters import WatcherFilter, thread_passes_filter
 from mailassist.live_state import load_live_state, save_live_state
 from mailassist.review_state import (
     SET_ASIDE_CLASSIFICATIONS,
@@ -113,11 +114,34 @@ def run_mock_watch_pass(
     provider_state = provider_slot.setdefault("threads", {})
     events = []
     pending_threads: list[tuple[EmailThread, str]] = []
+    thread_candidates = _watch_thread_candidates_for_provider(provider, settings)
 
-    for thread in build_mock_threads():
+    for thread, filtered_reason in thread_candidates:
         if thread_id and thread.thread_id != thread_id:
             continue
         latest_message_id = _latest_message_id(thread)
+        if filtered_reason:
+            provider_state[thread.thread_id] = _state_record(
+                thread=thread,
+                latest_message_id=latest_message_id,
+                classification="filtered",
+                action="filtered_out",
+            )
+            events.append(
+                {
+                    "type": "filtered_out",
+                    "thread_id": thread.thread_id,
+                    "subject": thread.subject,
+                    "classification": "filtered",
+                    "reason": filtered_reason,
+                }
+            )
+            _append_recent_activity(
+                state,
+                provider_name=provider.name,
+                event=events[-1],
+            )
+            continue
         if _latest_sender(thread) == user_address:
             provider_state[thread.thread_id] = _state_record(
                 thread=thread,
@@ -517,6 +541,38 @@ def _latest_sender(thread: EmailThread) -> str:
     if not thread.messages:
         return ""
     return thread.messages[-1].sender.strip().lower()
+
+
+def _watch_thread_candidates_for_provider(provider: DraftProvider, settings: Settings) -> list[tuple[EmailThread, str | None]]:
+    watcher_filter = WatcherFilter.from_settings(settings)
+    now = datetime.now(timezone.utc)
+    if provider.name == "mock":
+        return [
+            (thread, thread_passes_filter(thread, watcher_filter, now=now)[1])
+            for thread in build_mock_threads()
+        ]
+
+    lister = getattr(provider, "list_candidate_threads", None)
+    if callable(lister):
+        try:
+            return [
+                (thread, thread_passes_filter(thread, watcher_filter, now=now)[1])
+                for thread in list(lister())
+            ]
+        except NotImplementedError:
+            pass
+
+    lister = getattr(provider, "list_actionable_threads", None)
+    if callable(lister):
+        try:
+            return [(thread, None) for thread in list(lister(watcher_filter))]
+        except NotImplementedError:
+            pass
+
+    return [
+        (thread, thread_passes_filter(thread, watcher_filter, now=now)[1])
+        for thread in build_mock_threads()
+    ]
 
 
 def reply_recipients_for_thread(thread: EmailThread, user_address: str = "you@example.com") -> list[str]:

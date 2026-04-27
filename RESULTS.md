@@ -30,6 +30,7 @@ The bot watches provider inboxes, uses a local Ollama model to classify new thre
 - The bot has `watch-once` and Gmail preview/test paths.
 - The bot now has a polling `watch-loop` path that uses `MAILASSIST_BOT_POLL_SECONDS`.
 - The bot has a simplified `watch-once` pass that classifies mock threads, skips non-response mail, and creates one provider draft per actionable thread.
+- The provider layer now has a first Gmail inbox/thread polling contract that maps Gmail API threads into `EmailThread` objects for the live watcher.
 - Live watcher state now lives in `data/live-state.json` with migration from the older `data/bot-state.json` path.
 - Live watcher state now keeps provider-scoped thread records, a provider account-email map, and recent activity summaries in one file.
 - The live watcher now persists a discovered provider account email when the provider exposes one and uses it for reply-recipient selection and quoted review context.
@@ -49,6 +50,7 @@ The bot watches provider inboxes, uses a local Ollama model to classify new thre
 - The packaged app stores runtime data under `~/Library/Application Support/MailAssist/`.
 - The README now points GitHub users to the `.dmg` through GitHub Releases.
 - `NORTH_STAR.md` now captures the Magali/Windows/Outlook product compass.
+- Magali's screenshots show her main Outlook Desktop business mailbox is Microsoft 365; an Outlook.com account is also present, but the business mailbox is the north-star account.
 
 ## Recent Verified Experiments
 
@@ -59,7 +61,7 @@ The bot watches provider inboxes, uses a local Ollama model to classify new thre
 - Batch-size 10 processed the same 11 actionable mock emails plus 2 skipped automated emails in about 150 seconds end to end.
 - The batching result is acceptable for backlog catch-up, but live mode should not wait for a batch because first-draft latency matters more than average throughput.
 - The Apple order email confirms the local test machine is a 16-inch MacBook Pro with M1 Max, 10-core CPU, 24-core GPU, 32GB unified memory, and 2TB SSD.
-- Full local test suite passed with 69 tests on April 27, 2026.
+- Full local test suite passed with 84 tests on April 27, 2026.
 - `dist/MailAssist-v56.46-mac-gmail.dmg` was built locally at about 253 MB, well under GitHub Releases' 2 GiB per-asset limit.
 
 ## Draft Quality Findings
@@ -86,7 +88,8 @@ The bot watches provider inboxes, uses a local Ollama model to classify new thre
 
 ## New Priority
 
-- Learn Magali's actual Outlook account type before picking an Outlook provider strategy.
+- Treat Microsoft Graph as the first Outlook provider candidate because Magali's business mailbox is Microsoft 365.
+- Confirm whether Magali can authorize the app herself or needs tenant-admin consent.
 - Move Windows/Outlook research and implementation earlier than real-user Gmail OAuth verification or Mac notarization.
 - Keep Gmail support useful for local testing and Dad's personal workflow, but do not let it define the whole product shape.
 - Treat Mac/Gmail packaging as optional sandbox distribution unless it gets broader use.
@@ -104,14 +107,16 @@ These were useful experiments, but the lighter product should not build on them 
 
 ## Latest Verified State
 
-- Latest visible version: `v58.0`.
-- Latest test run: 69 passing tests.
+- Latest visible version: `v58.5`.
+- Latest test run: 84 passing tests.
 - Current visible GUI surface is the compact bot control panel and setup wizard.
 - Gmail optional dependencies are installed in the local virtualenv.
 - Local Gmail setup has been proven for draft creation and readonly inbox preview.
 - Mac/Gmail DMG artifact was published as a GitHub release asset.
 - The next implementation phase should clean up shared bot architecture while waiting for Magali's Outlook account-type details.
 - The latest cleanup slices moved old review/runtime artifacts into a legacy subtree, removed the unused queue-phase lifecycle, deleted the old web review GUI path, removed the dead legacy local draft pipeline, and introduced a dedicated live-state store for watcher runtime data.
+- The latest live-watcher slice added watcher filters, provider thread-listing hooks, Gmail thread polling helpers, and background-bot integration for real provider thread sources.
+- Magali Outlook discovery is now partially resolved: Microsoft 365 first, with tenant/admin consent as the remaining provider-path question.
 
 ## Conclusion
 

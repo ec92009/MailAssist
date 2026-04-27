@@ -2,7 +2,7 @@
 
 This backlog is ordered around the north-star user: Magali, a CPA in San Diego who runs her own business, uses Windows, and gets business email in Outlook Desktop.
 
-Mac/Gmail remains the proving ground because it is already working locally and exercises the drafting loop. Windows/Outlook is the more important destination, but Outlook provider choices are blocked until Magali's account details are known.
+Mac/Gmail remains the proving ground because it is already working locally and exercises the drafting loop. Windows/Outlook is the more important destination. Magali's screenshots show her business mailbox in Outlook Desktop is a Microsoft 365 account, so the first Outlook provider decision should now focus on Microsoft Graph feasibility and tenant/admin consent instead of broad account-type discovery.
 
 ## Handoff
 
@@ -23,12 +23,12 @@ Mac/Gmail remains the proving ground because it is already working locally and e
     - `sed -n '1,180p' SUMMARY.md`
 - Current baseline at handoff:
   - Last synchronized commit before this handoff update: `8d3dd05`
-  - Current visible version: `v58.0`
-  - Local app/dev entrypoint: `./.venv/bin/mailassist desktop`
+  - Current visible version: `v58.5`
+  - Local app/dev entrypoint: `./.venv/bin/mailassist desktop-gui`
   - Packaged app path: no current packaged app handoff; Mac/Gmail DMG remains a sandbox artifact.
 - Known open issue to continue:
-  - Highest unblocked implementation work is P1 live watcher MVP, starting with Gmail provider inbox/thread polling on top of the existing provider-scoped live-state store.
-  - Immediate next implementation step: read `RESEARCH.md`, `RESULTS.md`, `src/mailassist/background_bot.py`, `src/mailassist/providers/gmail.py`, and `src/mailassist/live_state.py`; then add the first Gmail thread polling contract and tests.
+  - Highest unblocked implementation work is P1 live watcher MVP, now continuing from the first Gmail provider inbox/thread polling contract on top of the existing provider-scoped live-state store.
+  - Immediate next implementation step: exercise the live Gmail `watch-once --provider gmail` path against real local credentials, harden thread/body extraction from real payloads, and add filtered-out activity events before exposing watcher filters in the GUI.
 - Handoff protocol for this repo:
   - Run `prepare for handoff` before switching machines or ending a work block that should resume elsewhere.
   - Keep `SUMMARY.md` and this `Handoff` block current.
@@ -44,14 +44,17 @@ Mac/Gmail remains the proving ground because it is already working locally and e
 - Consolidated provider thread runtime state under provider-scoped slots with room for future provider cursors. (Managed by Codex)
 - Added onboarding RAM checks and installed-model recommendations, including a clear warning when no installed model looks small enough. (Managed by Codex)
 - Added initial RTF/filter/attribution settings fields and `EmailThread.unread` for the GUI polish slice. (Managed by Codex)
+- Added the first Gmail thread polling contract: watcher filters, provider thread-listing hooks, Gmail thread-to-`EmailThread` mapping, and background-bot integration with test coverage. (Managed by Codex)
+- Reviewed Magali's Outlook screenshots and confirmed her main business address appears as a Microsoft 365 account in Outlook Desktop; she also has an Outlook.com account visible in the account list. (Managed by Codex)
 
-## P0: Magali Outlook Discovery (Waiting on Magali) (Managed by Codex)
+## P0: Magali Outlook Discovery (Partially Resolved) (Managed by Codex)
 
-- Find out what kind of account Magali's Outlook Desktop uses: Microsoft 365/Exchange, Outlook.com, IMAP/SMTP, Gmail/Google Workspace inside Outlook, or another provider. (Managed by Codex) (Waiting on Magali)
-- Confirm whether her company tenant allows third-party Microsoft Graph apps. (Managed by Codex) (Waiting on Magali)
-- Confirm whether she has admin rights or needs tenant-admin consent. (Managed by Codex) (Waiting on Magali)
-- Identify the least painful auth path for her actual account type. (Managed by Codex) (Waiting on Magali)
-- Decide whether Microsoft Graph, local Outlook automation, IMAP/SMTP, or another route is the right first Outlook provider. (Managed by Codex) (Waiting on Magali)
+- Confirmed from Magali's screenshots: the main `MagaliDomingue@GoldenYearsTax...` business mailbox is listed as Microsoft 365 in Outlook Desktop. (Managed by Codex)
+- Treat Microsoft Graph as the leading first provider path unless tenant consent or Microsoft app registration constraints make it too painful. (Managed by Codex)
+- Confirm whether her company tenant allows third-party Microsoft Graph apps. (Managed by Codex) (Waiting on Magali/admin)
+- Confirm whether she has admin rights or needs tenant-admin consent. (Managed by Codex) (Waiting on Magali/admin)
+- Identify the least painful Microsoft 365 auth path for a Windows desktop app, ideally avoiding developer-console setup for Magali. (Managed by Codex)
+- Keep local Outlook automation and IMAP/SMTP as fallback routes only if Microsoft Graph is blocked. (Managed by Codex)
 
 ## P1: Unblocked Live Watcher MVP (Managed by Codex)
 
@@ -90,12 +93,12 @@ Mac/Gmail remains the proving ground because it is already working locally and e
 - Keep only sanitized samples in git. (Managed by Codex)
 - Avoid committing real email/order/account artifacts used during local testing. (Managed by Codex)
 
-## P4: Windows/Outlook First Useful Version (Waiting on Magali) (Managed by Codex)
+## P4: Windows/Outlook First Useful Version (Microsoft 365 First) (Managed by Codex)
 
-- Implement the chosen Outlook provider path. (Managed by Codex) (Waiting on Magali)
+- Implement the chosen Outlook provider path, with Microsoft Graph now the first candidate because Magali's business mailbox is Microsoft 365. (Managed by Codex)
 - Keep MailAssist as a draft creator only; never add send automation. (Managed by Codex)
-- Create provider-native Outlook drafts that preserve recipients, subject, and reply/thread context. (Managed by Codex) (Waiting on Magali)
-- Derive the user's Outlook/account email before watching/drafting. (Managed by Codex) (Waiting on Magali)
+- Create provider-native Outlook drafts that preserve recipients, subject, and reply/thread context. (Managed by Codex)
+- Derive the user's Outlook/account email before watching/drafting. (Managed by Codex)
 - Import or suggest the user's Outlook signature if the chosen provider path exposes it. (Managed by Codex) (Waiting on Magali)
 - Build a one-click `Connect Outlook` flow that avoids developer consoles or API credential handling for Magali. (Managed by Codex) (Waiting on Magali)
 - Package a Windows desktop build that Magali can install without developer tools. (Managed by Codex) (Waiting on Magali)
@@ -103,6 +106,7 @@ Mac/Gmail remains the proving ground because it is already working locally and e
 
 ## P5: Control Panel Cleanup (Managed by Codex)
 
+- Decide first-run onboarding behavior now that Settings is a popup: if setup is incomplete, should MailAssist force the Settings dialog open until `Done`, or allow users to close it and continue on the Bot Control page? (Managed by Codex)
 - Make the desktop app copy honest about being a bot control panel, not an email review inbox. (Managed by Codex)
 - Show bot running/paused state. (Managed by Codex)
 - Give bot running/idle/error states visible color or status treatment, not plain text only. (Managed by Codex)

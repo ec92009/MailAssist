@@ -34,6 +34,47 @@ def model_size_bytes(model_detail: dict[str, Any]) -> int | None:
     return size
 
 
+def model_name(model_detail: dict[str, Any]) -> str:
+    return str(model_detail.get("name") or model_detail.get("model") or "").strip()
+
+
+def loaded_model_memory_bytes(
+    loaded_model_details: list[dict[str, Any]],
+    installed_model_details: list[dict[str, Any]] | None = None,
+) -> int:
+    installed_sizes = {
+        name: size
+        for item in installed_model_details or []
+        if (name := model_name(item)) and (size := model_size_bytes(item)) is not None
+    }
+    total = 0
+    for item in loaded_model_details:
+        name = model_name(item)
+        size = model_size_bytes(item)
+        if size is None and name:
+            size = installed_sizes.get(name)
+        if size:
+            total += size
+    return total
+
+
+def effective_available_memory_bytes(
+    available_memory_bytes: int | None,
+    loaded_model_details: list[dict[str, Any]] | None = None,
+    installed_model_details: list[dict[str, Any]] | None = None,
+    total_memory_bytes: int | None = None,
+) -> int | None:
+    if not available_memory_bytes or available_memory_bytes <= 0:
+        return None
+    effective = available_memory_bytes + loaded_model_memory_bytes(
+        loaded_model_details or [],
+        installed_model_details,
+    )
+    if total_memory_bytes and total_memory_bytes > 0:
+        effective = min(effective, total_memory_bytes)
+    return effective
+
+
 def _memory_from_sysconf() -> tuple[int | None, int | None]:
     if not hasattr(os, "sysconf"):
         return None, None
@@ -142,17 +183,30 @@ def system_memory_snapshot() -> tuple[int | None, int | None]:
 def recommended_model_names(
     model_details: list[dict[str, Any]],
     available_memory_bytes: int | None,
+    loaded_model_details: list[dict[str, Any]] | None = None,
 ) -> tuple[list[str], list[str]]:
     if not available_memory_bytes or available_memory_bytes <= 0:
         return [], []
-    safe_model_bytes = available_memory_bytes * 0.75
+    effective_memory_bytes = effective_available_memory_bytes(
+        available_memory_bytes,
+        loaded_model_details,
+        model_details,
+    )
+    if not effective_memory_bytes:
+        return [], []
+    safe_model_bytes = effective_memory_bytes * 0.75
+    loaded_names = {
+        name
+        for item in loaded_model_details or []
+        if (name := model_name(item))
+    }
     known_models = [
         (str(item.get("name", "")).strip(), size)
         for item in model_details
         if (size := model_size_bytes(item)) is not None
     ]
-    recommended = [name for name, size in known_models if name and size <= safe_model_bytes]
-    oversized = [name for name, size in known_models if name and size > safe_model_bytes]
+    recommended = [name for name, size in known_models if name and (name in loaded_names or size <= safe_model_bytes)]
+    oversized = [name for name, size in known_models if name and name not in loaded_names and size > safe_model_bytes]
     return recommended, oversized
 
 
@@ -168,6 +222,7 @@ def memory_recommendation_message(
     model_details: list[dict[str, Any]],
     available_memory_bytes: int | None,
     total_memory_bytes: int | None,
+    loaded_model_details: list[dict[str, Any]] | None = None,
 ) -> str:
     if not available_memory_bytes:
         return ""
@@ -176,7 +231,23 @@ def memory_recommendation_message(
     memory_part = f"{memory_text} available"
     if total_text:
         memory_part = f"{memory_part} of {total_text} RAM"
-    recommended, oversized = recommended_model_names(model_details, available_memory_bytes)
+    loaded_bytes = loaded_model_memory_bytes(loaded_model_details or [], model_details)
+    if loaded_bytes:
+        effective_memory = effective_available_memory_bytes(
+            available_memory_bytes,
+            loaded_model_details,
+            model_details,
+            total_memory_bytes,
+        )
+        loaded_part = f", including {format_size(loaded_bytes)} already used by loaded Ollama model(s)"
+        if effective_memory:
+            loaded_part = f"{loaded_part}; effective model budget starts from {format_size(effective_memory)}"
+        memory_part = f"{memory_part}{loaded_part}"
+    recommended, oversized = recommended_model_names(
+        model_details,
+        available_memory_bytes,
+        loaded_model_details,
+    )
     if recommended:
         return (
             f"System memory: {memory_part}. Recommended installed model(s): "
