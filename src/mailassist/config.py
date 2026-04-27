@@ -19,6 +19,7 @@ class Settings:
     ollama_url: str
     ollama_model: str
     user_signature: str
+    user_signature_html: str
     user_tone: str
     bot_poll_seconds: int
     default_provider: str
@@ -29,6 +30,9 @@ class Settings:
     outlook_client_id: str
     outlook_tenant_id: str
     outlook_redirect_uri: str
+    watcher_unread_only: bool
+    watcher_time_window: str
+    draft_attribution: bool
 
 
 def parse_bool(value: str | None, default: bool = False) -> bool:
@@ -152,6 +156,7 @@ def load_settings() -> Settings:
         ollama_url=os.getenv("MAILASSIST_OLLAMA_URL", "http://localhost:11434"),
         ollama_model=os.getenv("MAILASSIST_OLLAMA_MODEL", "llama3.1:8b"),
         user_signature=os.getenv("MAILASSIST_USER_SIGNATURE", "").replace("\\n", "\n"),
+        user_signature_html=os.getenv("MAILASSIST_USER_SIGNATURE_HTML", ""),
         user_tone=os.getenv("MAILASSIST_USER_TONE", "direct_concise"),
         bot_poll_seconds=parse_int(os.getenv("MAILASSIST_BOT_POLL_SECONDS"), 60),
         default_provider=os.getenv("MAILASSIST_DEFAULT_PROVIDER", "gmail"),
@@ -174,4 +179,7 @@ def load_settings() -> Settings:
         outlook_redirect_uri=os.getenv(
             "MAILASSIST_OUTLOOK_REDIRECT_URI", "http://localhost:8765/outlook/callback"
         ),
+        watcher_unread_only=parse_bool(os.getenv("MAILASSIST_WATCHER_UNREAD_ONLY"), default=False),
+        watcher_time_window=os.getenv("MAILASSIST_WATCHER_TIME_WINDOW", "all"),
+        draft_attribution=parse_bool(os.getenv("MAILASSIST_DRAFT_ATTRIBUTION"), default=False),
     )

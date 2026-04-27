@@ -401,3 +401,41 @@ def test_stream_candidate_for_tone_emits_incremental_chunks(monkeypatch, tmp_pat
     assert generation_model == "mistral:latest"
     assert generation_error is None
     assert classification == "urgent"
+
+
+def test_load_settings_reads_new_gui_polish_env_vars(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_env_file(
+        tmp_path / ".env",
+        {
+            "MAILASSIST_USER_SIGNATURE_HTML": "<b>Best,</b><br>Ethan",
+            "MAILASSIST_WATCHER_UNREAD_ONLY": "true",
+            "MAILASSIST_WATCHER_TIME_WINDOW": "7d",
+            "MAILASSIST_DRAFT_ATTRIBUTION": "true",
+        },
+    )
+
+    settings = load_settings()
+
+    assert settings.user_signature_html == "<b>Best,</b><br>Ethan"
+    assert settings.watcher_unread_only is True
+    assert settings.watcher_time_window == "7d"
+    assert settings.draft_attribution is True
+
+
+def test_load_settings_defaults_for_new_gui_polish_env_vars(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    for var in (
+        "MAILASSIST_USER_SIGNATURE_HTML",
+        "MAILASSIST_WATCHER_UNREAD_ONLY",
+        "MAILASSIST_WATCHER_TIME_WINDOW",
+        "MAILASSIST_DRAFT_ATTRIBUTION",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+    settings = load_settings()
+
+    assert settings.user_signature_html == ""
+    assert settings.watcher_unread_only is False
+    assert settings.watcher_time_window == "all"
+    assert settings.draft_attribution is False
