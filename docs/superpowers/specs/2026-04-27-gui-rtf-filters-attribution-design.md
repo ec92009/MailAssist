@@ -2,11 +2,11 @@
 
 Date: 2026-04-27
 Status: Approved (pending user review of this written spec)
-Owner: Claude
+Owner: Codex
 
 ## Goal
 
-Deliver three TODO.md P4 items as one cohesive change to the Claude-managed
+Deliver three TODO.md GUI/draft polish items as one cohesive change to the Codex-managed
 desktop control panel:
 
 1. Offer RTF formatting for signatures (with Gmail HTML passthrough).

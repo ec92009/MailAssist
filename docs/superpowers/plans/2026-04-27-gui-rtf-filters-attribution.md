@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Deliver three Claude-owned P4 GUI tasks (RTF signatures with Gmail HTML passthrough, live-watcher unread/time-window filter contract, optional draft attribution) as one cohesive change.
+**Goal:** Deliver three Codex-owned GUI/draft polish tasks (RTF signatures with Gmail HTML passthrough, live-watcher unread/time-window filter contract, optional draft attribution) as one cohesive change.
 
 **Architecture:** Five new env vars layered on the existing `.env`/`Settings` shape. Pure helpers in three new modules (`live_filters`, `sanitize`, `attribution`) feed into `background_bot.py` and the Gmail provider. `EmailThread` gains an `unread` flag; `DraftRecord` gains `body_html`. The wizard's "Choose Email Provider" page hosts filter controls; the Signature page becomes a `QTextEdit` rich editor with a tiny toolbar and an attribution checkbox; the dashboard surfaces the active filter.
 

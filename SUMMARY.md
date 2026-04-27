@@ -4,10 +4,11 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 
 ## This Conversation
 
-- Checked how far Claude got on the RTF-signature, watcher-filter, and attribution assignment.
-- Confirmed Claude completed and committed the first two plan tasks on `feature/gui-rtf-filters-attribution`: new settings fields and `EmailThread.unread`.
+- Checked how far the RTF-signature, watcher-filter, and attribution assignment had progressed.
+- Confirmed the first two plan tasks were complete on `feature/gui-rtf-filters-attribution`: new settings fields and `EmailThread.unread`.
 - Confirmed the rest of that GUI-polish plan is still pending, starting with `DraftRecord.body_html`.
 - Prepared to merge the branch back to `main` and ran `rscp`.
+- Reassigned active TODO ownership to Codex and reprioritized unblocked live-watcher work ahead of blocked Outlook implementation.
 
 ## Work Being Landed
 
@@ -23,7 +24,7 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 - Full test suite: 69 passing tests on April 27, 2026.
 - Compact desktop control panel remains the visible UI direction.
 - Gmail draft creation, Gmail inbox preview, and Gmail signature import remain the working sandbox capabilities.
-- The RTF/filter/attribution plan exists under `docs/superpowers/`; tasks 1 and 2 are complete, task 3 onward remains open.
+- The RTF/filter/attribution plan exists under `docs/superpowers/`; tasks 1 and 2 are complete, task 3 onward remains open and Codex-owned.
 
 ## Still Pending
 

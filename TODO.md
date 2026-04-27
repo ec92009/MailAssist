@@ -2,7 +2,7 @@
 
 This backlog is ordered around the north-star user: Magali, a CPA in San Diego who runs her own business, uses Windows, and gets business email in Outlook Desktop.
 
-Mac/Gmail remains the proving ground because it is already working locally and exercises the drafting loop. Windows/Outlook is the more important destination.
+Mac/Gmail remains the proving ground because it is already working locally and exercises the drafting loop. Windows/Outlook is the more important destination, but Outlook provider choices are blocked until Magali's account details are known.
 
 ## Recently Completed
 
@@ -12,9 +12,9 @@ Mac/Gmail remains the proving ground because it is already working locally and e
 - Added a polling `watch-loop` bot action that uses `MAILASSIST_BOT_POLL_SECONDS` and emits failed/retry JSONL events. (Managed by Codex)
 - Consolidated provider thread runtime state under provider-scoped slots with room for future provider cursors. (Managed by Codex)
 - Added onboarding RAM checks and installed-model recommendations, including a clear warning when no installed model looks small enough. (Managed by Codex)
-- Added initial RTF/filter/attribution settings fields and `EmailThread.unread` for the Claude-managed GUI polish slice. (Managed by Claude)
+- Added initial RTF/filter/attribution settings fields and `EmailThread.unread` for the GUI polish slice. (Managed by Codex)
 
-## P0: Understand Magali's Outlook Setup (Managed by Codex) (Waiting on Magali)
+## P0: Magali Outlook Discovery (Waiting on Magali) (Managed by Codex)
 
 - Find out what kind of account Magali's Outlook Desktop uses: Microsoft 365/Exchange, Outlook.com, IMAP/SMTP, Gmail/Google Workspace inside Outlook, or another provider. (Managed by Codex) (Waiting on Magali)
 - Confirm whether her company tenant allows third-party Microsoft Graph apps. (Managed by Codex) (Waiting on Magali)
@@ -22,7 +22,44 @@ Mac/Gmail remains the proving ground because it is already working locally and e
 - Identify the least painful auth path for her actual account type. (Managed by Codex) (Waiting on Magali)
 - Decide whether Microsoft Graph, local Outlook automation, IMAP/SMTP, or another route is the right first Outlook provider. (Managed by Codex) (Waiting on Magali)
 
-## P1: Windows/Outlook First Useful Version (Managed by Codex)
+## P1: Unblocked Live Watcher MVP (Managed by Codex)
+
+- Add provider inbox/thread polling, starting with Gmail because it is already connected locally. (Managed by Codex)
+- Track already-seen provider threads/messages using the provider-scoped live-state slots. (Managed by Codex)
+- Classify new threads. (Managed by Codex)
+- Skip `automated`, `spam`, and `no_response`. (Managed by Codex)
+- Draft only for `urgent` and `reply_needed`. (Managed by Codex)
+- Avoid duplicate drafts for the same latest provider message. (Managed by Codex)
+- Detect whether a user already replied manually. (Managed by Codex)
+- Keep live processing optimized for first-draft latency, usually one actionable email at a time. (Managed by Codex)
+- Use `--batch-size` only for backlog catch-up, imports, or first-install processing. (Managed by Codex)
+- Emit JSONL activity events for skipped, drafted, failed, retry, and filtered-out states. (Managed by Codex)
+- Show skipped counts, recent drafts, latest acquisition pass, and failures in the GUI. (Managed by Codex)
+- Decide whether real continuous polling should become the default or remain an explicit user-started bot action. (Managed by Codex)
+
+## P2: Current GUI And Draft Polish Slice (Managed by Codex)
+
+- Finish `DraftRecord.body_html` so providers can receive both plain and HTML draft bodies. (Managed by Codex)
+- Add signature HTML sanitizing and plain-text extraction helpers. (Managed by Codex)
+- Wire Gmail signature import through the shared sanitizer. (Managed by Codex)
+- Create Gmail multipart drafts when `body_html` is present. (Managed by Codex)
+- Add watcher filters for unread-only and time window, then honor them before classification. (Managed by Codex)
+- Persist watcher filter controls in the setup wizard. (Managed by Codex)
+- Show the active watcher filter on the dashboard. (Managed by Codex)
+- Offer RTF formatting for signatures. (Managed by Codex)
+- Offer optional draft attribution such as MailAssist, Ollama, and model name. (Managed by Codex)
+- Show preferred tone and signature status. (Managed by Codex)
+
+## P3: Product Safety And Trust (Managed by Codex)
+
+- Keep post-generation safety checks for signature-only and promise-shaped replies. (Managed by Codex)
+- Keep destructive or provider-writing actions explicit about what will happen. (Managed by Codex)
+- Put live provider test actions behind confirmation or a developer/debug section. (Managed by Codex)
+- Keep generated runtime artifacts, logs, drafts, queue files, and provider tokens ignored by git. (Managed by Codex)
+- Keep only sanitized samples in git. (Managed by Codex)
+- Avoid committing real email/order/account artifacts used during local testing. (Managed by Codex)
+
+## P4: Windows/Outlook First Useful Version (Waiting on Magali) (Managed by Codex)
 
 - Implement the chosen Outlook provider path. (Managed by Codex) (Waiting on Magali)
 - Keep MailAssist as a draft creator only; never add send automation. (Managed by Codex)
@@ -33,50 +70,20 @@ Mac/Gmail remains the proving ground because it is already working locally and e
 - Package a Windows desktop build that Magali can install without developer tools. (Managed by Codex) (Waiting on Magali)
 - Keep setup, logs, and status readable enough for remote Dad-support. (Managed by Codex)
 
-## P2: Live Watcher Core (Managed by Codex)
+## P5: Control Panel Cleanup (Managed by Codex)
 
-- Choose one durable live-bot state store for provider cursors, processed message IDs, classifications, draft IDs, and recent activity. (Managed by Codex)
-- Derive and persist the real user/account email before any live watch pass so reply recipients and quoted review context stop assuming `you@example.com`. (Managed by Codex)
-- Add provider inbox/thread polling. (Managed by Codex)
-- Decide whether to implement real continuous polling next or keep the bot as explicit one-pass actions until provider polling lands. (Managed by Codex)
-- Track already-seen provider threads/messages. (Managed by Codex)
-- Classify new threads. (Managed by Codex)
-- Skip `automated`, `spam`, and `no_response`. (Managed by Codex)
-- Draft only for `urgent` and `reply_needed`. (Managed by Codex)
-- Avoid duplicate drafts for the same latest provider message. (Managed by Codex)
-- Detect whether a user already replied manually. (Managed by Codex)
-- Keep live processing optimized for first-draft latency, usually one actionable email at a time. (Managed by Codex)
-- Use `--batch-size` only for backlog catch-up, imports, or first-install processing. (Managed by Codex)
-- Emit JSONL activity events for skipped, drafted, failed, and retry states. (Managed by Codex)
-- Show skipped counts, recent drafts, latest acquisition pass, and failures in the GUI. (Managed by Claude)
+- Make the desktop app copy honest about being a bot control panel, not an email review inbox. (Managed by Codex)
+- Show bot running/paused state. (Managed by Codex)
+- Give bot running/idle/error states visible color or status treatment, not plain text only. (Managed by Codex)
+- Show selected provider and connection status. (Managed by Codex)
+- Show Ollama model and health. (Managed by Codex)
+- Keep logs in a separate inspectable window. (Managed by Codex)
+- Keep the setup wizard compact, stable in window size, and first-run friendly. (Managed by Codex)
+- Keep bottom navigation controls in stable locations across wizard pages. (Managed by Codex)
+- Keep Ollama wait states honest and non-blocking; avoid fake exact progress when the model is only waiting or streaming text. (Managed by Codex)
+- Avoid explanatory subtitles and empty panels. (Managed by Codex)
 
-## P3: Product Safety And Trust (Managed by Codex)
-
-- Keep post-generation safety checks for signature-only and promise-shaped replies. (Managed by Codex)
-- Keep destructive or provider-writing actions explicit about what will happen. (Managed by Codex)
-- Put live provider test actions behind confirmation or a developer/debug section. (Managed by Claude)
-- Keep generated runtime artifacts, logs, drafts, queue files, and provider tokens ignored by git. (Managed by Codex)
-- Keep only sanitized samples in git. (Managed by Codex)
-- Avoid committing real email/order/account artifacts used during local testing. (Managed by Codex)
-
-## P4: GUI Polish For The Control Panel (Managed by Claude)
-
-- Make the desktop app copy honest about being a bot control panel, not an email review inbox. (Managed by Claude)
-- Show bot running/paused state. (Managed by Claude)
-- Give bot running/idle/error states visible color or status treatment, not plain text only. (Managed by Claude)
-- Show selected provider and connection status. (Managed by Claude)
-- Let the user filter which emails the live watcher scans, such as unread only or messages from the last week. (Managed by Claude)
-- Show Ollama model and health. (Managed by Claude)
-- Show preferred tone and signature status. (Managed by Claude)
-- Offer RTF formatting for signatures. (Managed by Claude)
-- Offer to add optional attribution, such as MailAssist, Ollama, and Gemma. (Managed by Claude)
-- Keep logs in a separate inspectable window. (Managed by Claude)
-- Keep the setup wizard compact, stable in window size, and first-run friendly. (Managed by Claude)
-- Keep bottom navigation controls in stable locations across wizard pages. (Managed by Claude)
-- Keep Ollama wait states honest and non-blocking; avoid fake exact progress when the model is only waiting or streaming text. (Managed by Claude)
-- Avoid explanatory subtitles and empty panels. (Managed by Claude)
-
-## P5: Mac/Gmail Sandbox (Managed by Codex)
+## P6: Mac/Gmail Sandbox (Managed by Codex)
 
 - Keep the mock-to-Gmail draft test available for regression checks. (Managed by Codex)
 - Keep the read-only latest-10 Gmail preview available for ingestion checks. (Managed by Codex)
@@ -85,7 +92,7 @@ Mac/Gmail remains the proving ground because it is already working locally and e
 - Add real-user Gmail OAuth verification only if it becomes necessary for broader testing or teaches something reusable. (Managed by Codex)
 - Keep Mac/Gmail `.dmg` builds as optional sandbox artifacts, not the main product goal. (Managed by Codex)
 
-## P6: Architecture Cleanup (Managed by Codex)
+## P7: Architecture Cleanup (Managed by Codex)
 
 - Relegate `review-inbox.json`, queue phase directories, and old draft storage away from the main product path. (Managed by Codex)
 - Retire the old two-candidate review flow from the main product path; provider drafts are now the review surface. (Managed by Codex)
@@ -97,7 +104,7 @@ Mac/Gmail remains the proving ground because it is already working locally and e
 - Remove the last placeholder `you@example.com` assumptions from review-context and reply-recipient helpers once the account-email source exists. (Managed by Codex)
 - Consider an LLM client protocol only when adding a second backend beyond Ollama. (Managed by Codex)
 
-## P7: Packaging And Distribution (Managed by Codex)
+## P8: Packaging And Distribution (Managed by Codex)
 
 - Keep `dist/` ignored; do not commit generated app/package artifacts. (Managed by Codex)
 - Publish test builds through GitHub Releases when useful. (Managed by Codex)
