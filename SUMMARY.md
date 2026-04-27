@@ -1,52 +1,35 @@
 # Summary
 
-MailAssist is still the same product at the top level: a local background draft creator that watches mail, classifies threads, creates provider-native drafts when useful, and never sends email. Gmail and mock remain the sandbox. Windows and Outlook remain the north-star destination for Magali.
+MailAssist remains a local background draft creator. It watches connected mail, classifies threads with a local Ollama model, creates provider-native drafts when useful, and never sends email. Gmail and mock remain the working sandbox. Windows and Outlook remain the north-star destination for Magali.
 
 ## This Conversation
 
-- Worked through every GUI item in `TODO.md` (P2 GUI line, P3 confirmation line, all of P4) while the prior conversation's backend work was still uncommitted.
-- Tagged the GUI items in `TODO.md` as `(managed by Claude)` so Codex stays clear of them.
-- Shipped the GUI polish in a single bot-control-panel pass on top of the now-stable `live_state` work from the prior conversation.
+- Checked how far Claude got on the RTF-signature, watcher-filter, and attribution assignment.
+- Confirmed Claude completed and committed the first two plan tasks on `feature/gui-rtf-filters-attribution`: new settings fields and `EmailThread.unread`.
+- Confirmed the rest of that GUI-polish plan is still pending, starting with `DraftRecord.body_html`.
+- Prepared to merge the branch back to `main` and ran `rscp`.
 
-## GUI Work Completed
+## Work Being Landed
 
-- Bot, provider, and Ollama statuses render as colored pills (running/idle/error/ok), driven by a single `_set_bot_state` + `_paint_status_pill` helper.
-- Provider connection status (Gmail token presence) and Ollama health (cached from `refresh_models`) now show on the bot control panel, not only the wizard.
-- Two new dashboard rows surface the last watch pass result (drafts/skipped/already-handled) and the most recent failure, read from existing JSONL logs.
-- Settings wizard now lives inside a `QScrollArea`. Removed the fragile `settings_*_stable_height` and `_sync_settings_stack_height` / `_restore_geometry_after_layout` machinery.
-- Removed the leftover `progress_timer` / `_advance_fake_progress` machinery; the bar uses `setRange(0, 0)` for honest indeterminate progress.
-- Removed explanatory subtitles from the bot logs dialog and the Ollama metadata hint.
-- Added keyboard shortcuts: `⌘,` settings, `⌘R` mock pass, `⌘L` logs, `Esc` dismiss banner.
-- Updated `tests/test_desktop_layout.py` to assert stability against the new scroll-area surface; full suite passes (62 tests).
-
-## Backend Work Carried Forward From Prior Cycle
-
-- `src/mailassist/live_state.py`: dedicated live watcher state module.
-- Watcher runtime state moved to `data/live-state.json` with migration from older `data/bot-state.json`.
-- Provider runtime state normalized into provider-scoped slots with `threads` and room for future cursors.
-- Discovered provider account email persisted in live state and used for reply-recipient selection and quoted review context.
-- `user_replied` detection when the latest visible message is already from the user.
-- Polling `watch-loop` bot action driven by `MAILASSIST_BOT_POLL_SECONDS`, with explicit loop events for failed passes, retry scheduling, and sleeping between passes.
-- Old paths relegated to `data/legacy/`; `bot_queue.py`, `core/orchestrator.py`, `gui/server.py`, `storage/filesystem.py` and matching tests retired.
-- TODO.md ownership tagged `Managed by Codex` for unblocked backend work and `Waiting on Magali` for Outlook discovery.
+- Added `Settings.user_signature_html`, `watcher_unread_only`, `watcher_time_window`, and `draft_attribution`, loaded from env vars.
+- Added `EmailThread.unread`, defaulting to `True`, with dict loading coverage.
+- Added onboarding RAM checks and installed-model recommendations in the desktop wizard.
+- Moved model-size formatting and memory recommendation helpers into `src/mailassist/system_resources.py`.
+- Updated docs to reflect the `v58.0` visible version and 69-test baseline.
 
 ## Current Verified State
 
-- Visible version: `v56.47`.
-- Full test suite: 62 passing tests.
-- Gmail draft creation, Gmail inbox preview, and Gmail signature import remain working sandbox capabilities.
-- Compact desktop control panel is the visible UI direction, now with colored status, surfaced provider/Ollama health, last-pass and last-failure rows, and keyboard shortcuts.
-- The watcher has better runtime footing for future real provider polling work.
+- Visible version: `v58.0`.
+- Full test suite: 69 passing tests on April 27, 2026.
+- Compact desktop control panel remains the visible UI direction.
+- Gmail draft creation, Gmail inbox preview, and Gmail signature import remain the working sandbox capabilities.
+- The RTF/filter/attribution plan exists under `docs/superpowers/`; tasks 1 and 2 are complete, task 3 onward remains open.
 
-## What Is Still Blocked
+## Still Pending
 
-- The Outlook provider choice is still blocked on Magali's actual Outlook account type and tenant constraints.
-- The Windows/Outlook connect flow, native Outlook draft behavior, and Windows packaging flow all still depend on that answer.
-
-## Best Next Step
-
-- Resume on the next clear Codex-owned backend slice: real provider inbox/thread polling on top of the normalized live-state store.
-- When Magali's Outlook account details land, take the chosen Outlook provider path and start the Windows packaging spike.
+- Finish `DraftRecord.body_html`, sanitizer, live watcher filter contract, attribution helpers, bot integration, Gmail multipart drafts, and the actual GUI controls for RTF signatures, filters, and attribution.
+- Outlook provider choice remains blocked on Magali's actual Outlook account type and tenant constraints.
+- Windows/Outlook connect flow, native Outlook drafts, and Windows packaging still depend on that answer.
 
 ## Project Shorthand
 

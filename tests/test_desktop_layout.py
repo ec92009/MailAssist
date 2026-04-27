@@ -6,6 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from mailassist.gui.desktop import MailAssistDesktopWindow
+from mailassist.system_resources import memory_recommendation_message, recommended_model_names
 
 
 def _app() -> QApplication:
@@ -64,6 +65,35 @@ def test_settings_wizard_navigation_stays_stable() -> None:
     assert {record[5] for record in records} == {records[0][5]}
 
     window.close()
+
+
+def test_memory_recommendation_prefers_models_that_fit_available_ram() -> None:
+    model_details = [
+        {"name": "gemma3:4b", "size": 3_000_000_000},
+        {"name": "gemma4:31b", "size": 22_000_000_000},
+    ]
+
+    recommended, oversized = recommended_model_names(model_details, 8_000_000_000)
+    message = memory_recommendation_message(model_details, 8_000_000_000, 16_000_000_000)
+
+    assert recommended == ["gemma3:4b"]
+    assert oversized == ["gemma4:31b"]
+    assert "8.0 GB available of 16.0 GB RAM" in message
+    assert "Recommended installed model(s): gemma3:4b." in message
+
+
+def test_memory_recommendation_mentions_when_no_model_is_small_enough() -> None:
+    model_details = [
+        {"name": "gemma4:31b", "size": 22_000_000_000},
+        {"name": "qwen3:32b", "size": 20_000_000_000},
+    ]
+
+    recommended, oversized = recommended_model_names(model_details, 8_000_000_000)
+    message = memory_recommendation_message(model_details, 8_000_000_000, 16_000_000_000)
+
+    assert recommended == []
+    assert oversized == ["gemma4:31b", "qwen3:32b"]
+    assert "None of the installed models look small enough" in message
 
 
 def test_bot_log_formatter_shows_summary_and_timeline() -> None:

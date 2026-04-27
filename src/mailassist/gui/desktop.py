@@ -38,6 +38,12 @@ from mailassist.review_state import load_visible_version
 from mailassist.models import utc_now_iso
 from mailassist.llm.ollama import OllamaClient
 from mailassist.providers.gmail import GmailProvider
+from mailassist.system_resources import (
+    format_size,
+    memory_recommendation_message,
+    model_size_bytes,
+    system_memory_snapshot,
+)
 
 
 def _configure_form(form: QFormLayout) -> QFormLayout:
@@ -59,20 +65,7 @@ def _humanize(token: str) -> str:
 
 
 def _format_model_size(size_value: object) -> str:
-    try:
-        size = float(size_value)
-    except (TypeError, ValueError):
-        return ""
-    if size <= 0:
-        return ""
-    units = ("B", "KB", "MB", "GB", "TB")
-    unit_index = 0
-    while size >= 1000 and unit_index < len(units) - 1:
-        size /= 1000
-        unit_index += 1
-    if unit_index == 0:
-        return f"{int(size)} {units[unit_index]}"
-    return f"{size:.1f} {units[unit_index]}"
+    return format_size(size_value)
 
 
 def _format_model_age(modified_at: object) -> str:
@@ -191,6 +184,10 @@ class MailAssistDesktopWindow(QMainWindow):
         self.last_failure_summary = ""
         self.ollama_health: tuple[str, str] = ("Checking...", "warn")
         self.provider_health: tuple[str, str] = ("", "warn")
+        self.ollama_model_details: dict[str, dict[str, Any]] = {}
+        self.available_memory_bytes: int | None = None
+        self.total_memory_bytes: int | None = None
+        self.model_memory_recommendation = ""
         self.last_bot_state = "idle"
         self.gmail_signature_import_attempted = False
         self.review_previous_step_index = 3
@@ -974,6 +971,8 @@ class MailAssistDesktopWindow(QMainWindow):
         if not hasattr(self, "ollama_model_hint"):
             return
         model = str(self.ollama_model_picker.currentData() or self.settings.ollama_model)
+        detail = self.ollama_model_details.get(model, {})
+        size = model_size_bytes(detail)
         if model.startswith("gemma4:31b"):
             message = "High quality, slower. Good for background drafting and careful wording."
         elif model.startswith("gemma3:12b"):
@@ -984,6 +983,15 @@ class MailAssistDesktopWindow(QMainWindow):
             message = "Installed local model. Use the model check before relying on it for drafts."
         else:
             message = "No model selected."
+        if size and self.available_memory_bytes:
+            memory_budget = self.available_memory_bytes * 0.75
+            if size <= memory_budget:
+                selected_memory = "This model fits the current memory guidance."
+            else:
+                selected_memory = "This model may be too large for the RAM currently available."
+            message = f"{message}\n\n{selected_memory}"
+        if self.model_memory_recommendation:
+            message = f"{message}\n\n{self.model_memory_recommendation}"
         self.ollama_model_hint.setText(message)
 
 
@@ -1230,6 +1238,14 @@ class MailAssistDesktopWindow(QMainWindow):
         self.ollama_model_details = {
             str(item.get("name", "")).strip(): item for item in model_details if item.get("name")
         }
+        self.available_memory_bytes, self.total_memory_bytes = system_memory_snapshot()
+        self.model_memory_recommendation = ""
+        if not model_error:
+            self.model_memory_recommendation = memory_recommendation_message(
+                model_details,
+                self.available_memory_bytes,
+                self.total_memory_bytes,
+            )
         self.ollama_model_picker.blockSignals(True)
         self.ollama_model_picker.clear()
         if models:

@@ -11,6 +11,8 @@ Mac/Gmail remains the proving ground because it is already working locally and e
 - Added manual `user_replied` detection when the latest visible message is already from the user account. (Managed by Codex)
 - Added a polling `watch-loop` bot action that uses `MAILASSIST_BOT_POLL_SECONDS` and emits failed/retry JSONL events. (Managed by Codex)
 - Consolidated provider thread runtime state under provider-scoped slots with room for future provider cursors. (Managed by Codex)
+- Added onboarding RAM checks and installed-model recommendations, including a clear warning when no installed model looks small enough. (Managed by Codex)
+- Added initial RTF/filter/attribution settings fields and `EmailThread.unread` for the Claude-managed GUI polish slice. (Managed by Claude)
 
 ## P0: Understand Magali's Outlook Setup (Managed by Codex) (Waiting on Magali)
 
@@ -63,8 +65,11 @@ Mac/Gmail remains the proving ground because it is already working locally and e
 - Show bot running/paused state. (Managed by Claude)
 - Give bot running/idle/error states visible color or status treatment, not plain text only. (Managed by Claude)
 - Show selected provider and connection status. (Managed by Claude)
+- Let the user filter which emails the live watcher scans, such as unread only or messages from the last week. (Managed by Claude)
 - Show Ollama model and health. (Managed by Claude)
 - Show preferred tone and signature status. (Managed by Claude)
+- Offer RTF formatting for signatures. (Managed by Claude)
+- Offer to add optional attribution, such as MailAssist, Ollama, and Gemma. (Managed by Claude)
 - Keep logs in a separate inspectable window. (Managed by Claude)
 - Keep the setup wizard compact, stable in window size, and first-run friendly. (Managed by Claude)
 - Keep bottom navigation controls in stable locations across wizard pages. (Managed by Claude)

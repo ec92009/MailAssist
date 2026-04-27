@@ -46,7 +46,7 @@
 - Modify: `src/mailassist/config.py`
 - Modify: `tests/test_config.py`
 
-- [ ] **Step 1.1: Write the failing test**
+- [x] **Step 1.1: Write the failing test**
 
 Append to `tests/test_config.py`:
 
@@ -82,13 +82,13 @@ def test_load_settings_defaults_for_new_gui_polish_env_vars(monkeypatch, tmp_pat
     assert settings.draft_attribution is False
 ```
 
-- [ ] **Step 1.2: Run tests to verify they fail**
+- [x] **Step 1.2: Run tests to verify they fail**
 
 Run: `./.venv/bin/pytest tests/test_config.py::test_load_settings_reads_new_gui_polish_env_vars tests/test_config.py::test_load_settings_defaults_for_new_gui_polish_env_vars -v`
 
 Expected: FAIL with `AttributeError: 'Settings' object has no attribute 'user_signature_html'`.
 
-- [ ] **Step 1.3: Add fields to `Settings` dataclass**
+- [x] **Step 1.3: Add fields to `Settings` dataclass**
 
 In `src/mailassist/config.py`, extend the `Settings` dataclass:
 
@@ -121,7 +121,7 @@ class Settings:
     draft_attribution: bool
 ```
 
-- [ ] **Step 1.4: Populate the new fields in `load_settings`**
+- [x] **Step 1.4: Populate the new fields in `load_settings`**
 
 In the `return Settings(...)` block of `load_settings`, add:
 
@@ -137,13 +137,13 @@ In the `return Settings(...)` block of `load_settings`, add:
         draft_attribution=parse_bool(os.getenv("MAILASSIST_DRAFT_ATTRIBUTION"), default=False),
 ```
 
-- [ ] **Step 1.5: Run tests to verify they pass**
+- [x] **Step 1.5: Run tests to verify they pass**
 
 Run: `./.venv/bin/pytest tests/test_config.py -v`
 
 Expected: all tests in `test_config.py` PASS.
 
-- [ ] **Step 1.6: Commit**
+- [x] **Step 1.6: Commit**
 
 ```bash
 git add src/mailassist/config.py tests/test_config.py
@@ -158,7 +158,7 @@ git push
 **Files:**
 - Modify: `src/mailassist/models.py`
 
-- [ ] **Step 2.1: Write the failing test**
+- [x] **Step 2.1: Write the failing test**
 
 Create `tests/test_models.py` (new file):
 
@@ -199,13 +199,13 @@ def test_email_thread_from_dict_defaults_unread_true_when_missing() -> None:
     assert thread.unread is True
 ```
 
-- [ ] **Step 2.2: Run test to verify it fails**
+- [x] **Step 2.2: Run test to verify it fails**
 
 Run: `./.venv/bin/pytest tests/test_models.py -v`
 
 Expected: FAIL with `TypeError` or attribute error.
 
-- [ ] **Step 2.3: Add the `unread` field**
+- [x] **Step 2.3: Add the `unread` field**
 
 In `src/mailassist/models.py`, modify `EmailThread`:
 
@@ -229,13 +229,13 @@ class EmailThread:
         )
 ```
 
-- [ ] **Step 2.4: Run tests to verify they pass**
+- [x] **Step 2.4: Run tests to verify they pass**
 
 Run: `./.venv/bin/pytest tests/test_models.py tests/test_background_bot.py -v`
 
 Expected: all PASS. (Run `test_background_bot.py` too to make sure default `unread=True` doesn't break the existing mock pass.)
 
-- [ ] **Step 2.5: Commit**
+- [x] **Step 2.5: Commit**
 
 ```bash
 git add src/mailassist/models.py tests/test_models.py

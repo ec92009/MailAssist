@@ -22,6 +22,9 @@ The bot watches provider inboxes, uses a local Ollama model to classify new thre
 - Settings are first-run friendly and collapse after completion.
 - Settings include provider choice, Ollama model, preferred tone, signature, and advanced file/path fields.
 - The model picker shows local model size and local modified/downloaded age when Ollama provides that metadata.
+- The setup wizard now checks available RAM and recommends installed local models that fit the current memory budget, with a clear warning when none look small enough.
+- The settings schema now includes the first RTF-signature, watcher-filter, and attribution fields for the next GUI polish slice.
+- Email threads now carry an `unread` flag, defaulting to true for existing mock and fixture paths.
 - The logs view has a human-readable summary/timeline view and a raw JSONL fallback.
 - The bot has JSONL stdout/log event reporting.
 - The bot has `watch-once` and Gmail preview/test paths.
@@ -56,7 +59,7 @@ The bot watches provider inboxes, uses a local Ollama model to classify new thre
 - Batch-size 10 processed the same 11 actionable mock emails plus 2 skipped automated emails in about 150 seconds end to end.
 - The batching result is acceptable for backlog catch-up, but live mode should not wait for a batch because first-draft latency matters more than average throughput.
 - The Apple order email confirms the local test machine is a 16-inch MacBook Pro with M1 Max, 10-core CPU, 24-core GPU, 32GB unified memory, and 2TB SSD.
-- Full local test suite passed with 62 tests on April 26, 2026.
+- Full local test suite passed with 69 tests on April 27, 2026.
 - `dist/MailAssist-v56.46-mac-gmail.dmg` was built locally at about 253 MB, well under GitHub Releases' 2 GiB per-asset limit.
 
 ## Draft Quality Findings
@@ -101,8 +104,8 @@ These were useful experiments, but the lighter product should not build on them 
 
 ## Latest Verified State
 
-- Latest visible version: `v56.46`.
-- Latest test run: 62 passing tests.
+- Latest visible version: `v58.0`.
+- Latest test run: 69 passing tests.
 - Current visible GUI surface is the compact bot control panel and setup wizard.
 - Gmail optional dependencies are installed in the local virtualenv.
 - Local Gmail setup has been proven for draft creation and readonly inbox preview.
