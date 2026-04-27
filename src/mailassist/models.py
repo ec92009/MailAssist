@@ -34,6 +34,7 @@ class EmailThread:
     subject: str
     participants: List[str]
     messages: List[EmailMessage]
+    unread: bool = True
 
     @classmethod
     def from_dict(cls, payload: Dict[str, Any]) -> "EmailThread":
@@ -42,6 +43,7 @@ class EmailThread:
             subject=payload["subject"],
             participants=list(payload.get("participants", [])),
             messages=[EmailMessage.from_dict(item) for item in payload.get("messages", [])],
+            unread=bool(payload.get("unread", True)),
         )
 
 
