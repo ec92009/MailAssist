@@ -198,11 +198,11 @@ class GmailProvider(DraftProvider):
     def list_actionable_threads(self, watcher_filter: WatcherFilter) -> list[EmailThread]:
         return [
             thread
-            for thread in self.list_candidate_threads()
+            for thread in self.list_candidate_threads(watcher_filter)
             if thread_passes_filter(thread, watcher_filter, now=datetime.now(timezone.utc))[0]
         ]
 
-    def list_candidate_threads(self) -> list[EmailThread]:
+    def list_candidate_threads(self, watcher_filter: WatcherFilter | None = None) -> list[EmailThread]:
         _, _, _, build = self._load_google_modules()
         creds = self._credentials(allow_interactive_auth=False)
         service = build("gmail", "v1", credentials=creds)
@@ -212,6 +212,10 @@ class GmailProvider(DraftProvider):
             "labelIds": ["INBOX"],
             "maxResults": 25,
         }
+        if watcher_filter is not None:
+            query = _build_gmail_thread_query(watcher_filter)
+            if query:
+                list_kwargs["q"] = query
 
         listed = service.users().threads().list(**list_kwargs).execute()
         threads: list[EmailThread] = []

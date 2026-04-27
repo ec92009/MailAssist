@@ -13,6 +13,9 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 - Updated `TODO.md` so Outlook discovery now treats Microsoft Graph as the leading provider path, while tenant/admin consent remains the key blocker.
 - Launched the native desktop GUI with `./.venv/bin/mailassist desktop-gui`; the active app surface has no localhost or LAN URL and should show `v58.5`.
 - The latest user request is `rscp`: refresh docs, summarize this conversation to `SUMMARY.md`, commit, push, then continue the TODO list. Before posting a new version, take a visual/virtual look through all app pages.
+- `rscp` was completed with commit `557f705` pushed to `origin/main`.
+- After that, optional Gmail dependencies were installed into the local virtualenv, real Gmail read-only preview and thread extraction were exercised successfully, and Gmail actionable-thread listing was patched to use provider-side search queries for unread/time-window filters.
+- The visual/virtual pass rendered the native main control panel, bot logs dialog, and all six settings wizard pages to `/tmp/mailassist_visual_pass`; no blank or broken page was found.
 
 ## Work Being Landed
 
@@ -29,6 +32,7 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 - Compact desktop control panel remains the visible UI direction.
 - Gmail draft creation, Gmail inbox preview, and Gmail signature import remain the working sandbox capabilities.
 - The live watcher now has a first Gmail inbox/thread polling contract wired into the provider layer and background bot, backed by the provider-scoped live-state store.
+- Real Gmail payload extraction has been exercised read-only against local credentials: 25 candidate threads and 25 messages had no missing ids/senders/dates/body text.
 - Magali's Outlook account discovery is partially resolved: the main business mailbox is Microsoft 365, so the next Outlook decision is Graph feasibility and admin consent, not broad provider identification.
 - The RTF/filter/attribution plan exists under `docs/superpowers/`; tasks 1 and 2 are complete, and the remaining GUI/draft-polish tasks still start with `DraftRecord.body_html`.
 - Cross-machine resume now uses `HANDOFF_SOP.md`, `PICKUP_WHERE_LEFT_OFF_SOP.md`, and the `TODO.md` `Handoff` block.
@@ -36,7 +40,8 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 
 ## Still Pending
 
-- Exercise the real Gmail watcher path against local credentials, harden thread/body extraction from real Gmail payloads, and add filtered-out activity events before surfacing watcher filters in the GUI.
+- Decide whether to add a no-draft dry-run mode before running `watch-once --provider gmail`, because the current command can create live Gmail drafts.
+- Exercise full `watch-once --provider gmail` draft creation only after a safe dry-run/list-only path or explicit confirmation is available.
 - Finish `DraftRecord.body_html`, sanitizer, attribution helpers, Gmail multipart drafts, and the actual GUI controls for RTF signatures, filters, and attribution.
 - Confirm whether Magali can authorize a Microsoft Graph desktop app herself or needs tenant-admin consent.
 - Windows/Outlook connect flow, native Outlook drafts, and Windows packaging now start from a Microsoft 365-first assumption unless Graph is blocked.

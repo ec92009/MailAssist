@@ -16,7 +16,7 @@ class DraftProvider(ABC):
     def list_actionable_threads(self, watcher_filter: WatcherFilter) -> list[EmailThread]:
         raise NotImplementedError
 
-    def list_candidate_threads(self) -> list[EmailThread]:
+    def list_candidate_threads(self, watcher_filter: WatcherFilter | None = None) -> list[EmailThread]:
         return self.list_actionable_threads(WatcherFilter(unread_only=False, max_age_seconds=None))
 
     @abstractmethod

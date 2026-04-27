@@ -28,7 +28,7 @@ Mac/Gmail remains the proving ground because it is already working locally and e
   - Packaged app path: no current packaged app handoff; Mac/Gmail DMG remains a sandbox artifact.
 - Known open issue to continue:
   - Highest unblocked implementation work is P1 live watcher MVP, now continuing from the first Gmail provider inbox/thread polling contract on top of the existing provider-scoped live-state store.
-  - Immediate next implementation step: exercise the live Gmail `watch-once --provider gmail` path against real local credentials, harden thread/body extraction from real payloads, and add filtered-out activity events before exposing watcher filters in the GUI.
+  - Immediate next implementation step: decide how to run or simulate live Gmail `watch-once --provider gmail` draft creation safely; read-only real Gmail payload extraction has been exercised successfully.
 - Handoff protocol for this repo:
   - Run `prepare for handoff` before switching machines or ending a work block that should resume elsewhere.
   - Keep `SUMMARY.md` and this `Handoff` block current.
@@ -46,6 +46,8 @@ Mac/Gmail remains the proving ground because it is already working locally and e
 - Added initial RTF/filter/attribution settings fields and `EmailThread.unread` for the GUI polish slice. (Managed by Codex)
 - Added the first Gmail thread polling contract: watcher filters, provider thread-listing hooks, Gmail thread-to-`EmailThread` mapping, and background-bot integration with test coverage. (Managed by Codex)
 - Reviewed Magali's Outlook screenshots and confirmed her main business address appears as a Microsoft 365 account in Outlook Desktop; she also has an Outlook.com account visible in the account list. (Managed by Codex)
+- Exercised real Gmail read-only paths with local credentials: inbox preview, full candidate-thread extraction, and actionable-thread extraction all returned body text without missing ids, senders, or dates. (Managed by Codex)
+- Wired Gmail actionable-thread listing to use provider-side Gmail search queries for unread/time-window filters while keeping watcher candidate listing broad enough to emit `filtered_out` activity. (Managed by Codex)
 
 ## P0: Magali Outlook Discovery (Partially Resolved) (Managed by Codex)
 
@@ -70,6 +72,7 @@ Mac/Gmail remains the proving ground because it is already working locally and e
 - Emit JSONL activity events for skipped, drafted, failed, retry, and filtered-out states. (Managed by Codex)
 - Show skipped counts, recent drafts, latest acquisition pass, and failures in the GUI. (Managed by Codex)
 - Decide whether real continuous polling should become the default or remain an explicit user-started bot action. (Managed by Codex)
+- Decide whether `watch-once --provider gmail` needs a dry-run/list-only mode before running against live mail, because the current command can create real Gmail drafts. (Managed by Codex)
 
 ## P2: Current GUI And Draft Polish Slice (Managed by Codex)
 

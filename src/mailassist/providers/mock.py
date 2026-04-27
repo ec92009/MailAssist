@@ -29,7 +29,7 @@ class MockProvider(DraftProvider):
             if thread_passes_filter(thread, watcher_filter, now=now)[0]
         ]
 
-    def list_candidate_threads(self) -> list[EmailThread]:
+    def list_candidate_threads(self, watcher_filter: WatcherFilter | None = None) -> list[EmailThread]:
         return build_mock_threads()
 
     def create_draft(self, draft: DraftRecord) -> ProviderDraftReference:

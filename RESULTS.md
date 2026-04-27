@@ -62,6 +62,7 @@ The bot watches provider inboxes, uses a local Ollama model to classify new thre
 - The batching result is acceptable for backlog catch-up, but live mode should not wait for a batch because first-draft latency matters more than average throughput.
 - The Apple order email confirms the local test machine is a 16-inch MacBook Pro with M1 Max, 10-core CPU, 24-core GPU, 32GB unified memory, and 2TB SSD.
 - Full local test suite passed with 84 tests on April 27, 2026.
+- Real Gmail read-only probing on April 27, 2026 succeeded after installing optional Gmail dependencies into the local virtualenv: latest-message preview worked, candidate-thread extraction returned 25 threads/25 messages with no missing ids/senders/dates/body text, and actionable-thread extraction returned 25 threads with no empty message bodies.
 - `dist/MailAssist-v56.46-mac-gmail.dmg` was built locally at about 253 MB, well under GitHub Releases' 2 GiB per-asset limit.
 
 ## Draft Quality Findings
@@ -116,6 +117,7 @@ These were useful experiments, but the lighter product should not build on them 
 - The next implementation phase should clean up shared bot architecture while waiting for Magali's Outlook account-type details.
 - The latest cleanup slices moved old review/runtime artifacts into a legacy subtree, removed the unused queue-phase lifecycle, deleted the old web review GUI path, removed the dead legacy local draft pipeline, and introduced a dedicated live-state store for watcher runtime data.
 - The latest live-watcher slice added watcher filters, provider thread-listing hooks, Gmail thread polling helpers, and background-bot integration for real provider thread sources.
+- Gmail actionable-thread listing now passes unread/time-window filters into Gmail search where available, while the watcher still uses broad candidate listing so it can emit `filtered_out` activity events.
 - Magali Outlook discovery is now partially resolved: Microsoft 365 first, with tenant/admin consent as the remaining provider-path question.
 
 ## Conclusion

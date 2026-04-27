@@ -194,7 +194,7 @@ def test_gmail_provider_lists_actionable_threads(monkeypatch, tmp_path: Path) ->
     )
 
     assert captured["list_kwargs"]["labelIds"] == ["INBOX"]
-    assert "q" not in captured["list_kwargs"]
+    assert captured["list_kwargs"]["q"] == "is:unread newer_than:7d"
     assert len(threads) == 1
     assert threads[0].thread_id == "thread-1"
     assert threads[0].subject == "Need review"
