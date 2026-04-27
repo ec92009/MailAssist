@@ -22,7 +22,7 @@ Mac/Gmail remains the proving ground because it is already working locally and e
     - `sed -n '1,220p' TODO.md`
     - `sed -n '1,180p' SUMMARY.md`
 - Current baseline at handoff:
-  - Last synchronized commit: `d11de8d`
+  - Last synchronized commit: latest pushed `origin/main` commit containing this handoff block.
   - Current visible version: `v58.0`
   - Local app/dev entrypoint: `./.venv/bin/mailassist desktop`
   - Packaged app path: no current packaged app handoff; Mac/Gmail DMG remains a sandbox artifact.
