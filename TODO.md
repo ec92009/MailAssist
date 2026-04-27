@@ -22,7 +22,7 @@ Mac/Gmail remains the proving ground because it is already working locally and e
     - `sed -n '1,220p' TODO.md`
     - `sed -n '1,180p' SUMMARY.md`
 - Current baseline at handoff:
-  - Last synchronized commit: latest pushed `origin/main` commit containing this handoff block.
+  - Last synchronized commit before this handoff update: `8d3dd05`
   - Current visible version: `v58.0`
   - Local app/dev entrypoint: `./.venv/bin/mailassist desktop`
   - Packaged app path: no current packaged app handoff; Mac/Gmail DMG remains a sandbox artifact.
@@ -33,6 +33,7 @@ Mac/Gmail remains the proving ground because it is already working locally and e
   - Run `prepare for handoff` before switching machines or ending a work block that should resume elsewhere.
   - Keep `SUMMARY.md` and this `Handoff` block current.
   - Commit and push to `main` before reporting handoff ready.
+  - The final handoff commit hash is reported in the assistant response because the commit cannot contain its own hash.
 
 ## Recently Completed
 

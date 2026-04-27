@@ -10,6 +10,7 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 - Prepared to merge the branch back to `main` and ran `rscp`.
 - Reassigned active TODO ownership to Codex and reprioritized unblocked live-watcher work ahead of blocked Outlook implementation.
 - Added a MailAssist handoff and pickup procedure adapted from LeadLight, including a `TODO.md` handoff block for laptop resume.
+- Ran the handoff procedure for switching machines: `TODO.md` now contains the startup prompt, sync checklist, baseline version, app entrypoint, current open issue, and immediate next step.
 
 ## Work Being Landed
 
@@ -27,6 +28,7 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 - Gmail draft creation, Gmail inbox preview, and Gmail signature import remain the working sandbox capabilities.
 - The RTF/filter/attribution plan exists under `docs/superpowers/`; tasks 1 and 2 are complete, task 3 onward remains open and Codex-owned.
 - Cross-machine resume now uses `HANDOFF_SOP.md`, `PICKUP_WHERE_LEFT_OFF_SOP.md`, and the `TODO.md` `Handoff` block.
+- Laptop resume should start from latest `origin/main`, read the `TODO.md` `Handoff` block, then continue P1 live watcher MVP work.
 
 ## Still Pending
 
