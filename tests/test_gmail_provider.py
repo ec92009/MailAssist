@@ -1,5 +1,6 @@
 import json
 from email import message_from_bytes
+from email.policy import default
 from types import ModuleType
 from pathlib import Path
 
@@ -101,6 +102,62 @@ def test_gmail_provider_includes_recipients_in_raw_draft(monkeypatch, tmp_path: 
     assert parsed["cc"] == "cc@example.com"
     assert parsed["bcc"] == "bcc@example.com"
     assert parsed["subject"] == "Re: Test"
+
+
+def test_gmail_provider_creates_multipart_draft_when_html_body_present(
+    monkeypatch, tmp_path: Path
+) -> None:
+    created_body = {}
+
+    class FakeDrafts:
+        def create(self, *, userId, body):
+            created_body.update(body)
+            return self
+
+        def execute(self):
+            return {"id": "draft-1", "message": {"id": "msg-1", "threadId": "thread-1"}}
+
+    class FakeUsers:
+        def drafts(self):
+            return FakeDrafts()
+
+    class FakeService:
+        def users(self):
+            return FakeUsers()
+
+    provider = GmailProvider(tmp_path / "credentials.json", tmp_path / "token.json")
+    monkeypatch.setattr(provider, "_credentials", lambda **kwargs: object())
+    monkeypatch.setattr(
+        provider,
+        "_load_google_modules",
+        lambda: (object, object, object, lambda *args, **kwargs: FakeService()),
+    )
+
+    provider.create_draft(
+        DraftRecord(
+            draft_id="draft-local",
+            thread_id="thread-local",
+            provider="gmail",
+            subject="Re: Test",
+            body="Plain body",
+            body_html="<p><b>Rich</b> body</p><script>alert(1)</script>",
+            model="mock",
+            to=["sender@example.com"],
+        )
+    )
+
+    import base64
+
+    parsed = message_from_bytes(
+        base64.urlsafe_b64decode(created_body["message"]["raw"].encode("utf-8")),
+        policy=default,
+    )
+    assert parsed.is_multipart()
+    parts = list(parsed.iter_parts())
+    assert [part.get_content_type() for part in parts] == ["text/plain", "text/html"]
+    assert parts[0].get_content().strip() == "Plain body"
+    assert "<b>Rich</b>" in parts[1].get_content()
+    assert "script" not in parts[1].get_content()
 
 
 def test_gmail_scopes_include_compose_and_readonly() -> None:

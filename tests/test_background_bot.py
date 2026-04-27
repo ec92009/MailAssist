@@ -4,6 +4,7 @@ from pathlib import Path
 
 from mailassist.background_bot import (
     append_signature,
+    build_draft_body_html,
     body_with_review_context,
     build_batch_candidate_prompt,
     build_prompt_preview,
@@ -14,7 +15,7 @@ from mailassist.background_bot import (
     load_bot_state,
     parse_batch_candidate_response,
     reply_recipients_for_thread,
-    run_mock_watch_pass,
+    run_watch_pass,
 )
 from mailassist.config import load_settings, write_env_file
 from mailassist.fixtures.mock_threads import build_mock_threads
@@ -57,13 +58,13 @@ def test_mock_watch_pass_creates_one_provider_draft_and_skips_second_run(
     settings = load_settings()
     provider = MockProvider(settings.mock_provider_drafts_dir)
 
-    first_events = run_mock_watch_pass(
+    first_events = run_watch_pass(
         settings=settings,
         provider=provider,
         base_url="http://localhost:11434",
         selected_model="mock-model",
     )
-    second_events = run_mock_watch_pass(
+    second_events = run_watch_pass(
         settings=settings,
         provider=provider,
         base_url="http://localhost:11434",
@@ -79,6 +80,55 @@ def test_mock_watch_pass_creates_one_provider_draft_and_skips_second_run(
     assert state["account_email"] is None
     assert state["providers"]["mock"]["threads"]["thread-008"]["action"] == "draft_created"
     assert state["recent_activity"][-1]["type"] == "already_handled"
+
+
+def test_watch_pass_dry_run_never_creates_provider_draft(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_env_file(
+        tmp_path / ".env",
+        {
+            "MAILASSIST_USER_SIGNATURE": "Best,\\nTest",
+        },
+    )
+
+    def fake_build_mock_threads():
+        return [item for item in build_mock_threads() if item.thread_id == "thread-008"]
+
+    def fake_generate_candidate_for_tone(*args, **kwargs):
+        return (
+            {
+                "candidate_id": "option-a",
+                "body": "I am reviewing this.\n\nBest,\nTest",
+                "generated_by": "mock-model",
+            },
+            "mock-model",
+            None,
+            "urgent",
+        )
+
+    monkeypatch.setattr("mailassist.background_bot.build_mock_threads", fake_build_mock_threads)
+    monkeypatch.setattr(
+        "mailassist.background_bot.generate_candidate_for_tone",
+        fake_generate_candidate_for_tone,
+    )
+
+    settings = load_settings()
+    provider = MockProvider(settings.mock_provider_drafts_dir)
+
+    events = run_watch_pass(
+        settings=settings,
+        provider=provider,
+        base_url="http://localhost:11434",
+        selected_model="mock-model",
+        dry_run=True,
+    )
+
+    assert events[0]["type"] == "draft_ready"
+    assert events[0]["dry_run"] is True
+    assert not (tmp_path / "data" / "mock-provider-drafts" / "thread-008.json").exists()
+    state = load_bot_state(tmp_path)
+    assert "thread-008" not in state["providers"]["mock"]["threads"]
+    assert state["recent_activity"][-1]["type"] == "draft_ready"
 
 
 def test_load_bot_state_migrates_legacy_bot_state_file(tmp_path: Path) -> None:
@@ -191,6 +241,24 @@ def test_substantive_candidate_gets_configured_signature_appended() -> None:
     )
 
     assert body == "I am reviewing the open house options.\n\nBest,\nElie\ne@example.com"
+
+
+def test_build_draft_body_html_uses_rich_signature_and_attribution() -> None:
+    thread = next(item for item in build_mock_threads() if item.thread_id == "thread-010")
+
+    body_html = build_draft_body_html(
+        thread,
+        "I am reviewing the open house options.\n\nBest,\nElie",
+        signature="Best,\nElie",
+        signature_html="<b>Best,</b><br><i>Elie</i>",
+        model="gemma4:31b",
+        include_attribution=True,
+    )
+
+    assert body_html is not None
+    assert "<b>Best,</b><br><i>Elie</i>" in body_html
+    assert "Draft prepared by MailAssist using Ollama model gemma4:31b." in body_html
+    assert "Review context - delete before sending:" in body_html
 
 
 def test_append_signature_replaces_model_supplied_copy() -> None:
@@ -343,7 +411,7 @@ def test_mock_watch_pass_batches_actionable_threads(monkeypatch, tmp_path: Path)
     settings = load_settings()
     provider = MockProvider(settings.mock_provider_drafts_dir)
 
-    events = run_mock_watch_pass(
+    events = run_watch_pass(
         settings=settings,
         provider=provider,
         base_url="http://localhost:11434",
@@ -396,7 +464,7 @@ def test_mock_watch_pass_persists_provider_account_email_and_uses_it(monkeypatch
         account_email="magali@example.com",
     )
 
-    events = run_mock_watch_pass(
+    events = run_watch_pass(
         settings=settings,
         provider=provider,
         base_url="http://localhost:11434",
@@ -432,7 +500,7 @@ def test_mock_watch_pass_skips_threads_when_latest_message_is_from_user(monkeypa
         account_email="alex@example.com",
     )
 
-    events = run_mock_watch_pass(
+    events = run_watch_pass(
         settings=settings,
         provider=provider,
         base_url="http://localhost:11434",
@@ -496,7 +564,7 @@ def test_watch_pass_uses_provider_thread_listing(monkeypatch, tmp_path: Path) ->
     settings = load_settings()
     provider = ProviderWithThreads(settings.mock_provider_drafts_dir, account_email="magali@example.com")
 
-    events = run_mock_watch_pass(
+    events = run_watch_pass(
         settings=settings,
         provider=provider,
         base_url="http://localhost:11434",
@@ -534,7 +602,7 @@ def test_watch_pass_records_filtered_out_threads(monkeypatch, tmp_path: Path) ->
     settings = load_settings()
     provider = ProviderWithReadThread(settings.mock_provider_drafts_dir, account_email="magali@example.com")
 
-    events = run_mock_watch_pass(
+    events = run_watch_pass(
         settings=settings,
         provider=provider,
         base_url="http://localhost:11434",

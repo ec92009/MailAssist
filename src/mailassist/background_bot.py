@@ -15,7 +15,7 @@ from mailassist.config import Settings
 from mailassist.fixtures.mock_threads import build_mock_threads
 from mailassist.live_filters import WatcherFilter, thread_passes_filter
 from mailassist.live_state import load_live_state, save_live_state
-from mailassist.review_state import (
+from mailassist.drafting import (
     SET_ASIDE_CLASSIFICATIONS,
     append_signature_to_body,
     fallback_classification_for_thread,
@@ -30,6 +30,12 @@ from mailassist.review_state import (
 from mailassist.llm.ollama import OllamaClient
 from mailassist.models import DraftRecord, EmailThread, utc_now_iso
 from mailassist.providers.base import DraftProvider
+from mailassist.rich_text import (
+    attribution_html,
+    attribution_text,
+    plain_text_to_html,
+    sanitize_html_fragment,
+)
 
 TONE_OPTIONS = {
     "direct_concise": (
@@ -95,7 +101,7 @@ def save_bot_state(root_dir: Path, state: dict[str, Any]) -> Path:
     return save_live_state(root_dir, state)
 
 
-def run_mock_watch_pass(
+def run_watch_pass(
     *,
     settings: Settings,
     provider: DraftProvider,
@@ -104,6 +110,7 @@ def run_mock_watch_pass(
     thread_id: str = "",
     force: bool = False,
     batch_size: int = 1,
+    dry_run: bool = False,
 ) -> list[dict[str, Any]]:
     state = load_bot_state(settings.root_dir)
     user_address = _resolve_account_email(state, provider)
@@ -328,36 +335,55 @@ def run_mock_watch_pass(
                 )
                 continue
 
+            generation_model_name = str(generation_model or "fallback")
+            if settings.draft_attribution:
+                body = append_draft_attribution(body, model=generation_model_name)
+            body_html = build_draft_body_html(
+                thread,
+                body,
+                signature=settings.user_signature,
+                signature_html=settings.user_signature_html,
+                model=generation_model_name,
+                include_attribution=settings.draft_attribution,
+                user_address=user_address,
+            )
             draft = DraftRecord(
                 draft_id=str(uuid4()),
                 thread_id=thread.thread_id,
                 provider=provider.name,
                 subject=f"Re: {thread.subject}",
                 body=body_with_review_context(thread, body, user_address=user_address),
-                model=str(generation_model or "fallback"),
+                body_html=body_html,
+                model=generation_model_name,
                 to=reply_recipients_for_thread(thread, user_address=user_address),
             )
-            provider_reference = provider.create_draft(draft)
+            if dry_run:
+                provider_reference = None
+            else:
+                provider_reference = provider.create_draft(draft)
 
-            provider_state[thread.thread_id] = _state_record(
-                thread=thread,
-                latest_message_id=latest_message_id,
-                classification=classification,
-                action="draft_created",
-                generation_model=generation_model,
-                generation_error=generation_error,
-                provider_draft_id=provider_reference.draft_id,
-            )
+            provider_draft_id = provider_reference.draft_id if provider_reference is not None else None
+            if not dry_run:
+                provider_state[thread.thread_id] = _state_record(
+                    thread=thread,
+                    latest_message_id=latest_message_id,
+                    classification=classification,
+                    action="draft_created",
+                    generation_model=generation_model,
+                    generation_error=generation_error,
+                    provider_draft_id=provider_draft_id,
+                )
             events.append(
                 {
-                    "type": "draft_created",
+                    "type": "draft_ready" if dry_run else "draft_created",
                     "thread_id": thread.thread_id,
                     "subject": thread.subject,
                     "classification": classification,
                     "provider": provider.name,
-                    "provider_draft_id": provider_reference.draft_id,
+                    "provider_draft_id": provider_draft_id,
                     "generation_model": generation_model,
                     "generation_error": generation_error,
+                    "dry_run": dry_run,
                 }
             )
             _append_recent_activity(
@@ -369,6 +395,11 @@ def run_mock_watch_pass(
     state["updated_at"] = utc_now_iso()
     save_bot_state(settings.root_dir, state)
     return events
+
+
+def run_mock_watch_pass(**kwargs: Any) -> list[dict[str, Any]]:
+    """Backward-compatible alias for older tests and scripts."""
+    return run_watch_pass(**kwargs)
 
 
 def generate_batch_candidates_for_tone(
@@ -596,6 +627,42 @@ def append_signature(body: str, *, signature: str = "") -> str:
     return append_signature_to_body(body, signature=signature)
 
 
+def append_draft_attribution(body: str, *, model: str) -> str:
+    cleaned = body.strip()
+    attribution = attribution_text(model)
+    if not attribution:
+        return cleaned
+    return f"{cleaned}\n\n{attribution}" if cleaned else attribution
+
+
+def build_draft_body_html(
+    thread: EmailThread,
+    body: str,
+    *,
+    signature: str = "",
+    signature_html: str = "",
+    model: str = "",
+    include_attribution: bool = False,
+    user_address: str = "you@example.com",
+) -> str | None:
+    rich_signature = sanitize_html_fragment(signature_html)
+    if not rich_signature and not include_attribution:
+        return None
+    body_without_plain_signature = strip_configured_signature(body, signature=signature)
+    if include_attribution:
+        attribution = attribution_text(model)
+        if body_without_plain_signature.endswith(attribution):
+            body_without_plain_signature = body_without_plain_signature[: -len(attribution)].rstrip()
+    html_body = plain_text_to_html(body_without_plain_signature)
+    if rich_signature:
+        html_body = f"{html_body}<br>{rich_signature}"
+    elif signature.strip():
+        html_body = f"{html_body}{plain_text_to_html(signature)}"
+    if include_attribution:
+        html_body = f"{html_body}{attribution_html(model)}"
+    return body_with_review_context_html(thread, html_body, user_address=user_address)
+
+
 def strip_configured_signature(body: str, *, signature: str = "") -> str:
     cleaned = body.strip()
     cleaned_signature = signature.strip()
@@ -666,6 +733,30 @@ def body_with_review_context(
             f"{message.sender} wrote {human_review_context_time(message.sent_at)}:\n{quoted}"
         )
     return "Review context - delete before sending:\n" + "\n\n".join(blocks) + f"\n\n---\n\n{body.strip()}"
+
+
+def body_with_review_context_html(
+    thread: EmailThread,
+    body_html: str,
+    *,
+    user_address: str = "you@example.com",
+) -> str:
+    context_messages = review_context_messages(thread, user_address=user_address)
+    if not context_messages:
+        return sanitize_html_fragment(body_html)
+    blocks = []
+    for message in context_messages:
+        quoted = plain_text_to_html(message.text.strip())
+        blocks.append(
+            f"<p><strong>{message.sender} wrote {human_review_context_time(message.sent_at)}:</strong></p>"
+            f"<blockquote>{quoted}</blockquote>"
+        )
+    context = (
+        "<p><strong>Review context - delete before sending:</strong></p>"
+        + "".join(blocks)
+        + "<hr>"
+    )
+    return sanitize_html_fragment(context + body_html)
 
 
 def review_context_messages(

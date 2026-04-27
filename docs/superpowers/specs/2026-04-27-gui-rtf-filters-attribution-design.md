@@ -1,8 +1,20 @@
 # GUI Polish — RTF Signatures, Live Watcher Filters, Attribution
 
 Date: 2026-04-27
-Status: Approved (pending user review of this written spec)
+Status: Implemented in v59.1
 Owner: Codex
+
+## Implementation Status
+
+Implemented with small naming differences from this original design:
+
+- The shared rich text and attribution helpers live in `src/mailassist/rich_text.py`.
+- `DraftRecord.body_html` is present and Gmail emits multipart `text/plain` + `text/html` drafts when it is set.
+- Gmail signature import sanitizes HTML and preserves the rich version for the signature editor.
+- The Signature page uses a rich `QTextEdit` with bold, italic, underline, and link controls.
+- Provider watcher filters live on the Provider page, split into Gmail and Outlook panels.
+- Draft attribution is optional in normal watch passes and forced in the controlled Gmail test draft used for provider-write validation.
+- A controlled real Gmail draft was created and fetched back through the Gmail API to validate recipient, subject, multipart content, review context, attribution, and sanitizing.
 
 ## Goal
 

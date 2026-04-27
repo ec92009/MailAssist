@@ -26,10 +26,15 @@ The bot watches provider inboxes, uses a local Ollama model to classify new thre
 - The setup wizard now checks available RAM and recommends installed local models that fit the current memory budget, with a clear warning when none look small enough.
 - RAM guidance now distinguishes currently free RAM from the effective model budget when Ollama already has a loaded model in memory.
 - The settings schema now includes the first RTF-signature, watcher-filter, and attribution fields for the next GUI polish slice.
+- Rich signatures now persist both plain text and sanitized HTML.
+- The signature editor now has explicit bold, italic, underline, and link controls.
+- Draft records can carry `body_html`, and Gmail creates multipart `text/plain` + `text/html` drafts when HTML is present.
+- Optional draft attribution can be included in both plain and HTML bodies.
 - Email threads now carry an `unread` flag, defaulting to true for existing mock and fixture paths.
 - The logs view has a human-readable summary/timeline view and a raw JSONL fallback.
 - The bot has JSONL stdout/log event reporting.
 - The bot has `watch-once` and Gmail preview/test paths.
+- `watch-once` and `watch-loop` now support a dry-run mode that produces `draft_ready` events without creating provider drafts.
 - The bot now has a polling `watch-loop` path that uses `MAILASSIST_BOT_POLL_SECONDS`.
 - The bot has a simplified `watch-once` pass that classifies mock threads, skips non-response mail, and creates one provider draft per actionable thread.
 - The provider layer now has a first Gmail inbox/thread polling contract that maps Gmail API threads into `EmailThread` objects for the live watcher.
@@ -38,10 +43,12 @@ The bot watches provider inboxes, uses a local Ollama model to classify new thre
 - The live watcher now persists a discovered provider account email when the provider exposes one and uses it for reply-recipient selection and quoted review context.
 - The live watcher now marks threads as `user_replied` when the latest visible message is already from the user account, instead of drafting again.
 - The bot can run controlled Gmail draft tests from sanitized mock input, and the desktop app now confirms before creating one live Gmail draft.
+- The controlled Gmail draft test addresses the draft to the account owner and is intended for provider-write validation without emailing an external recipient.
+- The desktop control panel now separates Gmail dry-run, controlled Gmail real-draft creation, watch-loop start, and stop actions.
 - `watch-once` supports `--batch-size`; batch 5 and batch 10 have both been tested with Gmail draft creation.
 - Gmail draft records carry recipient headers so provider drafts can include `To`, `Cc`, and `Bcc`.
 - Legacy review-state and local draft/log artifacts now live under `data/legacy/` instead of the main runtime path.
-- Shared drafting/review-state helpers now live in `mailassist.review_state` instead of a web-server module.
+- Live drafting/classification helpers now live in `mailassist.drafting`; `mailassist.review_state` remains as a legacy compatibility/support module for the old two-candidate review path.
 - The dead legacy local draft pipeline (`draft-thread`, `list-drafts`, `list-logs`, `core/orchestrator.py`, `storage/filesystem.py`, `ExecutionLog`) has been removed.
 - `review_state.py` no longer migrates files on every path lookup, saves atomically, and takes signatures explicitly in low-level generation helpers.
 - The desktop app sizes from available screen space instead of a fixed large default.
@@ -65,6 +72,8 @@ The bot watches provider inboxes, uses a local Ollama model to classify new thre
 - The Apple order email confirms the local test machine is a 16-inch MacBook Pro with M1 Max, 10-core CPU, 24-core GPU, 32GB unified memory, and 2TB SSD.
 - Full local test suite passed with 84 tests on April 27, 2026.
 - Real Gmail read-only probing on April 27, 2026 succeeded after installing optional Gmail dependencies into the local virtualenv: latest-message preview worked, candidate-thread extraction returned 25 threads/25 messages with no missing ids/senders/dates/body text, and actionable-thread extraction returned 25 threads with no empty message bodies.
+- Real Gmail dry-run watching on April 27, 2026 completed with zero provider drafts created; the latest inbox slice had no actionable draft-ready thread.
+- Controlled real Gmail draft creation on April 27, 2026 succeeded from sanitized mock content. The corrected draft `r75464073844852680` was fetched back through Gmail and verified as multipart plain/HTML, addressed to `ec92009@gmail.com`, with the controlled subject, review context, attribution in both parts, and no script HTML.
 - `dist/MailAssist-v56.46-mac-gmail.dmg` was built locally at about 253 MB, well under GitHub Releases' 2 GiB per-asset limit.
 
 ## Draft Quality Findings
@@ -110,16 +119,17 @@ These were useful experiments, but the lighter product should not build on them 
 
 ## Latest Verified State
 
-- Latest visible version: `v58.6`.
-- Latest test run: 89 passing tests.
+- Latest visible version: `v59.1`.
+- Latest test run: 94 passing tests.
 - Current visible GUI surface is the compact bot control panel and setup wizard.
 - Gmail optional dependencies are installed in the local virtualenv.
 - Local Gmail setup has been proven for draft creation and readonly inbox preview.
 - Mac/Gmail DMG artifact was published as a GitHub release asset.
-- The next implementation phase should clean up shared bot architecture while waiting for Magali's Outlook account-type details.
+- The next implementation phase should build the Outlook/Microsoft 365 path while continuing to quarantine legacy two-candidate review helpers.
 - The latest cleanup slices moved old review/runtime artifacts into a legacy subtree, removed the unused queue-phase lifecycle, deleted the old web review GUI path, removed the dead legacy local draft pipeline, and introduced a dedicated live-state store for watcher runtime data.
 - The latest live-watcher slice added watcher filters, provider thread-listing hooks, Gmail thread polling helpers, and background-bot integration for real provider thread sources.
 - Gmail actionable-thread listing now passes unread/time-window filters into Gmail search where available, while the watcher still uses broad candidate listing so it can emit `filtered_out` activity events.
+- Gmail dry-run and controlled-draft paths are now distinct: dry-run validates watcher flow without provider writes, while controlled draft creation proves Gmail write/rendering behavior with sanitized mock content.
 - Magali Outlook discovery is now partially resolved: Microsoft 365 first, with tenant/admin consent as the remaining provider-path question.
 
 ## Conclusion

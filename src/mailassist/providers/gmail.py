@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import base64
-import html
 import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from email.mime.multipart import MIMEMultipart
 from email.utils import parseaddr, parsedate_to_datetime
 from email.mime.text import MIMEText
 from pathlib import Path
@@ -14,6 +14,7 @@ from typing import Any
 from mailassist.live_filters import WatcherFilter, thread_passes_filter
 from mailassist.models import DraftRecord, EmailMessage, EmailThread, ProviderDraftReference
 from mailassist.providers.base import DraftProvider
+from mailassist.rich_text import html_to_plain_text, sanitize_html_fragment
 
 GMAIL_SCOPES = [
     "https://www.googleapis.com/auth/gmail.compose",
@@ -26,6 +27,7 @@ GMAIL_SCOPES = [
 class GmailSignature:
     signature: str
     send_as_email: str
+    signature_html: str = ""
 
 
 class GmailProvider(DraftProvider):
@@ -81,7 +83,12 @@ class GmailProvider(DraftProvider):
         _, _, _, build = self._load_google_modules()
         creds = self._credentials()
 
-        message = MIMEText(draft.body)
+        if draft.body_html:
+            message = MIMEMultipart("alternative")
+            message.attach(MIMEText(draft.body, "plain", "utf-8"))
+            message.attach(MIMEText(sanitize_html_fragment(draft.body_html), "html", "utf-8"))
+        else:
+            message = MIMEText(draft.body, "plain", "utf-8")
         message["subject"] = draft.subject
         if draft.to:
             message["to"] = ", ".join(draft.to)
@@ -155,12 +162,14 @@ class GmailProvider(DraftProvider):
             return None
 
         selected = _select_send_as_entry(send_as_entries)
-        signature = _gmail_signature_to_text(str(selected.get("signature", "")))
+        signature_html = sanitize_html_fragment(str(selected.get("signature", "")))
+        signature = _gmail_signature_to_text(signature_html)
         if not signature:
             return None
         return GmailSignature(
             signature=signature,
             send_as_email=str(selected.get("sendAsEmail", "")).strip(),
+            signature_html=signature_html,
         )
 
     def ensure_authenticated(self) -> str:
@@ -260,20 +269,7 @@ def _select_send_as_entry(send_as_entries: list[dict[str, Any]]) -> dict[str, An
 
 
 def _gmail_signature_to_text(signature_html: str) -> str:
-    text = signature_html.strip()
-    if not text:
-        return ""
-    text = re.sub(r"(?i)<\s*br\s*/?\s*>", "\n", text)
-    text = re.sub(r"(?i)</\s*(p|div|li|tr|h[1-6])\s*>", "\n", text)
-    text = re.sub(r"(?i)<\s*li[^>]*>", "- ", text)
-    text = re.sub(r"<[^>]+>", "", text)
-    text = html.unescape(text).replace("\xa0", " ")
-    lines = [re.sub(r"[ \t]+", " ", line).strip() for line in text.splitlines()]
-    collapsed: list[str] = []
-    for line in lines:
-        if line or (collapsed and collapsed[-1]):
-            collapsed.append(line)
-    return "\n".join(collapsed).strip()
+    return html_to_plain_text(signature_html)
 
 
 def _build_gmail_thread_query(watcher_filter: WatcherFilter) -> str:

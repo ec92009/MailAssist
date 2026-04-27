@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QProcess, Qt, QTimer
-from PySide6.QtGui import QFont, QIcon, QKeySequence, QShortcut
+from PySide6.QtGui import QFont, QIcon, QKeySequence, QShortcut, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMainWindow,
@@ -24,10 +25,12 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QPlainTextEdit,
+    QTextEdit,
     QFrame,
     QSizePolicy,
     QSpinBox,
     QStackedWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -180,9 +183,11 @@ def _event_day_time_label(value: object) -> str:
 
 def _log_action_label(action: str) -> str:
     labels = {
+        "gmail-controlled-draft": "Controlled Gmail draft",
         "gmail-inbox-preview": "Gmail inbox preview",
         "ollama-check": "Ollama check",
         "watch-once": "Watch pass",
+        "watch-loop": "Watch loop",
     }
     return labels.get(action, _humanize(action))
 
@@ -387,10 +392,20 @@ class MailAssistDesktopWindow(QMainWindow):
         bot_actions = QHBoxLayout()
         run_mock_pass_button = QPushButton("Run Mock Pass")
         run_mock_pass_button.clicked.connect(self.run_mock_watch_once)
-        gmail_draft_test_button = QPushButton("Create Gmail Test Draft")
+        gmail_draft_test_button = QPushButton("Run Gmail Dry Run")
         gmail_draft_test_button.clicked.connect(self.run_gmail_draft_test)
+        controlled_gmail_draft_button = QPushButton("Create Gmail Test Draft")
+        controlled_gmail_draft_button.clicked.connect(self.run_controlled_gmail_draft)
+        start_watch_loop_button = QPushButton("Start Watch Loop")
+        start_watch_loop_button.clicked.connect(self.start_watch_loop)
+        self.stop_bot_button = QPushButton("Stop")
+        self.stop_bot_button.clicked.connect(self.stop_bot_action)
+        self.stop_bot_button.setEnabled(False)
         bot_actions.addWidget(run_mock_pass_button)
         bot_actions.addWidget(gmail_draft_test_button)
+        bot_actions.addWidget(controlled_gmail_draft_button)
+        bot_actions.addWidget(start_watch_loop_button)
+        bot_actions.addWidget(self.stop_bot_button)
         bot_actions.addStretch(1)
         control_layout.addLayout(bot_actions)
         shell.addWidget(self.control_group)
@@ -829,12 +844,44 @@ class MailAssistDesktopWindow(QMainWindow):
         signature_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         signature_layout = QVBoxLayout(signature_group)
         signature_layout.setSpacing(8)
-        self.signature_input = QPlainTextEdit(self.settings.user_signature)
+        self.signature_input = QTextEdit()
+        if self.settings.user_signature_html.strip():
+            self.signature_input.setHtml(self.settings.user_signature_html)
+        else:
+            self.signature_input.setPlainText(self.settings.user_signature)
         self.signature_input.setPlaceholderText("Best regards,\nYour Name")
         self.signature_input.setMinimumHeight(110)
         self.signature_input.setMaximumHeight(140)
+        self.signature_input.setAcceptRichText(True)
         self.signature_input.textChanged.connect(self._refresh_prompt_preview)
+        signature_toolbar = QHBoxLayout()
+        signature_toolbar.setSpacing(6)
+        for label, callback in (
+            ("B", self._toggle_signature_bold),
+            ("I", self._toggle_signature_italic),
+            ("U", self._toggle_signature_underline),
+            ("Link", self._insert_signature_link),
+        ):
+            button = QToolButton()
+            button.setText(label)
+            button.setToolTip(
+                {
+                    "B": "Bold",
+                    "I": "Italic",
+                    "U": "Underline",
+                    "Link": "Add link",
+                }[label]
+            )
+            button.setAutoRaise(True)
+            button.clicked.connect(callback)
+            signature_toolbar.addWidget(button)
+        signature_toolbar.addStretch(1)
+        signature_layout.addLayout(signature_toolbar)
         signature_layout.addWidget(self.signature_input)
+        self.draft_attribution_checkbox = QCheckBox("Add MailAssist/Ollama/model attribution to drafts")
+        self.draft_attribution_checkbox.setChecked(self.settings.draft_attribution)
+        self.draft_attribution_checkbox.stateChanged.connect(self._refresh_prompt_preview)
+        signature_layout.addWidget(self.draft_attribution_checkbox)
         signature_actions = QHBoxLayout()
         import_button = QPushButton("Import from Gmail")
         import_button.clicked.connect(lambda _checked=False: self._import_gmail_signature(force=True))
@@ -951,7 +998,10 @@ class MailAssistDesktopWindow(QMainWindow):
         if result is None:
             self.gmail_signature_status.setText("No Gmail signature was found. You can type one here.")
             return
-        self.signature_input.setPlainText(result.signature)
+        if result.signature_html:
+            self.signature_input.setHtml(result.signature_html)
+        else:
+            self.signature_input.setPlainText(result.signature)
         source = f" from {result.send_as_email}" if result.send_as_email else ""
         self.gmail_signature_status.setText(
             f"Imported Gmail signature{source}. You can edit it before continuing."
@@ -1147,6 +1197,52 @@ class MailAssistDesktopWindow(QMainWindow):
             signature=signature,
             user_facing=True,
         )
+
+    def _merge_signature_format(self, fmt: QTextCharFormat) -> None:
+        if not hasattr(self, "signature_input"):
+            return
+        cursor = self.signature_input.textCursor()
+        if not cursor.hasSelection():
+            cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+        cursor.mergeCharFormat(fmt)
+        self.signature_input.mergeCurrentCharFormat(fmt)
+        self.signature_input.setTextCursor(cursor)
+        self._refresh_prompt_preview()
+
+    def _toggle_signature_bold(self) -> None:
+        fmt = QTextCharFormat()
+        weight = self.signature_input.fontWeight()
+        fmt.setFontWeight(QFont.Weight.Normal if weight >= QFont.Weight.Bold else QFont.Weight.Bold)
+        self._merge_signature_format(fmt)
+
+    def _toggle_signature_italic(self) -> None:
+        fmt = QTextCharFormat()
+        fmt.setFontItalic(not self.signature_input.fontItalic())
+        self._merge_signature_format(fmt)
+
+    def _toggle_signature_underline(self) -> None:
+        fmt = QTextCharFormat()
+        fmt.setFontUnderline(not self.signature_input.fontUnderline())
+        self._merge_signature_format(fmt)
+
+    def _insert_signature_link(self) -> None:
+        cursor = self.signature_input.textCursor()
+        selected = cursor.selectedText().strip()
+        url, accepted = QInputDialog.getText(self, "Add Link", "URL")
+        cleaned_url = url.strip()
+        if not accepted or not cleaned_url:
+            return
+        if "://" not in cleaned_url and not cleaned_url.startswith("mailto:"):
+            cleaned_url = f"https://{cleaned_url}"
+        link_text = selected or cleaned_url
+        fmt = QTextCharFormat()
+        fmt.setAnchor(True)
+        fmt.setAnchorHref(cleaned_url)
+        fmt.setForeground(Qt.GlobalColor.blue)
+        fmt.setFontUnderline(True)
+        cursor.insertText(link_text, fmt)
+        self.signature_input.setTextCursor(cursor)
+        self._refresh_prompt_preview()
 
     def _refresh_status_overlay_visibility(self) -> None:
         visible = self.banner.isVisible() or self.progress_bar.isVisible()
@@ -1405,6 +1501,9 @@ class MailAssistDesktopWindow(QMainWindow):
             skipped_count = int(completed.get("skipped_count") or 0)
             already_count = int(completed.get("already_handled_count") or 0)
             pieces.append(f"{draft_count} draft{'s' if draft_count != 1 else ''}")
+            draft_ready_count = int(completed.get("draft_ready_count") or 0)
+            if draft_ready_count:
+                pieces.append(f"{draft_ready_count} dry run{'s' if draft_ready_count != 1 else ''}")
             if skipped_count:
                 pieces.append(f"{skipped_count} skipped")
             if already_count:
@@ -1518,6 +1617,7 @@ class MailAssistDesktopWindow(QMainWindow):
                 "MAILASSIST_OLLAMA_URL": self.ollama_url_input.text().strip() or "http://localhost:11434",
                 "MAILASSIST_OLLAMA_MODEL": selected_model,
                 "MAILASSIST_USER_SIGNATURE": self.signature_input.toPlainText().strip().replace("\n", "\\n"),
+                "MAILASSIST_USER_SIGNATURE_HTML": self.signature_input.toHtml().strip(),
                 "MAILASSIST_USER_TONE": str(self.tone_combo.currentData() or "direct_concise"),
                 "MAILASSIST_BOT_POLL_SECONDS": str(self.bot_poll_seconds_input.value()),
                 "MAILASSIST_DEFAULT_PROVIDER": provider,
@@ -1531,6 +1631,9 @@ class MailAssistDesktopWindow(QMainWindow):
                 "MAILASSIST_OUTLOOK_WATCHER_TIME_WINDOW": outlook_window,
                 "MAILASSIST_WATCHER_UNREAD_ONLY": "true" if active_unread else "false",
                 "MAILASSIST_WATCHER_TIME_WINDOW": active_window,
+                "MAILASSIST_DRAFT_ATTRIBUTION": (
+                    "true" if self.draft_attribution_checkbox.isChecked() else "false"
+                ),
                 "MAILASSIST_OUTLOOK_CLIENT_ID": current.get("MAILASSIST_OUTLOOK_CLIENT_ID", ""),
                 "MAILASSIST_OUTLOOK_TENANT_ID": current.get("MAILASSIST_OUTLOOK_TENANT_ID", ""),
                 "MAILASSIST_OUTLOOK_REDIRECT_URI": current.get(
@@ -1570,21 +1673,54 @@ class MailAssistDesktopWindow(QMainWindow):
     def run_mock_watch_once(self) -> None:
         self.run_bot_action("watch-once", provider="mock")
 
+    def start_watch_loop(self) -> None:
+        self.run_bot_action("watch-loop", provider=self._selected_provider())
+
+    def stop_bot_action(self) -> None:
+        if self.bot_process is None:
+            return
+        self._set_banner("Stopping bot action...", level="info")
+        self.bot_process.terminate()
+        if not self.bot_process.waitForFinished(1500):
+            self.bot_process.kill()
+
     def run_gmail_draft_test(self) -> None:
         confirmation = QMessageBox.question(
             self,
-            "Create Gmail Test Draft",
+            "Run Gmail Draft Dry Run",
             (
-                "MailAssist will create one real draft in your connected Gmail account using sanitized mock "
-                "content. Continue?"
+                "MailAssist will read Gmail and prepare one draft result without creating a real Gmail draft. "
+                "Continue?"
             ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if confirmation != QMessageBox.StandardButton.Yes:
-            self._set_banner("Gmail test draft canceled.", level="info")
+            self._set_banner("Gmail draft dry run canceled.", level="info")
             return
-        self.run_bot_action("watch-once", provider="gmail", thread_id="thread-008", force=True)
+        self.run_bot_action(
+            "watch-once",
+            provider="gmail",
+            thread_id="thread-008",
+            force=True,
+            dry_run=True,
+        )
+
+    def run_controlled_gmail_draft(self) -> None:
+        confirmation = QMessageBox.question(
+            self,
+            "Create Controlled Gmail Draft",
+            (
+                "MailAssist will create one real Gmail draft addressed to your own Gmail account "
+                "using sanitized mock content. Nothing will be sent. Continue?"
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirmation != QMessageBox.StandardButton.Yes:
+            self._set_banner("Controlled Gmail draft canceled.", level="info")
+            return
+        self.run_bot_action("gmail-controlled-draft", provider="gmail", thread_id="thread-008")
 
     def run_bot_action(
         self,
@@ -1594,6 +1730,7 @@ class MailAssistDesktopWindow(QMainWindow):
         prompt: str = "",
         provider: str = "",
         force: bool = False,
+        dry_run: bool = False,
     ) -> None:
         if self.bot_process is not None:
             self._set_banner("A bot action is already running.", level="error")
@@ -1627,6 +1764,8 @@ class MailAssistDesktopWindow(QMainWindow):
             args.extend(["--provider", provider])
         if force:
             args.append("--force")
+        if dry_run:
+            args.append("--dry-run")
 
         self._append_bot_console(f"$ {sys.executable} {' '.join(args)}")
         self._set_banner(
@@ -1634,6 +1773,8 @@ class MailAssistDesktopWindow(QMainWindow):
             level="info",
         )
         self._set_bot_state("running")
+        if hasattr(self, "stop_bot_button"):
+            self.stop_bot_button.setEnabled(True)
         self.bot_process.start(sys.executable, args)
 
     def _handle_bot_stdout(self) -> None:
@@ -1669,6 +1810,10 @@ class MailAssistDesktopWindow(QMainWindow):
             self._append_recent_activity(
                 f"Draft created: {event.get('subject', 'Unknown subject')} ({event.get('classification', 'unclassified')})"
             )
+        elif event_type == "draft_ready":
+            self._append_recent_activity(
+                f"Draft dry run ready: {event.get('subject', 'Unknown subject')} ({event.get('classification', 'unclassified')})"
+            )
         elif event_type == "skipped_email":
             self._append_recent_activity(
                 f"Skipped: {event.get('subject', 'Unknown subject')} ({event.get('classification', 'unclassified')})"
@@ -1681,6 +1826,12 @@ class MailAssistDesktopWindow(QMainWindow):
             self._append_recent_activity(
                 f"Filtered out: {event.get('subject', 'Unknown subject')} ({event.get('reason', 'filter')})"
             )
+        elif event_type == "watch_pass_started":
+            self._append_recent_activity(f"Watch pass started for {event.get('provider', 'provider')}.")
+        elif event_type == "watch_pass_completed":
+            self._append_recent_activity(f"Watch pass completed for {event.get('provider', 'provider')}.")
+        elif event_type == "failed_pass":
+            self._append_recent_activity(f"Watch pass failed: {event.get('message', 'Unknown error')}")
         elif event_type == "completed":
             self._set_banner(str(event.get("message", "Bot action completed.")), level="info")
             self.settings = load_settings()
@@ -1688,11 +1839,12 @@ class MailAssistDesktopWindow(QMainWindow):
             self.refresh_bot_logs()
             if "draft_count" in event:
                 draft_count = event.get("draft_count", 0)
+                draft_ready_count = event.get("draft_ready_count", 0)
                 skipped_count = event.get("skipped_count", 0)
                 already_count = event.get("already_handled_count", 0)
                 filtered_count = event.get("filtered_out_count", 0)
                 self.last_pass_summary = (
-                    f"{draft_count} drafts · {skipped_count} skipped · "
+                    f"{draft_count} drafts · {draft_ready_count} dry runs · {skipped_count} skipped · "
                     f"{already_count} already handled · {filtered_count} filtered"
                 )
                 self._append_recent_activity(f"Watch pass: {self.last_pass_summary}.")
@@ -1710,6 +1862,8 @@ class MailAssistDesktopWindow(QMainWindow):
             self._append_bot_console(self.bot_stdout_buffer.strip())
             self.bot_stdout_buffer = ""
         self.bot_process = None
+        if hasattr(self, "stop_bot_button"):
+            self.stop_bot_button.setEnabled(False)
         if exit_code != 0:
             failure = f"Bot exited with code {exit_code}."
             self.last_failure_summary = failure

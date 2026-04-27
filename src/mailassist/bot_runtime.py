@@ -6,11 +6,17 @@ import time
 from pathlib import Path
 from uuid import uuid4
 
-from mailassist.background_bot import run_mock_watch_pass
+from mailassist.background_bot import (
+    body_with_review_context,
+    build_draft_body_html,
+    run_watch_pass,
+)
 from mailassist.config import load_settings
+from mailassist.fixtures.mock_threads import build_mock_threads
 from mailassist.llm.ollama import OllamaClient
-from mailassist.models import utc_now_iso
+from mailassist.models import DraftRecord, utc_now_iso
 from mailassist.providers.factory import get_provider_for_settings
+from mailassist.rich_text import attribution_text
 
 
 class BotEventReporter:
@@ -47,6 +53,7 @@ def build_review_bot_parser(subparsers: argparse._SubParsersAction[argparse.Argu
             "watch-once",
             "watch-loop",
             "gmail-inbox-preview",
+            "gmail-controlled-draft",
         ),
         help="Bot action to run.",
     )
@@ -72,12 +79,17 @@ def build_review_bot_parser(subparsers: argparse._SubParsersAction[argparse.Argu
         "--batch-size",
         type=int,
         default=1,
-        help="Number of actionable mock emails to submit to Ollama per prompt during watch-once.",
+        help="Number of actionable emails to submit to Ollama per prompt during watch-once.",
     )
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Reprocess mock inbox items even if they already exist in a queue phase.",
+        help="Reprocess inbox items even if they already exist in live state.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Run watch-once/watch-loop without creating provider drafts.",
     )
 
 
@@ -100,6 +112,7 @@ def command_review_bot(args: argparse.Namespace) -> int:
             "poll_seconds": int(getattr(args, "poll_seconds", 0) or 0),
             "max_passes": int(getattr(args, "max_passes", 0) or 0),
             "batch_size": max(1, int(getattr(args, "batch_size", 1) or 1)),
+            "dry_run": bool(getattr(args, "dry_run", False)),
         },
     )
     reporter.emit("log_file", path=str(reporter.log_path))
@@ -128,6 +141,73 @@ def command_review_bot(args: argparse.Namespace) -> int:
             )
             return 0
 
+        if args.action == "gmail-controlled-draft":
+            provider = get_provider_for_settings(settings, "gmail")
+            thread_id = args.thread_id or "thread-008"
+            thread = next(
+                (item for item in build_mock_threads() if item.thread_id == thread_id),
+                None,
+            )
+            if thread is None:
+                raise RuntimeError(f"Controlled test thread not found: {thread_id}")
+            body = "Thanks for the note. I am reviewing this. Final decision/details to add before sending."
+            generation_model = selected_model or "controlled-test"
+            body = f"{body}\n\n{attribution_text(generation_model)}"
+            account_getter = getattr(provider, "get_account_email", None)
+            account_email = account_getter() if callable(account_getter) else None
+            draft = DraftRecord(
+                draft_id=f"controlled-gmail-{thread.thread_id}",
+                thread_id=thread.thread_id,
+                provider="gmail",
+                subject=f"MailAssist controlled draft test - Re: {thread.subject}",
+                body=body_with_review_context(
+                    thread,
+                    body,
+                    user_address="you@example.com",
+                ),
+                body_html=build_draft_body_html(
+                    thread,
+                    body,
+                    signature=settings.user_signature,
+                    signature_html=settings.user_signature_html,
+                    model=generation_model,
+                    include_attribution=True,
+                    user_address="you@example.com",
+                ),
+                model=generation_model,
+                to=[str(account_email).strip()] if str(account_email or "").strip() else [],
+            )
+            reporter.emit(
+                "info",
+                message="Creating one controlled Gmail draft with sanitized mock content.",
+                provider="gmail",
+                thread_id=thread.thread_id,
+            )
+            reference = provider.create_draft(draft)
+            reporter.emit(
+                "draft_created",
+                provider="gmail",
+                thread_id=thread.thread_id,
+                subject=draft.subject,
+                classification="controlled_test",
+                provider_draft_id=reference.draft_id,
+                provider_thread_id=reference.thread_id,
+                provider_message_id=reference.message_id,
+                generation_model=generation_model,
+            )
+            reporter.emit(
+                "completed",
+                message="Controlled Gmail draft created.",
+                provider="gmail",
+                draft_count=1,
+                draft_ready_count=0,
+                skipped_count=0,
+                already_handled_count=0,
+                user_replied_count=0,
+                filtered_out_count=0,
+            )
+            return 0
+
         if args.action == "watch-once":
             provider_name = getattr(args, "provider", "mock") or "mock"
             provider = get_provider_for_settings(settings, provider_name)
@@ -136,7 +216,7 @@ def command_review_bot(args: argparse.Namespace) -> int:
                 message=f"Running one watch pass for {provider_name}.",
                 provider=provider_name,
             )
-            events = run_mock_watch_pass(
+            events = run_watch_pass(
                 settings=settings,
                 provider=provider,
                 base_url=base_url,
@@ -144,8 +224,10 @@ def command_review_bot(args: argparse.Namespace) -> int:
                 thread_id=args.thread_id or "",
                 force=bool(getattr(args, "force", False)),
                 batch_size=max(1, int(getattr(args, "batch_size", 1) or 1)),
+                dry_run=bool(getattr(args, "dry_run", False)),
             )
             draft_count = 0
+            draft_ready_count = 0
             skipped_count = 0
             already_handled_count = 0
             user_replied_count = 0
@@ -154,6 +236,8 @@ def command_review_bot(args: argparse.Namespace) -> int:
                 event_type = str(event.pop("type"))
                 if event_type == "draft_created":
                     draft_count += 1
+                elif event_type == "draft_ready":
+                    draft_ready_count += 1
                 elif event_type == "skipped_email":
                     skipped_count += 1
                 elif event_type == "already_handled":
@@ -168,10 +252,12 @@ def command_review_bot(args: argparse.Namespace) -> int:
                 message="Watch pass completed.",
                 provider=provider_name,
                 draft_count=draft_count,
+                draft_ready_count=draft_ready_count,
                 skipped_count=skipped_count,
                 already_handled_count=already_handled_count,
                 user_replied_count=user_replied_count,
                 filtered_out_count=filtered_out_count,
+                dry_run=bool(getattr(args, "dry_run", False)),
             )
             return 0
 
@@ -182,6 +268,7 @@ def command_review_bot(args: argparse.Namespace) -> int:
             max_passes = max(0, int(getattr(args, "max_passes", 0) or 0))
             completed_passes = 0
             total_draft_count = 0
+            total_draft_ready_count = 0
             total_skipped_count = 0
             total_already_handled_count = 0
             total_user_replied_count = 0
@@ -205,7 +292,7 @@ def command_review_bot(args: argparse.Namespace) -> int:
                     pass_number=completed_passes,
                 )
                 try:
-                    events = run_mock_watch_pass(
+                    events = run_watch_pass(
                         settings=settings,
                         provider=provider,
                         base_url=base_url,
@@ -213,11 +300,14 @@ def command_review_bot(args: argparse.Namespace) -> int:
                         thread_id=args.thread_id or "",
                         force=bool(getattr(args, "force", False)),
                         batch_size=max(1, int(getattr(args, "batch_size", 1) or 1)),
+                        dry_run=bool(getattr(args, "dry_run", False)),
                     )
                     for event in events:
                         event_type = str(event.pop("type"))
                         if event_type == "draft_created":
                             total_draft_count += 1
+                        elif event_type == "draft_ready":
+                            total_draft_ready_count += 1
                         elif event_type == "skipped_email":
                             total_skipped_count += 1
                         elif event_type == "already_handled":
@@ -264,12 +354,14 @@ def command_review_bot(args: argparse.Namespace) -> int:
                 provider=provider_name,
                 completed_passes=completed_passes,
                 draft_count=total_draft_count,
+                draft_ready_count=total_draft_ready_count,
                 skipped_count=total_skipped_count,
                 already_handled_count=total_already_handled_count,
                 user_replied_count=total_user_replied_count,
                 filtered_out_count=total_filtered_out_count,
                 failed_pass_count=failed_pass_count,
                 retry_count=retry_count,
+                dry_run=bool(getattr(args, "dry_run", False)),
             )
             return 0
 

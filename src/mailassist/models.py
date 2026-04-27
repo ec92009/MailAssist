@@ -62,6 +62,7 @@ class DraftRecord:
     subject: str
     body: str
     model: str
+    body_html: Optional[str] = None
     to: List[str] = field(default_factory=list)
     cc: List[str] = field(default_factory=list)
     bcc: List[str] = field(default_factory=list)
@@ -84,6 +85,7 @@ class DraftRecord:
             subject=payload["subject"],
             body=payload["body"],
             model=payload["model"],
+            body_html=payload.get("body_html"),
             to=list(payload.get("to", [])),
             cc=list(payload.get("cc", [])),
             bcc=list(payload.get("bcc", [])),

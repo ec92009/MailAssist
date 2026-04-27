@@ -179,7 +179,7 @@ It still does not send email.
 ./.venv/bin/mailassist desktop-gui
 ```
 
-The desktop app is now a compact bot control panel with settings, bot controls, readable logs, and recent activity. Bot, provider, and Ollama states render as colored pills so a glance is enough. The dashboard also surfaces the last watch pass result and the most recent failure read straight from the bot logs.
+The desktop app is now a compact bot control panel with settings, bot controls, readable logs, and recent activity. Bot, provider, and Ollama states render as colored pills so a glance is enough. The dashboard also surfaces the last watch pass result and the most recent failure read straight from the bot logs. Settings include provider-specific watcher filters, a rich signature editor with bold/italic/underline/link controls, and optional MailAssist/Ollama/model attribution.
 
 Keyboard shortcuts:
 
@@ -202,7 +202,27 @@ Run the polling bot loop against the mock provider:
 
 If `--poll-seconds` is omitted, the loop uses `MAILASSIST_BOT_POLL_SECONDS`.
 
-Create one Gmail draft from one mock email after Gmail setup is complete:
+Run a Gmail watcher pass without creating drafts:
+
+```bash
+./.venv/bin/mailassist review-bot \
+  --action watch-once \
+  --provider gmail \
+  --dry-run
+```
+
+Create one controlled Gmail draft from sanitized mock content after Gmail setup is complete:
+
+```bash
+./.venv/bin/mailassist review-bot \
+  --action gmail-controlled-draft \
+  --provider gmail \
+  --thread-id thread-008
+```
+
+The controlled draft is addressed to the connected Gmail account owner and is meant to validate provider-write behavior without emailing an external recipient.
+
+Create Gmail drafts from watcher-selected Gmail threads after Gmail setup is complete:
 
 ```bash
 ./.venv/bin/mailassist review-bot \
@@ -212,7 +232,7 @@ Create one Gmail draft from one mock email after Gmail setup is complete:
   --force
 ```
 
-This command is intentionally narrow: it keeps mock input emails, creates one provider draft in Gmail, and should not send mail. Re-running with `--force` can create duplicate drafts.
+This command can create real provider drafts from Gmail watcher input and should not send mail. Re-running with `--force` can create duplicate drafts.
 
 Process a mock backlog in larger Ollama batches:
 
@@ -256,8 +276,8 @@ When running the packaged Mac app, the same runtime data lives under:
 
 ## Current Verified Baseline
 
-- Visible version: `v58.6`.
-- Test suite: 89 passing tests.
+- Visible version: `v59.1`.
+- Test suite: 94 passing tests.
 - `gemma4:31b` works locally after MailAssist sends `think: false` to Ollama.
 - Controlled mock-to-Gmail draft creation has been tested with batch sizes 1, 5, and 10.
 - MailAssist creates drafts only; it does not send email.

@@ -399,7 +399,7 @@ def test_bot_log_formatter_shows_summary_and_timeline() -> None:
 
 def test_gmail_draft_test_requires_confirmation(monkeypatch) -> None:
     window = MailAssistDesktopWindow()
-    called: list[tuple[str, str, str, bool]] = []
+    called: list[tuple[str, str, str, bool, bool]] = []
 
     monkeypatch.setattr(
         QMessageBox,
@@ -409,21 +409,21 @@ def test_gmail_draft_test_requires_confirmation(monkeypatch) -> None:
     monkeypatch.setattr(
         window,
         "run_bot_action",
-        lambda action, *, thread_id="", prompt="", provider="", force=False: called.append(
-            (action, thread_id, provider, force)
+        lambda action, *, thread_id="", prompt="", provider="", force=False, dry_run=False: called.append(
+            (action, thread_id, provider, force, dry_run)
         ),
     )
 
     window.run_gmail_draft_test()
 
     assert called == []
-    assert window.banner.text() == "Gmail test draft canceled."
+    assert window.banner.text() == "Gmail draft dry run canceled."
     window.close()
 
 
-def test_gmail_draft_test_runs_after_confirmation(monkeypatch) -> None:
+def test_gmail_draft_test_runs_safe_dry_run_after_confirmation(monkeypatch) -> None:
     window = MailAssistDesktopWindow()
-    called: list[tuple[str, str, str, bool]] = []
+    called: list[tuple[str, str, str, bool, bool]] = []
 
     monkeypatch.setattr(
         QMessageBox,
@@ -433,12 +433,35 @@ def test_gmail_draft_test_runs_after_confirmation(monkeypatch) -> None:
     monkeypatch.setattr(
         window,
         "run_bot_action",
-        lambda action, *, thread_id="", prompt="", provider="", force=False: called.append(
-            (action, thread_id, provider, force)
+        lambda action, *, thread_id="", prompt="", provider="", force=False, dry_run=False: called.append(
+            (action, thread_id, provider, force, dry_run)
         ),
     )
 
     window.run_gmail_draft_test()
 
-    assert called == [("watch-once", "thread-008", "gmail", True)]
+    assert called == [("watch-once", "thread-008", "gmail", True, True)]
+    window.close()
+
+
+def test_controlled_gmail_draft_runs_after_confirmation(monkeypatch) -> None:
+    window = MailAssistDesktopWindow()
+    called: list[tuple[str, str, str, bool, bool]] = []
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr(
+        window,
+        "run_bot_action",
+        lambda action, *, thread_id="", prompt="", provider="", force=False, dry_run=False: called.append(
+            (action, thread_id, provider, force, dry_run)
+        ),
+    )
+
+    window.run_controlled_gmail_draft()
+
+    assert called == [("gmail-controlled-draft", "thread-008", "gmail", False, False)]
     window.close()

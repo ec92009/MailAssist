@@ -91,6 +91,64 @@ def test_review_bot_gmail_inbox_preview_emits_message_metadata(
     assert lines[-1]["message_count"] == 1
 
 
+def test_review_bot_gmail_controlled_draft_creates_one_safe_draft(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    class FakeProvider:
+        name = "gmail"
+
+        def __init__(self) -> None:
+            self.drafts = []
+
+        def get_account_email(self):
+            return "me@example.com"
+
+        def create_draft(self, draft):
+            self.drafts.append(draft)
+            assert draft.to == ["me@example.com"]
+            assert draft.body_html is not None
+
+            class Reference:
+                draft_id = "draft-1"
+                thread_id = "thread-1"
+                message_id = "message-1"
+
+            return Reference()
+
+    provider = FakeProvider()
+    monkeypatch.setattr(
+        "mailassist.bot_runtime.get_provider_for_settings",
+        lambda settings, provider_name: provider,
+    )
+
+    args = argparse.Namespace(
+        command="review-bot",
+        action="gmail-controlled-draft",
+        thread_id="thread-008",
+        prompt=None,
+        base_url=None,
+        selected_model="mock-model",
+        provider="gmail",
+        batch_size=1,
+        limit=10,
+        force=False,
+        dry_run=False,
+        poll_seconds=0,
+        max_passes=0,
+    )
+
+    exit_code = command_review_bot(args)
+
+    assert exit_code == 0
+    assert len(provider.drafts) == 1
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
+    assert any(line["type"] == "draft_created" and line["provider_draft_id"] == "draft-1" for line in lines)
+    assert lines[-1]["type"] == "completed"
+    assert lines[-1]["draft_count"] == 1
+
+
 def test_review_bot_watch_loop_uses_polling_settings_and_counts_events(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
@@ -135,7 +193,7 @@ def test_review_bot_watch_loop_uses_polling_settings_and_counts_events(
         ]
 
     monkeypatch.setattr("mailassist.bot_runtime.get_provider_for_settings", fake_get_provider)
-    monkeypatch.setattr("mailassist.bot_runtime.run_mock_watch_pass", fake_run_mock_watch_pass)
+    monkeypatch.setattr("mailassist.bot_runtime.run_watch_pass", fake_run_mock_watch_pass)
     monkeypatch.setattr("mailassist.bot_runtime.time.sleep", lambda seconds: slept.append(seconds))
 
     args = argparse.Namespace(
@@ -195,7 +253,7 @@ def test_review_bot_watch_loop_emits_failed_and_retry_events(
             raise RuntimeError("temporary provider failure")
         return []
 
-    monkeypatch.setattr("mailassist.bot_runtime.run_mock_watch_pass", fake_run_mock_watch_pass)
+    monkeypatch.setattr("mailassist.bot_runtime.run_watch_pass", fake_run_mock_watch_pass)
     monkeypatch.setattr("mailassist.bot_runtime.time.sleep", lambda seconds: slept.append(seconds))
 
     args = argparse.Namespace(
