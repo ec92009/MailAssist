@@ -35,12 +35,20 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mailassist.config import load_settings, read_env_file, write_env_file
+from mailassist.config import (
+    ATTRIBUTION_ABOVE_SIGNATURE,
+    ATTRIBUTION_BELOW_SIGNATURE,
+    ATTRIBUTION_HIDE,
+    load_settings,
+    read_env_file,
+    write_env_file,
+)
 from mailassist.background_bot import TONE_OPTIONS, build_prompt_preview, tone_label
 from mailassist.review_state import load_visible_version
 from mailassist.models import utc_now_iso
 from mailassist.llm.ollama import OllamaClient
 from mailassist.providers.gmail import GmailProvider
+from mailassist.rich_text import attribution_html, html_to_plain_text, sanitize_html_fragment
 from mailassist.system_resources import (
     format_size,
     effective_available_memory_bytes,
@@ -878,10 +886,31 @@ class MailAssistDesktopWindow(QMainWindow):
         signature_toolbar.addStretch(1)
         signature_layout.addLayout(signature_toolbar)
         signature_layout.addWidget(self.signature_input)
-        self.draft_attribution_checkbox = QCheckBox("Add MailAssist/Ollama/model attribution to drafts")
-        self.draft_attribution_checkbox.setChecked(self.settings.draft_attribution)
-        self.draft_attribution_checkbox.stateChanged.connect(self._refresh_prompt_preview)
-        signature_layout.addWidget(self.draft_attribution_checkbox)
+        attribution_row = QHBoxLayout()
+        attribution_label = QLabel("Attribution")
+        self.attribution_placement_combo = QComboBox()
+        for label, value in (
+            ("Hide", ATTRIBUTION_HIDE),
+            ("Above Signature", ATTRIBUTION_ABOVE_SIGNATURE),
+            ("Below Signature", ATTRIBUTION_BELOW_SIGNATURE),
+        ):
+            self.attribution_placement_combo.addItem(label, value)
+        attribution_index = self.attribution_placement_combo.findData(
+            self.settings.draft_attribution_placement
+        )
+        if attribution_index >= 0:
+            self.attribution_placement_combo.setCurrentIndex(attribution_index)
+        self.attribution_placement_combo.currentIndexChanged.connect(self._refresh_prompt_preview)
+        attribution_row.addWidget(attribution_label)
+        attribution_row.addWidget(self.attribution_placement_combo)
+        attribution_row.addStretch(1)
+        signature_layout.addLayout(attribution_row)
+        self.signature_attribution_preview = QTextEdit()
+        self.signature_attribution_preview.setReadOnly(True)
+        self.signature_attribution_preview.setAcceptRichText(True)
+        self.signature_attribution_preview.setMinimumHeight(110)
+        self.signature_attribution_preview.setMaximumHeight(150)
+        signature_layout.addWidget(self.signature_attribution_preview)
         signature_actions = QHBoxLayout()
         import_button = QPushButton("Import from Gmail")
         import_button.clicked.connect(lambda _checked=False: self._import_gmail_signature(force=True))
@@ -894,6 +923,7 @@ class MailAssistDesktopWindow(QMainWindow):
         self.gmail_signature_status.setWordWrap(True)
         self.gmail_signature_status.setStyleSheet("color: #5e6978; font-size: 13px;")
         signature_layout.addWidget(self.gmail_signature_status)
+        self._refresh_prompt_preview()
         layout.addWidget(signature_group, 0, Qt.AlignmentFlag.AlignTop)
         return widget
 
@@ -927,6 +957,7 @@ class MailAssistDesktopWindow(QMainWindow):
         self.bot_poll_seconds_input = QSpinBox()
         self.bot_poll_seconds_input.setRange(5, 3600)
         self.bot_poll_seconds_input.setSingleStep(5)
+        self.bot_poll_seconds_input.setMinimumHeight(max(34, self.ollama_url_input.sizeHint().height()))
         self.bot_poll_seconds_input.setValue(max(5, int(self.settings.bot_poll_seconds or 30)))
         advanced_layout.addRow("Check frequency (default 30 seconds)", self.bot_poll_seconds_input)
         layout.addWidget(advanced_group)
@@ -1101,6 +1132,11 @@ class MailAssistDesktopWindow(QMainWindow):
         provider = self._selected_provider()
         enabled_providers = self._enabled_provider_label()
         signature_state = "Configured" if self.signature_input.toPlainText().strip() else "Missing"
+        attribution_label = (
+            self.attribution_placement_combo.currentText()
+            if hasattr(self, "attribution_placement_combo")
+            else "Hide"
+        )
         lines = [
             "MailAssist will use these settings:",
             "",
@@ -1109,6 +1145,7 @@ class MailAssistDesktopWindow(QMainWindow):
             f"Local AI model: {selected_model}",
             f"Default tone: {self.tone_combo.currentText()}",
             f"Signature: {signature_state}",
+            f"Attribution: {attribution_label}",
             f"Watcher filter: {self._watcher_filter_label()}",
             "",
             "MailAssist will watch for new mail and prepare drafts for messages that need a reply.",
@@ -1186,8 +1223,35 @@ class MailAssistDesktopWindow(QMainWindow):
         preview_text = self._prompt_preview_text()
         if hasattr(self, "prompt_preview"):
             self.prompt_preview.setPlainText(preview_text)
+        if hasattr(self, "signature_attribution_preview"):
+            self.signature_attribution_preview.setHtml(self._signature_attribution_preview_html())
         if hasattr(self, "settings_summary"):
             self._refresh_settings_summary()
+
+    def _attribution_placement(self) -> str:
+        if not hasattr(self, "attribution_placement_combo"):
+            return self.settings.draft_attribution_placement
+        return str(self.attribution_placement_combo.currentData() or ATTRIBUTION_HIDE)
+
+    def _signature_attribution_preview_html(self) -> str:
+        body = "<p>Your draft text will appear above this preview.</p>"
+        signature_html = sanitize_html_fragment(self.signature_input.toHtml().strip())
+        if signature_html and not html_to_plain_text(signature_html):
+            signature_html = ""
+        if not self.signature_input.toPlainText().strip():
+            signature_html = "<p>No signature configured.</p>"
+        placement = self._attribution_placement()
+        attribution = attribution_html(str(self.ollama_model_picker.currentData() or self.settings.ollama_model))
+        pieces = [body]
+        if placement == ATTRIBUTION_ABOVE_SIGNATURE:
+            pieces.append(attribution)
+            pieces.append(signature_html)
+        elif placement == ATTRIBUTION_BELOW_SIGNATURE:
+            pieces.append(signature_html)
+            pieces.append(attribution)
+        else:
+            pieces.append(signature_html)
+        return "".join(pieces)
 
     def _prompt_preview_text(self) -> str:
         tone_key = str(self.tone_combo.currentData() or self.settings.user_tone)
@@ -1617,7 +1681,7 @@ class MailAssistDesktopWindow(QMainWindow):
                 "MAILASSIST_OLLAMA_URL": self.ollama_url_input.text().strip() or "http://localhost:11434",
                 "MAILASSIST_OLLAMA_MODEL": selected_model,
                 "MAILASSIST_USER_SIGNATURE": self.signature_input.toPlainText().strip().replace("\n", "\\n"),
-                "MAILASSIST_USER_SIGNATURE_HTML": self.signature_input.toHtml().strip(),
+                "MAILASSIST_USER_SIGNATURE_HTML": self.signature_input.toHtml().strip().replace("\n", "\\n"),
                 "MAILASSIST_USER_TONE": str(self.tone_combo.currentData() or "direct_concise"),
                 "MAILASSIST_BOT_POLL_SECONDS": str(self.bot_poll_seconds_input.value()),
                 "MAILASSIST_DEFAULT_PROVIDER": provider,
@@ -1632,8 +1696,9 @@ class MailAssistDesktopWindow(QMainWindow):
                 "MAILASSIST_WATCHER_UNREAD_ONLY": "true" if active_unread else "false",
                 "MAILASSIST_WATCHER_TIME_WINDOW": active_window,
                 "MAILASSIST_DRAFT_ATTRIBUTION": (
-                    "true" if self.draft_attribution_checkbox.isChecked() else "false"
+                    "true" if self._attribution_placement() != ATTRIBUTION_HIDE else "false"
                 ),
+                "MAILASSIST_DRAFT_ATTRIBUTION_PLACEMENT": self._attribution_placement(),
                 "MAILASSIST_OUTLOOK_CLIENT_ID": current.get("MAILASSIST_OUTLOOK_CLIENT_ID", ""),
                 "MAILASSIST_OUTLOOK_TENANT_ID": current.get("MAILASSIST_OUTLOOK_TENANT_ID", ""),
                 "MAILASSIST_OUTLOOK_REDIRECT_URI": current.get(

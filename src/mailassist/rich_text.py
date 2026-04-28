@@ -27,6 +27,7 @@ def sanitize_html_fragment(value: str) -> str:
     text = (value or "").strip()
     if not text:
         return ""
+    text = re.sub(r"(?is)<!DOCTYPE[^>]*>", "", text)
     text = re.sub(r"(?is)<\s*(script|style)[^>]*>.*?<\s*/\s*\1\s*>", "", text)
     text = re.sub(r"(?is)\s+on[a-z]+\s*=\s*(['\"]).*?\1", "", text)
     text = re.sub(r"(?is)\s+on[a-z]+\s*=\s*[^\s>]+", "", text)

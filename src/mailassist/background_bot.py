@@ -11,7 +11,12 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from mailassist.config import Settings
+from mailassist.config import (
+    ATTRIBUTION_ABOVE_SIGNATURE,
+    ATTRIBUTION_BELOW_SIGNATURE,
+    ATTRIBUTION_HIDE,
+    Settings,
+)
 from mailassist.fixtures.mock_threads import build_mock_threads
 from mailassist.live_filters import WatcherFilter, thread_passes_filter
 from mailassist.live_state import load_live_state, save_live_state
@@ -33,6 +38,7 @@ from mailassist.providers.base import DraftProvider
 from mailassist.rich_text import (
     attribution_html,
     attribution_text,
+    html_to_plain_text,
     plain_text_to_html,
     sanitize_html_fragment,
 )
@@ -336,15 +342,19 @@ def run_watch_pass(
                 continue
 
             generation_model_name = str(generation_model or "fallback")
-            if settings.draft_attribution:
-                body = append_draft_attribution(body, model=generation_model_name)
+            body = append_draft_attribution(
+                body,
+                model=generation_model_name,
+                placement=settings.draft_attribution_placement,
+                signature=settings.user_signature,
+            )
             body_html = build_draft_body_html(
                 thread,
                 body,
                 signature=settings.user_signature,
                 signature_html=settings.user_signature_html,
                 model=generation_model_name,
-                include_attribution=settings.draft_attribution,
+                attribution_placement=settings.draft_attribution_placement,
                 user_address=user_address,
             )
             draft = DraftRecord(
@@ -627,11 +637,28 @@ def append_signature(body: str, *, signature: str = "") -> str:
     return append_signature_to_body(body, signature=signature)
 
 
-def append_draft_attribution(body: str, *, model: str) -> str:
+def append_draft_attribution(
+    body: str,
+    *,
+    model: str,
+    placement: str = ATTRIBUTION_HIDE,
+    signature: str = "",
+) -> str:
     cleaned = body.strip()
+    if placement == ATTRIBUTION_HIDE:
+        return cleaned
     attribution = attribution_text(model)
     if not attribution:
         return cleaned
+    cleaned_signature = signature.strip()
+    body_without_signature = strip_configured_signature(cleaned, signature=cleaned_signature)
+    has_signature = cleaned_signature and body_without_signature != cleaned
+    if has_signature:
+        if placement == ATTRIBUTION_ABOVE_SIGNATURE:
+            parts = [body_without_signature, attribution, cleaned_signature]
+        else:
+            parts = [body_without_signature, cleaned_signature, attribution]
+        return "\n\n".join(part for part in parts if part.strip())
     return f"{cleaned}\n\n{attribution}" if cleaned else attribution
 
 
@@ -643,23 +670,44 @@ def build_draft_body_html(
     signature_html: str = "",
     model: str = "",
     include_attribution: bool = False,
+    attribution_placement: str | None = None,
     user_address: str = "you@example.com",
 ) -> str | None:
+    placement = attribution_placement
+    if placement is None:
+        placement = ATTRIBUTION_BELOW_SIGNATURE if include_attribution else ATTRIBUTION_HIDE
     rich_signature = sanitize_html_fragment(signature_html)
+    if rich_signature and not html_to_plain_text(rich_signature):
+        rich_signature = ""
+    include_attribution = placement != ATTRIBUTION_HIDE
     if not rich_signature and not include_attribution:
         return None
-    body_without_plain_signature = strip_configured_signature(body, signature=signature)
+    body_without_plain_signature = body.strip()
+    if include_attribution:
+        attribution = attribution_text(model)
+        if body_without_plain_signature.endswith(attribution):
+            body_without_plain_signature = body_without_plain_signature[: -len(attribution)].rstrip()
+    body_without_plain_signature = strip_configured_signature(
+        body_without_plain_signature,
+        signature=signature,
+    )
     if include_attribution:
         attribution = attribution_text(model)
         if body_without_plain_signature.endswith(attribution):
             body_without_plain_signature = body_without_plain_signature[: -len(attribution)].rstrip()
     html_body = plain_text_to_html(body_without_plain_signature)
-    if rich_signature:
-        html_body = f"{html_body}<br>{rich_signature}"
-    elif signature.strip():
-        html_body = f"{html_body}{plain_text_to_html(signature)}"
-    if include_attribution:
-        html_body = f"{html_body}{attribution_html(model)}"
+    signature_fragment = rich_signature or (plain_text_to_html(signature) if signature.strip() else "")
+    attribution_fragment = attribution_html(model) if include_attribution else ""
+    if placement == ATTRIBUTION_ABOVE_SIGNATURE:
+        if attribution_fragment:
+            html_body = f"{html_body}{attribution_fragment}"
+        if signature_fragment:
+            html_body = f"{html_body}<br>{signature_fragment}"
+    else:
+        if signature_fragment:
+            html_body = f"{html_body}<br>{signature_fragment}"
+        if attribution_fragment:
+            html_body = f"{html_body}{attribution_fragment}"
     return body_with_review_context_html(thread, html_body, user_address=user_address)
 
 

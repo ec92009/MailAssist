@@ -22,14 +22,14 @@ Mac/Gmail remains the proving ground because it is already working locally and e
     - `sed -n '1,220p' TODO.md`
     - `sed -n '1,180p' SUMMARY.md`
 - Current baseline at handoff:
-  - Last synchronized commit before this handoff update: `59cf4ae`
-  - Current visible version: `v59.1`
+  - Last synchronized commit before this handoff update: `f5009aa`
+  - Current visible version: `v59.3`
   - Local app/dev entrypoint: `./.venv/bin/mailassist desktop-gui`
   - Packaged app path: `/Applications/MailAssist.app`
 - Known open issue to continue:
-  - Highest unblocked implementation work is now Outlook/Microsoft 365 progress without a real Outlook subscription: build Graph mock fixtures on top of the new provider readiness/auth contract.
-  - Immediate next implementation step: add synthetic Microsoft Graph fixtures for `/me`, mailbox messages, conversation/thread parsing, draft creation, and admin-consent/auth failures.
-  - Small GUI polish tasks are also ready: add a `Signature + Attribution` preview with `Hide`/`Above Signature`/`Below Signature`, and increase the check-frequency spinner height to match neighboring fields without shrinking those fields.
+  - Highest unblocked implementation work is now Outlook/Microsoft 365 progress beyond the mock Graph provider contract.
+  - Immediate next implementation step: add real Microsoft Graph OAuth/token storage, then smoke-test `/me` and draft creation against a developer tenant when available.
+  - The small GUI polish tasks from the prior handoff are complete: Settings now has a `Signature + Attribution` preview with `Hide`/`Above Signature`/`Below Signature`, draft assembly honors placement in plain and HTML bodies, and the check-frequency spinner height now matches neighboring fields without shrinking them.
 - Handoff protocol for this repo:
   - Run `prepare for handoff` before switching machines or ending a work block that should resume elsewhere.
   - Keep `SUMMARY.md` and this `Handoff` block current.
@@ -57,23 +57,22 @@ Mac/Gmail remains the proving ground because it is already working locally and e
 - Moved live drafting/classification helpers into `mailassist.drafting` so the background bot no longer depends on legacy `review_state.py`; the old review module remains as compatibility/legacy support. (Managed by Codex)
 - Bumped visible version to `v59.1` for the controlled Gmail draft, rich signature, watch-loop control, and architecture cleanup release. (Managed by Codex)
 - Defined the shared provider readiness/auth contract that Outlook/Microsoft Graph must satisfy: authenticate, discover account email, list candidate threads, create drafts, and report readiness/admin-consent blockers. (Managed by Codex)
+- Added a Settings `Signature + Attribution` preview, replaced the attribution checkbox with `Hide`/`Above Signature`/`Below Signature`, made plain and HTML draft assembly honor that placement, and kept the controlled Gmail validation command attribution-enabled for multipart safety checks. (Managed by Codex)
+- Increased the Advanced Settings check-frequency spinner height to match neighboring text fields without reducing those fields. (Managed by Codex)
+- Bumped visible version to `v59.2` for the signature attribution placement and Advanced Settings height polish release. (Managed by Codex)
+- Visually inspected a fresh controlled Gmail draft in Gmail's draft editor after fixing rich-signature persistence/fallback behavior. The draft rendered recipient, quoted context, body, saved signature, and attribution correctly with no duplicate signature or broken HTML. (Managed by Codex)
+- Exercised a real live Gmail provider-writing pass against actionable inbox threads. The pass created two real Gmail drafts (`Nudge` and `Note to self`) with review context, generated body text, and saved signature rendered in Gmail; no email was sent. (Managed by Codex)
+- Added the first Microsoft Graph mock-fixture slice for Outlook/Microsoft 365: `/me` account email discovery, synthetic mailbox messages, conversation/thread parsing, watcher filter support, reply-draft payload mapping, and admin-consent auth failure reporting through the provider readiness contract. (Managed by Codex)
+- Bumped visible version to `v59.3` for the Outlook/Microsoft 365 Graph fixture and provider-contract progress. (Managed by Codex)
 
 ## Remaining Backlog
 
-1. Validate the corrected controlled Gmail draft visually in Gmail's draft editor if browser/manual inspection is desired; API validation is complete and shows multipart plain/HTML content, attribution, review context, recipient, subject, and sanitizing are correct. (Managed by Codex)
+1. Continue the Outlook/Microsoft 365 provider path for Magali on the new provider contract. Graph mock fixtures, auth/readiness checks, account email discovery, inbox/thread parsing, and provider-native draft payload mapping now exist. Next steps are real Microsoft Graph OAuth/token storage, developer-tenant smoke tests where available, and packaging the consent/admin guidance for Magali's tenant. (Managed by Codex) (Waiting on Magali/admin where noted)
 
-2. Show a `Signature + Attribution` preview in Settings. Replace the attribution checkbox with a choice: `Hide`, `Above Signature`, or `Below Signature`, and make draft assembly honor that placement in both plain and HTML bodies. (Managed by Codex)
+2. Continue product safety and trust hardening. Send automation stays out of scope, provider-writing actions stay explicit, live provider tests stay behind confirmation/developer UI, and real tokens/logs/drafts/queues/email artifacts stay out of git. (Managed by Codex)
 
-3. Harmonize Advanced Settings field heights by increasing the check-frequency spinner height to match the neighboring text fields; do not reduce the other field heights. (Managed by Codex)
+3. Continue architecture cleanup. Move any remaining live-only prompt helpers out of legacy paths, then quarantine remaining two-candidate review helpers as legacy-only test/support code. (Managed by Codex)
 
-4. Exercise one real live-watch provider-writing pass when a genuinely actionable Gmail inbox thread is available; the controlled provider-write path is proven, but the latest real inbox slice had no actionable candidate. (Managed by Codex)
+4. Maintain the Mac/Gmail sandbox. Keep mock-to-Gmail draft tests, read-only Gmail preview, ignored OAuth credential paths, hidden developer OAuth settings, and optional Mac/Gmail `.dmg` artifacts available for regression and learning. (Managed by Codex)
 
-5. Build the Outlook/Microsoft 365 provider path for Magali on the new provider contract. Next steps are Graph mock fixtures, auth/readiness checks, account email discovery, inbox/thread parsing, and provider-native draft payloads. (Managed by Codex) (Waiting on Magali/admin where noted)
-
-6. Continue product safety and trust hardening. Send automation stays out of scope, provider-writing actions stay explicit, live provider tests stay behind confirmation/developer UI, and real tokens/logs/drafts/queues/email artifacts stay out of git. (Managed by Codex)
-
-7. Continue architecture cleanup. Move any remaining live-only prompt helpers out of legacy paths, then quarantine remaining two-candidate review helpers as legacy-only test/support code. (Managed by Codex)
-
-8. Maintain the Mac/Gmail sandbox. Keep mock-to-Gmail draft tests, read-only Gmail preview, ignored OAuth credential paths, hidden developer OAuth settings, and optional Mac/Gmail `.dmg` artifacts available for regression and learning. (Managed by Codex)
-
-9. Prepare packaging and distribution. Keep `dist/` ignored, publish test builds through GitHub Releases when useful, keep README download links in sync with the visible version, research Windows signing/installer needs before handing a build to Magali, and defer Mac signing/notarization until broader Mac use requires it. (Managed by Codex)
+5. Prepare packaging and distribution. Keep `dist/` ignored, publish test builds through GitHub Releases when useful, keep README download links in sync with the visible version, research Windows signing/installer needs before handing a build to Magali, and defer Mac signing/notarization until broader Mac use requires it. (Managed by Codex)

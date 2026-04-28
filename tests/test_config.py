@@ -417,7 +417,7 @@ def test_load_settings_reads_new_gui_polish_env_vars(monkeypatch, tmp_path: Path
     write_env_file(
         tmp_path / ".env",
         {
-            "MAILASSIST_USER_SIGNATURE_HTML": "<b>Best,</b><br>Ethan",
+            "MAILASSIST_USER_SIGNATURE_HTML": "<b>Best,</b>\\n<br>Ethan",
             "MAILASSIST_WATCHER_UNREAD_ONLY": "true",
             "MAILASSIST_WATCHER_TIME_WINDOW": "7d",
             "MAILASSIST_GMAIL_WATCHER_UNREAD_ONLY": "false",
@@ -425,12 +425,13 @@ def test_load_settings_reads_new_gui_polish_env_vars(monkeypatch, tmp_path: Path
             "MAILASSIST_OUTLOOK_WATCHER_UNREAD_ONLY": "true",
             "MAILASSIST_OUTLOOK_WATCHER_TIME_WINDOW": "30d",
             "MAILASSIST_DRAFT_ATTRIBUTION": "true",
+            "MAILASSIST_DRAFT_ATTRIBUTION_PLACEMENT": "above_signature",
         },
     )
 
     settings = load_settings()
 
-    assert settings.user_signature_html == "<b>Best,</b><br>Ethan"
+    assert settings.user_signature_html == "<b>Best,</b>\n<br>Ethan"
     assert settings.gmail_watcher_unread_only is False
     assert settings.gmail_watcher_time_window == "24h"
     assert settings.outlook_watcher_unread_only is True
@@ -438,6 +439,7 @@ def test_load_settings_reads_new_gui_polish_env_vars(monkeypatch, tmp_path: Path
     assert settings.watcher_unread_only is False
     assert settings.watcher_time_window == "24h"
     assert settings.draft_attribution is True
+    assert settings.draft_attribution_placement == "above_signature"
 
 
 def test_load_settings_defaults_for_new_gui_polish_env_vars(monkeypatch, tmp_path: Path) -> None:
@@ -451,6 +453,7 @@ def test_load_settings_defaults_for_new_gui_polish_env_vars(monkeypatch, tmp_pat
         "MAILASSIST_OUTLOOK_WATCHER_UNREAD_ONLY",
         "MAILASSIST_OUTLOOK_WATCHER_TIME_WINDOW",
         "MAILASSIST_DRAFT_ATTRIBUTION",
+        "MAILASSIST_DRAFT_ATTRIBUTION_PLACEMENT",
     ):
         monkeypatch.delenv(var, raising=False)
 
@@ -464,6 +467,24 @@ def test_load_settings_defaults_for_new_gui_polish_env_vars(monkeypatch, tmp_pat
     assert settings.watcher_unread_only is False
     assert settings.watcher_time_window == "all"
     assert settings.draft_attribution is False
+    assert settings.draft_attribution_placement == "hide"
+
+
+def test_load_settings_maps_legacy_attribution_boolean_to_below_signature(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_env_file(
+        tmp_path / ".env",
+        {
+            "MAILASSIST_DRAFT_ATTRIBUTION": "true",
+        },
+    )
+
+    settings = load_settings()
+
+    assert settings.draft_attribution is True
+    assert settings.draft_attribution_placement == "below_signature"
 
 
 def test_load_settings_uses_outlook_provider_filter_when_outlook_is_default(

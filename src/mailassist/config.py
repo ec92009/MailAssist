@@ -7,6 +7,16 @@ from pathlib import Path
 from typing import Dict
 
 
+ATTRIBUTION_HIDE = "hide"
+ATTRIBUTION_ABOVE_SIGNATURE = "above_signature"
+ATTRIBUTION_BELOW_SIGNATURE = "below_signature"
+ATTRIBUTION_PLACEMENTS = {
+    ATTRIBUTION_HIDE,
+    ATTRIBUTION_ABOVE_SIGNATURE,
+    ATTRIBUTION_BELOW_SIGNATURE,
+}
+
+
 @dataclass(frozen=True)
 class Settings:
     root_dir: Path
@@ -37,6 +47,7 @@ class Settings:
     watcher_unread_only: bool
     watcher_time_window: str
     draft_attribution: bool
+    draft_attribution_placement: str
 
 
 def parse_bool(value: str | None, default: bool = False) -> bool:
@@ -52,6 +63,13 @@ def parse_int(value: str | None, default: int) -> int:
         return int(value.strip())
     except ValueError:
         return default
+
+
+def parse_attribution_placement(value: str | None, *, fallback_enabled: bool = False) -> str:
+    cleaned = (value or "").strip().lower().replace("-", "_")
+    if cleaned in ATTRIBUTION_PLACEMENTS:
+        return cleaned
+    return ATTRIBUTION_BELOW_SIGNATURE if fallback_enabled else ATTRIBUTION_HIDE
 
 
 def path_from_env(value: str | None, default: Path, *, root_dir: Path) -> Path:
@@ -191,6 +209,12 @@ def load_settings() -> Settings:
         watcher_unread_only = gmail_watcher_unread_only
         watcher_time_window = gmail_watcher_time_window
 
+    draft_attribution = parse_bool(env("MAILASSIST_DRAFT_ATTRIBUTION"), default=False)
+    draft_attribution_placement = parse_attribution_placement(
+        env("MAILASSIST_DRAFT_ATTRIBUTION_PLACEMENT"),
+        fallback_enabled=draft_attribution,
+    )
+
     return Settings(
         root_dir=root_dir,
         data_dir=data_dir,
@@ -202,7 +226,7 @@ def load_settings() -> Settings:
         ollama_url=env("MAILASSIST_OLLAMA_URL", "http://localhost:11434"),
         ollama_model=env("MAILASSIST_OLLAMA_MODEL", "llama3.1:8b"),
         user_signature=env("MAILASSIST_USER_SIGNATURE").replace("\\n", "\n"),
-        user_signature_html=env("MAILASSIST_USER_SIGNATURE_HTML"),
+        user_signature_html=env("MAILASSIST_USER_SIGNATURE_HTML").replace("\\n", "\n"),
         user_tone=env("MAILASSIST_USER_TONE", "direct_concise"),
         bot_poll_seconds=parse_int(env("MAILASSIST_BOT_POLL_SECONDS"), 30),
         default_provider=default_provider,
@@ -229,5 +253,6 @@ def load_settings() -> Settings:
         outlook_watcher_time_window=outlook_watcher_time_window,
         watcher_unread_only=watcher_unread_only,
         watcher_time_window=watcher_time_window,
-        draft_attribution=parse_bool(env("MAILASSIST_DRAFT_ATTRIBUTION"), default=False),
+        draft_attribution=draft_attribution_placement != ATTRIBUTION_HIDE,
+        draft_attribution_placement=draft_attribution_placement,
     )

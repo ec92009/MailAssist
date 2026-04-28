@@ -7,16 +7,16 @@ from pathlib import Path
 from uuid import uuid4
 
 from mailassist.background_bot import (
+    append_draft_attribution,
     body_with_review_context,
     build_draft_body_html,
     run_watch_pass,
 )
-from mailassist.config import load_settings
+from mailassist.config import ATTRIBUTION_BELOW_SIGNATURE, ATTRIBUTION_HIDE, load_settings
 from mailassist.fixtures.mock_threads import build_mock_threads
 from mailassist.llm.ollama import OllamaClient
 from mailassist.models import DraftRecord, utc_now_iso
 from mailassist.providers.factory import get_provider_for_settings
-from mailassist.rich_text import attribution_text
 
 
 class BotEventReporter:
@@ -152,7 +152,17 @@ def command_review_bot(args: argparse.Namespace) -> int:
                 raise RuntimeError(f"Controlled test thread not found: {thread_id}")
             body = "Thanks for the note. I am reviewing this. Final decision/details to add before sending."
             generation_model = selected_model or "controlled-test"
-            body = f"{body}\n\n{attribution_text(generation_model)}"
+            attribution_placement = (
+                settings.draft_attribution_placement
+                if settings.draft_attribution_placement != ATTRIBUTION_HIDE
+                else ATTRIBUTION_BELOW_SIGNATURE
+            )
+            body = append_draft_attribution(
+                body,
+                model=generation_model,
+                placement=attribution_placement,
+                signature=settings.user_signature,
+            )
             account_getter = getattr(provider, "get_account_email", None)
             account_email = account_getter() if callable(account_getter) else None
             draft = DraftRecord(
@@ -171,7 +181,7 @@ def command_review_bot(args: argparse.Namespace) -> int:
                     signature=settings.user_signature,
                     signature_html=settings.user_signature_html,
                     model=generation_model,
-                    include_attribution=True,
+                    attribution_placement=attribution_placement,
                     user_address="you@example.com",
                 ),
                 model=generation_model,

@@ -15,7 +15,7 @@ The bot watches provider inboxes, uses a local Ollama model to classify new thre
 - Gmail draft creation exists as an optional provider path.
 - Gmail provider can preview recent inbox message metadata/snippets using read-only access.
 - Gmail provider can retrieve the account send-as signature as a starting point for MailAssist settings.
-- Outlook remains a stub.
+- Outlook now has a mockable Microsoft Graph provider slice for account discovery, mailbox message parsing, readiness/admin-consent reporting, and reply-draft payload mapping; real Graph OAuth/token storage is still pending.
 - A native `PySide6` desktop app exists.
 - The visible desktop app is now a compact control panel with a setup wizard, bot controls, readable logs, and recent activity.
 - The old web review GUI and `serve-config` path have been removed.
@@ -30,6 +30,9 @@ The bot watches provider inboxes, uses a local Ollama model to classify new thre
 - The signature editor now has explicit bold, italic, underline, and link controls.
 - Draft records can carry `body_html`, and Gmail creates multipart `text/plain` + `text/html` drafts when HTML is present.
 - Optional draft attribution can be included in both plain and HTML bodies.
+- Draft attribution placement is configurable as hidden, above the saved signature, or below the saved signature, with matching plain-text and HTML assembly.
+- Settings shows a read-only `Signature + Attribution` preview so placement can be checked before live drafts are created.
+- The Advanced Settings check-frequency spinner height now matches neighboring text fields without shrinking those fields.
 - Email threads now carry an `unread` flag, defaulting to true for existing mock and fixture paths.
 - The logs view has a human-readable summary/timeline view and a raw JSONL fallback.
 - The bot has JSONL stdout/log event reporting.
@@ -74,6 +77,7 @@ The bot watches provider inboxes, uses a local Ollama model to classify new thre
 - Real Gmail read-only probing on April 27, 2026 succeeded after installing optional Gmail dependencies into the local virtualenv: latest-message preview worked, candidate-thread extraction returned 25 threads/25 messages with no missing ids/senders/dates/body text, and actionable-thread extraction returned 25 threads with no empty message bodies.
 - Real Gmail dry-run watching on April 27, 2026 completed with zero provider drafts created; the latest inbox slice had no actionable draft-ready thread.
 - Controlled real Gmail draft creation on April 27, 2026 succeeded from sanitized mock content. The corrected draft `r75464073844852680` was fetched back through Gmail and verified as multipart plain/HTML, addressed to `ec92009@gmail.com`, with the controlled subject, review context, attribution in both parts, and no script HTML.
+- A real live Gmail `watch-once --provider gmail --force` provider-writing pass on April 28, 2026 created two unsent Gmail drafts for actionable inbox threads, `Nudge` and `Note to self`, after skipping automated/non-response mail. Gmail visual inspection showed review context, generated body text, and the saved signature rendered correctly.
 - `dist/MailAssist-v56.46-mac-gmail.dmg` was built locally at about 253 MB, well under GitHub Releases' 2 GiB per-asset limit.
 
 ## Draft Quality Findings
@@ -119,8 +123,8 @@ These were useful experiments, but the lighter product should not build on them 
 
 ## Latest Verified State
 
-- Latest visible version: `v59.1`.
-- Latest test run: 94 passing tests.
+- Latest visible version: `v59.3`.
+- Latest test run: 107 passing tests on April 28, 2026.
 - Current visible GUI surface is the compact bot control panel and setup wizard.
 - Gmail optional dependencies are installed in the local virtualenv.
 - Local Gmail setup has been proven for draft creation and readonly inbox preview.

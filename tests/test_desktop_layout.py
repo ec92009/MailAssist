@@ -294,6 +294,9 @@ def test_watcher_filter_controls_persist_and_show_on_dashboard(monkeypatch, tmp_
     window.outlook_watcher_time_window_combo.setCurrentIndex(
         window.outlook_watcher_time_window_combo.findData("30d")
     )
+    window.attribution_placement_combo.setCurrentIndex(
+        window.attribution_placement_combo.findData("above_signature")
+    )
     window.bot_poll_seconds_input.setValue(45)
     window.save_settings(announce=False)
 
@@ -305,8 +308,13 @@ def test_watcher_filter_controls_persist_and_show_on_dashboard(monkeypatch, tmp_
     assert env_values["MAILASSIST_GMAIL_WATCHER_TIME_WINDOW"] == "7d"
     assert env_values["MAILASSIST_OUTLOOK_WATCHER_UNREAD_ONLY"] == "false"
     assert env_values["MAILASSIST_OUTLOOK_WATCHER_TIME_WINDOW"] == "30d"
+    assert env_values["MAILASSIST_DRAFT_ATTRIBUTION"] == "true"
+    assert env_values["MAILASSIST_DRAFT_ATTRIBUTION_PLACEMENT"] == "above_signature"
     assert window.watcher_filter_status_label.text() == "unread only, last 7 days"
     assert "Watcher filter: unread only, last 7 days" in window.settings_summary.toPlainText()
+    assert "Attribution: Above Signature" in window.settings_summary.toPlainText()
+    assert "Draft prepared by MailAssist" in window.signature_attribution_preview.toPlainText()
+    assert window.bot_poll_seconds_input.minimumHeight() >= window.ollama_url_input.sizeHint().height()
 
     window.close()
     for key in (
@@ -329,6 +337,8 @@ def test_watcher_filter_controls_persist_and_show_on_dashboard(monkeypatch, tmp_
         "MAILASSIST_OUTLOOK_CLIENT_ID",
         "MAILASSIST_OUTLOOK_TENANT_ID",
         "MAILASSIST_OUTLOOK_REDIRECT_URI",
+        "MAILASSIST_DRAFT_ATTRIBUTION",
+        "MAILASSIST_DRAFT_ATTRIBUTION_PLACEMENT",
         "MAILASSIST_SETUP_COMPLETE",
     ):
         monkeypatch.delenv(key, raising=False)

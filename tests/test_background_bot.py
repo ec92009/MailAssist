@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from mailassist.background_bot import (
+    append_draft_attribution,
     append_signature,
     build_draft_body_html,
     body_with_review_context,
@@ -257,8 +258,60 @@ def test_build_draft_body_html_uses_rich_signature_and_attribution() -> None:
 
     assert body_html is not None
     assert "<b>Best,</b><br><i>Elie</i>" in body_html
+    assert body_html.count("<b>Best,</b>") == 1
+    assert "I am reviewing the open house options.<br><br>Best" not in body_html
     assert "Draft prepared by MailAssist using Ollama model gemma4:31b." in body_html
     assert "Review context - delete before sending:" in body_html
+
+
+def test_draft_attribution_can_be_placed_above_signature() -> None:
+    body = append_draft_attribution(
+        "I am reviewing the open house options.\n\nBest,\nElie",
+        model="gemma4:31b",
+        placement="above_signature",
+        signature="Best,\nElie",
+    )
+
+    assert body == (
+        "I am reviewing the open house options.\n\n"
+        "Draft prepared by MailAssist using Ollama model gemma4:31b.\n\n"
+        "Best,\nElie"
+    )
+
+
+def test_build_draft_body_html_places_attribution_above_signature() -> None:
+    thread = next(item for item in build_mock_threads() if item.thread_id == "thread-010")
+
+    body_html = build_draft_body_html(
+        thread,
+        "I am reviewing the open house options.\n\n"
+        "Draft prepared by MailAssist using Ollama model gemma4:31b.\n\n"
+        "Best,\nElie",
+        signature="Best,\nElie",
+        signature_html="<b>Best,</b><br><i>Elie</i>",
+        model="gemma4:31b",
+        attribution_placement="above_signature",
+    )
+
+    assert body_html is not None
+    assert body_html.index("Draft prepared by MailAssist") < body_html.index("<b>Best,</b>")
+
+
+def test_build_draft_body_html_falls_back_when_rich_signature_has_no_text() -> None:
+    thread = next(item for item in build_mock_threads() if item.thread_id == "thread-010")
+
+    body_html = build_draft_body_html(
+        thread,
+        "I am reviewing the open house options.",
+        signature="Best,\nElie",
+        signature_html='<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0//EN">',
+        model="gemma4:31b",
+        attribution_placement="below_signature",
+    )
+
+    assert body_html is not None
+    assert "Best,<br>Elie" in body_html
+    assert body_html.index("Best,<br>Elie") < body_html.index("Draft prepared by MailAssist")
 
 
 def test_append_signature_replaces_model_supplied_copy() -> None:
