@@ -318,10 +318,11 @@ When running the packaged Mac app, the same runtime data lives under:
 
 ## Current Verified Baseline
 
-- Visible version: `v59.8`.
-- Test suite: 128 passing tests.
+- Visible version: `v59.12`.
+- Test suite: 135 passing tests.
 - `gemma4:31b` works locally after MailAssist sends `think: false` to Ollama.
 - Controlled mock-to-Gmail draft creation has been tested with batch sizes 1, 5, and 10.
+- Personal Outlook.com Microsoft Graph auth, category writes, controlled draft creation, and one targeted watcher-created draft have been tested.
 - MailAssist creates drafts only; it does not send email.
 
 ## Project Shorthand

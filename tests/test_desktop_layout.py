@@ -3,7 +3,7 @@ import json
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QLabel, QMessageBox
 
 from mailassist.config import read_env_file, write_env_file
 from mailassist.gui.desktop import MailAssistDesktopWindow
@@ -541,6 +541,66 @@ def test_gmail_label_rescan_runs_with_limited_horizon(monkeypatch) -> None:
     window.close()
 
 
+def test_outlook_category_rescan_requires_confirmation(monkeypatch) -> None:
+    window = MailAssistDesktopWindow()
+    called = []
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.No,
+    )
+    monkeypatch.setattr(window, "save_settings", lambda *args, **kwargs: called.append(("save",)))
+    monkeypatch.setattr(window, "run_bot_action", lambda *args, **kwargs: called.append(("run",)))
+
+    window.run_outlook_category_rescan()
+
+    assert called == []
+    assert window.banner.text() == "Outlook category rescan canceled."
+    window.close()
+
+
+def test_outlook_category_rescan_runs_with_day_horizon(monkeypatch) -> None:
+    window = MailAssistDesktopWindow()
+    called = []
+    confirmation_messages = []
+    window.outlook_category_days_input.setValue(12)
+
+    def fake_question(_parent, title, message, *args, **kwargs):
+        confirmation_messages.append((title, message))
+        return QMessageBox.StandardButton.Yes
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        fake_question,
+    )
+    monkeypatch.setattr(window, "save_settings", lambda *args, **kwargs: called.append(("save", kwargs)))
+    monkeypatch.setattr(
+        window,
+        "run_bot_action",
+        lambda action, **kwargs: called.append((action, kwargs)),
+    )
+
+    window.run_outlook_category_rescan()
+
+    assert called == [
+        ("save", {"announce": False}),
+        (
+            "outlook-populate-categories",
+            {
+                "provider": "outlook",
+                "days": 12,
+                "apply_categories": True,
+            },
+        ),
+    ]
+    assert confirmation_messages[0][0] == "Organize Outlook"
+    assert "last 12 days" in confirmation_messages[0][1]
+    assert "keep working" in confirmation_messages[0][1]
+    window.close()
+
+
 def test_bot_control_actions_use_user_centered_labels_and_compact_days_input() -> None:
     window = MailAssistDesktopWindow()
 
@@ -548,7 +608,19 @@ def test_bot_control_actions_use_user_centered_labels_and_compact_days_input() -
     assert window.gmail_draft_preview_button.text() == "Preview Gmail Draft"
     assert window.controlled_gmail_draft_button.text() == "Create Test Draft"
     assert window.gmail_label_rescan_button.text() == "Organize Gmail"
+    assert window.outlook_category_rescan_button.text() == "Organize Outlook"
     assert window.start_watch_loop_button.text() == "Start Auto-Check"
     assert window.gmail_label_days_input.maximumWidth() <= 104
+    assert window.outlook_category_days_input.maximumWidth() <= 104
     assert window.gmail_label_days_input.height() == window.gmail_label_rescan_button.height()
+    assert window.outlook_category_days_input.height() == window.outlook_category_rescan_button.height()
+    window.close()
+
+
+def test_shared_category_panel_names_gmail_labels_and_outlook_categories() -> None:
+    window = MailAssistDesktopWindow()
+
+    labels = [child.text() for child in window.findChildren(QLabel)]
+
+    assert any("Gmail labels and/or Outlook categories" in text for text in labels)
     window.close()

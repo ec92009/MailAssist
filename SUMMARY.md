@@ -40,32 +40,43 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 - Added the desktop `Organize Gmail` control with a limited day horizon, confirmation copy that discloses the run may take a few minutes while the user keeps working, user-centered bot-control labels, and compact aligned controls.
 - Ran a live 7-day Gmail reclassification with `qwen3.6:35b` and categories `Needs Reply`, `Needs Action`, `Subscriptions`, `Licenses & Accounts`, `Receipts & Finance`, `Appointments`, `Marketing`, and `Political`; it completed 342 threads with Gmail labels applied/replaced/removed and no email sent.
 - Bumped the visible version through `v59.8` and ran the full test suite after the UI/category work: 128 passing tests on April 28, 2026.
+- Picked up from the handoff SOP on `main` at `5935e1c`, synced the repo, refreshed the local package environment, and resumed the Outlook/Microsoft Graph path.
+- Created a personal Microsoft-account Azure app registration for MailAssist after Microsoft Developer Program tenant signup proved gated. The app is configured for personal Microsoft accounts, public client/native auth, delegated `User.Read`, `Mail.ReadWrite`, and `offline_access`, with local `.env` using tenant `consumers` and token storage under ignored `secrets/outlook-token.json`.
+- Authorized `ec92009@gmail.com` through Microsoft device-code auth and proved real Graph readiness/read access: `/me` returned the account email, inbox preview returned 25 Outlook threads, and `outlook-smoke-test` reported `can_authenticate`, `can_read`, and `can_create_drafts` all true with no admin consent required.
+- Added Outlook category support as the Outlook counterpart to Gmail labels: Graph message `categories` reads/writes, provider `replace_thread_categories`, `outlook-populate-categories` dry-run/apply action, and `MailAssist - <Category>` rendering for Outlook.
+- Ran live Outlook category classification against the dormant Outlook mailbox. A dry run previewed 5 threads, then an apply pass wrote one MailAssist category to each of 5 Outlook messages without sending email.
+- Added GUI support for Outlook organization: `Organize Gmail` and `Organize Outlook` sit side-by-side in bot controls, both use a `days` unit, and one shared `MailAssist Categories` editor explains that categories create/update Gmail labels and/or Outlook categories.
+- Created one controlled unsent Outlook reply draft for the `Test outlook` thread through Graph smoke-test tooling.
+- Sent a fresh Outlook test email (`Test from PT`), ran `watch-once --provider outlook --dry-run --force`, confirmed one `draft_ready` event, then ran a targeted real Outlook watcher pass that created one model-generated unsent Outlook draft with `qwen3.6:35b`. No email was sent.
+- Tightened automated-mail safety so `noreply`, `do not reply`, `notificationmail`, `promomail`, and `emailnotify` are treated as automated signals before drafting, and guarded MailAssist `Needs Reply` category assignment for automated/newsletter-like messages.
+- Bumped the visible version through `v59.12` and ran the full test suite after the Outlook category/drafting/UI work: 135 passing tests on April 28, 2026.
 
 ## Current Verified State
 
-- Visible version: `v59.8`.
-- Full test suite: 128 passing tests on April 28, 2026.
+- Visible version: `v59.12`.
+- Full test suite: 135 passing tests on April 28, 2026.
 - Native desktop app is the active GUI surface; it has no localhost or LAN URL.
-- Latest synchronized commit before this pickup: `6b65687`.
+- Latest synchronized commit before the handoff commit: `5935e1c`.
 - Installed app path: `/Applications/MailAssist.app`.
 - Gmail optional dependencies are installed in the local virtualenv.
 - Gmail read-only probing, Gmail dry-run watching, controlled Gmail provider-write draft creation, and Gmail multipart draft validation have all been exercised locally.
 - The corrected controlled Gmail draft validation proves recipient, subject, review context, attribution, HTML/plain multipart fallback, and HTML sanitizing through the actual Gmail provider path.
 - Attribution placement is now persisted with `MAILASSIST_DRAFT_ATTRIBUTION_PLACEMENT`; legacy `MAILASSIST_DRAFT_ATTRIBUTION=true` maps to `below_signature`.
 - The first real live Gmail provider-writing pass with actionable inbox mail succeeded on April 28, 2026 and created two real Gmail drafts without sending email.
-- Outlook/Microsoft 365 now has a mockable Graph provider slice plus a real Graph client: in-memory fixtures cover `/me`, mailbox messages, conversation/thread parsing, reply draft creation payloads, and admin-consent auth blockers; the real client handles device-code OAuth, refresh-token reuse, `/me`, inbox listing, and reply-draft creation. The bot has a safe Outlook smoke-test action for readiness/read validation and explicit controlled draft creation by thread id.
+- Outlook/Microsoft Graph now has a mockable provider slice plus real personal-Outlook validation: in-memory fixtures cover `/me`, mailbox messages, conversation/thread parsing, category updates, reply draft creation payloads, and admin-consent auth blockers; the real client handles device-code OAuth, refresh-token reuse, `/me`, inbox listing, category writes, and reply-draft creation. The bot has safe Outlook smoke-test, category-population, and targeted watcher-draft paths.
 - The compact desktop control panel remains the visible UI direction.
-- The compact desktop control panel now includes user-centered bot actions, including `Organize Gmail` with a bounded days spinner for forced recent reclassification.
-- Gmail MailAssist labels are now category-driven: one configured category per thread at most, or no label when Ollama returns `NA`.
+- The compact desktop control panel now includes user-centered bot actions, including `Organize Gmail` and `Organize Outlook` with bounded days spinners for forced recent organization.
+- MailAssist categories are now shared across providers: Gmail renders them as `MailAssist/<Category>` labels, Outlook renders them as `MailAssist - <Category>` categories, and Ollama chooses one configured category or `NA`.
 - Visible version loading now lives in `mailassist.version`; `review_state.py` is compatibility-only support for the old two-candidate review path.
 - Live batch LLM output no longer asks for a separate `SHOULD_DRAFT` report flag.
 - Live watcher state lives in `data/live-state.json` with provider-scoped slots, account email discovery, recent activity, and migration from the older `data/bot-state.json`.
-- Magali's Outlook account discovery remains partially resolved: her main business mailbox is Microsoft 365, so the first Outlook implementation path should focus on Microsoft Graph feasibility and tenant/admin consent.
+- Magali's Outlook account discovery remains partially resolved: her main business mailbox is Microsoft 365, so the next Outlook validation should focus on Graph tenant/admin consent and Outlook Desktop behavior using a Microsoft 365 developer tenant or Magali's tenant.
 
 ## Remaining Backlog
 
-- Continue the Outlook/Microsoft 365 provider path once a developer tenant or Magali tenant app authorization is available.
+- Continue the Outlook/Microsoft 365 provider path once a developer tenant or Magali tenant app authorization is available; personal Outlook.com Graph auth/read/category/write/draft behavior is already proven.
 - Use `docs/outlook-m365-admin-consent.md` as the packaged tenant/admin-consent guidance before attempting Magali's Microsoft 365 account.
+- Decide the next Outlook GUI exposure for drafting. Current GUI exposes `Organize Outlook`; targeted Outlook draft creation remains available through explicit CLI/smoke-test commands.
 - Continue product safety and trust hardening around explicit provider writes and ignored runtime artifacts.
 - Maintain the Mac/Gmail sandbox.
 - Continue Windows packaging once Parallels or another Windows build machine is available.

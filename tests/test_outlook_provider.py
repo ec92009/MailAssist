@@ -109,6 +109,23 @@ def test_outlook_create_draft_maps_to_graph_reply_payload() -> None:
     ]
 
 
+def test_outlook_replace_thread_categories_preserves_non_mailassist_categories() -> None:
+    graph_client = build_graph_fixture_client()
+    graph_client.messages[0]["categories"] = ["Pinned", "MailAssist - Needs Action"]
+    graph_client.messages[1]["categories"] = ["MailAssist - Needs Reply"]
+    provider = _provider(graph_client)
+
+    updated_count = provider.replace_thread_categories(
+        "conv-action",
+        add_categories=["MailAssist - Receipts & Finance"],
+        remove_categories=["MailAssist - Needs Action", "MailAssist - Needs Reply"],
+    )
+
+    assert updated_count == 2
+    assert graph_client.messages[0]["categories"] == ["Pinned", "MailAssist - Receipts & Finance"]
+    assert graph_client.messages[1]["categories"] == ["MailAssist - Receipts & Finance"]
+
+
 def test_outlook_graph_scopes_do_not_request_send_permission() -> None:
     assert "Mail.ReadWrite" in OUTLOOK_GRAPH_SCOPES
     assert "Mail.Send" not in OUTLOOK_GRAPH_SCOPES

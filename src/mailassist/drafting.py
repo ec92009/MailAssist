@@ -126,9 +126,14 @@ def fallback_classification_for_thread(thread: EmailThread) -> str:
         for token in (
             "unsubscribe",
             "no-reply",
+            "noreply",
+            "do not reply",
             "automated email",
             "automated notification",
             "digest",
+            "notificationmail",
+            "promomail",
+            "emailnotify",
         )
     ):
         return "automated"

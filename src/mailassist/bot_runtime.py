@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -35,6 +36,10 @@ def _category_key(category: str) -> str:
 
 def _gmail_label_for_category(category: str) -> str:
     return f"{MAILASSIST_GMAIL_PARENT_LABEL}/{category}"
+
+
+def _outlook_category_for_category(category: str) -> str:
+    return f"{MAILASSIST_GMAIL_PARENT_LABEL} - {category}"
 
 
 MAILASSIST_GMAIL_LABELS = {
@@ -89,6 +94,7 @@ def build_review_bot_parser(subparsers: argparse._SubParsersAction[argparse.Argu
             "gmail-unused-label-cleanup",
             "gmail-populate-labels",
             "outlook-smoke-test",
+            "outlook-populate-categories",
         ),
         help="Bot action to run.",
     )
@@ -158,6 +164,11 @@ def build_review_bot_parser(subparsers: argparse._SubParsersAction[argparse.Argu
         action="store_true",
         help="For gmail-populate-labels only: apply labels after the dry-run preview.",
     )
+    parser.add_argument(
+        "--apply-categories",
+        action="store_true",
+        help="For outlook-populate-categories only: apply categories after the dry-run preview.",
+    )
 
 
 def command_review_bot(args: argparse.Namespace) -> int:
@@ -186,6 +197,7 @@ def command_review_bot(args: argparse.Namespace) -> int:
             "delete_unused_labels": bool(getattr(args, "delete_unused_labels", False)),
             "days": int(getattr(args, "days", 7) or 7),
             "apply_labels": bool(getattr(args, "apply_labels", False)),
+            "apply_categories": bool(getattr(args, "apply_categories", False)),
         },
     )
     reporter.emit("log_file", path=str(reporter.log_path))
@@ -483,6 +495,110 @@ def command_review_bot(args: argparse.Namespace) -> int:
             )
             return 0
 
+        if args.action == "outlook-populate-categories":
+            provider = get_provider_for_settings(settings, "outlook")
+            readiness = provider.readiness_check()
+            reporter.emit(
+                "outlook_readiness",
+                provider="outlook",
+                status=readiness.status,
+                ready=readiness.ready,
+                message=readiness.message,
+                account_email=readiness.account_email,
+                can_authenticate=readiness.can_authenticate,
+                can_read=readiness.can_read,
+                can_create_drafts=readiness.can_create_drafts,
+                requires_admin_consent=readiness.requires_admin_consent,
+                details=readiness.details,
+            )
+            if not readiness.ready:
+                reporter.emit(
+                    "completed",
+                    message="Outlook category population stopped because provider is not ready.",
+                    provider="outlook",
+                    ready=False,
+                    thread_count=0,
+                    applied_count=0,
+                    dry_run=True,
+                )
+                return 0
+
+            list_threads = getattr(provider, "list_recent_threads", None)
+            replace_categories = getattr(provider, "replace_thread_categories", None)
+            if not callable(list_threads):
+                raise RuntimeError("The configured Outlook provider cannot list recent threads.")
+            apply_categories = bool(getattr(args, "apply_categories", False))
+            if apply_categories and not callable(replace_categories):
+                raise RuntimeError("The configured Outlook provider cannot update categories.")
+
+            categories = settings.mailassist_categories
+            outlook_category_names = [_outlook_category_for_category(category) for category in categories]
+            days = max(1, int(getattr(args, "days", 7) or 7))
+            limit = max(1, int(getattr(args, "limit", 100) or 100))
+            threads = [
+                thread
+                for thread in list_threads(limit=limit)
+                if _thread_within_days(thread, days)
+            ]
+            classifier = OllamaClient(base_url, selected_model)
+            applied_count = 0
+            message_update_count = 0
+            reporter.emit(
+                "info",
+                message="Classifying Outlook threads into MailAssist categories.",
+                provider="outlook",
+                days=days,
+                thread_count=len(threads),
+                apply_categories=apply_categories,
+                categories=list(categories),
+            )
+            for thread in threads:
+                category, classification_source, classification_error = _mailassist_category_for_thread(
+                    thread,
+                    categories,
+                    classifier=classifier,
+                )
+                category_names = [_outlook_category_for_category(category)] if category else []
+                updated_messages = 0
+                if apply_categories:
+                    updated_messages = replace_categories(
+                        thread.thread_id,
+                        add_categories=category_names,
+                        remove_categories=outlook_category_names,
+                    )
+                    applied_count += 1
+                    message_update_count += updated_messages
+                reporter.emit(
+                    "outlook_thread_categorized"
+                    if apply_categories
+                    else "outlook_thread_category_preview",
+                    provider="outlook",
+                    thread_id=thread.thread_id,
+                    subject=thread.subject,
+                    classification=fallback_classification_for_thread(thread),
+                    category=category or MAILASSIST_NO_CATEGORY,
+                    classification_source=classification_source,
+                    classification_error=classification_error,
+                    categories=category_names,
+                    message_count=len(thread.messages),
+                    updated_message_count=updated_messages,
+                )
+            reporter.emit(
+                "completed",
+                message=(
+                    "Outlook MailAssist category population completed."
+                    if apply_categories
+                    else "Outlook MailAssist category population dry run completed."
+                ),
+                provider="outlook",
+                days=days,
+                thread_count=len(threads),
+                applied_count=applied_count,
+                message_update_count=message_update_count,
+                dry_run=not apply_categories,
+            )
+            return 0
+
         if args.action == "gmail-controlled-draft":
             provider = get_provider_for_settings(settings, "gmail")
             thread_id = args.thread_id or "thread-008"
@@ -773,7 +889,8 @@ def _mailassist_category_for_thread(
             response = classifier.compose_reply(prompt)
             parsed = _parse_mailassist_category_response(response, normalized_categories)
             if parsed != "":
-                return parsed, "ollama", None
+                guarded = _guard_mailassist_category(thread, parsed, normalized_categories)
+                return guarded, "ollama", None
             return (
                 _fallback_mailassist_category(thread, normalized_categories),
                 "fallback",
@@ -801,7 +918,7 @@ def _mailassist_category_prompt(thread, categories: tuple[str, ...]) -> str:
         for message in thread.messages[-3:]
     )
     category_lines = "\n".join(f"- {category}" for category in categories)
-    return f"""You classify email threads for Gmail labels.
+    return f"""You classify email threads for MailAssist email organization.
 
 Choose exactly one category from the allowed list, or return NA when there is no obvious fit.
 Return only the category name, exactly as written, or NA. Do not explain.
@@ -848,7 +965,9 @@ def _fallback_mailassist_category(thread, categories: tuple[str, ...]) -> str | 
     classification = fallback_classification_for_thread(thread)
 
     if classification in {"urgent", "reply_needed"}:
-        return _category_if_enabled(LOCKED_NEEDS_REPLY_CATEGORY, categories)
+        needs_reply = _category_if_enabled(LOCKED_NEEDS_REPLY_CATEGORY, categories)
+        if needs_reply:
+            return needs_reply
 
     if _contains_any(
         haystack,
@@ -907,6 +1026,71 @@ def _fallback_mailassist_category(thread, categories: tuple[str, ...]) -> str | 
         return _category_if_enabled("Suspicious", categories)
 
     return _category_if_enabled("FYI", categories)
+
+
+def _guard_mailassist_category(thread, category: str | None, categories: tuple[str, ...]) -> str | None:
+    if category is None:
+        return None
+    if category.lower() != LOCKED_NEEDS_REPLY_CATEGORY.lower():
+        return category
+    if _looks_automated_for_needs_reply(thread):
+        return _fallback_mailassist_category(
+            thread,
+            tuple(item for item in categories if item.lower() != LOCKED_NEEDS_REPLY_CATEGORY.lower()),
+        )
+    classification = fallback_classification_for_thread(thread)
+    if classification in {"urgent", "reply_needed"}:
+        return category
+    fallback = _fallback_mailassist_category(
+        thread,
+        tuple(item for item in categories if item.lower() != LOCKED_NEEDS_REPLY_CATEGORY.lower()),
+    )
+    return fallback
+
+
+def _looks_automated_for_needs_reply(thread) -> bool:
+    haystack = " ".join(
+        [thread.subject, *thread.participants, *(message.text for message in thread.messages)]
+    ).lower()
+    return _contains_any(
+        haystack,
+        (
+            "unsubscribe",
+            "no-reply",
+            "noreply",
+            "do not reply",
+            "automated notification",
+            "automated email",
+            "newsletter",
+            "digest",
+            "notificationmail",
+            "promomail",
+        ),
+    )
+
+
+def _thread_within_days(thread, days: int) -> bool:
+    cutoff = datetime.now(timezone.utc) - timedelta(days=max(1, days))
+    for message in thread.messages:
+        parsed = _parse_message_datetime(str(message.sent_at or ""))
+        if parsed is not None and parsed >= cutoff:
+            return True
+    return False
+
+
+def _parse_message_datetime(value: str) -> datetime | None:
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    if cleaned.endswith("Z"):
+        cleaned = cleaned[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(cleaned)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _category_if_enabled(category: str, categories: tuple[str, ...]) -> str | None:

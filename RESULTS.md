@@ -15,7 +15,7 @@ The bot watches provider inboxes, uses a local Ollama model to classify new thre
 - Gmail draft creation exists as an optional provider path.
 - Gmail provider can preview recent inbox message metadata/snippets using read-only access.
 - Gmail provider can retrieve the account send-as signature as a starting point for MailAssist settings.
-- Outlook now has a mockable Microsoft Graph provider slice for account discovery, mailbox message parsing, readiness/admin-consent reporting, and reply-draft payload mapping. It also has a real Graph client with device-code OAuth, ignored local refresh-token storage, `/me`, inbox listing, and reply-draft creation.
+- Outlook now has a mockable Microsoft Graph provider slice for account discovery, mailbox message parsing, readiness/admin-consent reporting, category updates, and reply-draft payload mapping. It also has a real Graph client with device-code OAuth, ignored local refresh-token storage, `/me`, inbox listing, message category updates, and reply-draft creation.
 - A native `PySide6` desktop app exists.
 - The visible desktop app is now a compact control panel with a setup wizard, bot controls, readable logs, and recent activity.
 - The old web review GUI and `serve-config` path have been removed.
@@ -38,10 +38,12 @@ The bot watches provider inboxes, uses a local Ollama model to classify new thre
 - The bot has JSONL stdout/log event reporting.
 - The bot has `watch-once` and Gmail preview/test paths.
 - The bot has an Outlook smoke-test path that checks provider readiness and inbox preview without writing drafts by default.
+- The bot has an Outlook category-population path that classifies recent Outlook threads into MailAssist categories, dry-runs by default, and only writes Graph message categories with `--apply-categories`.
 - The bot has a Gmail category-labeling path that asks the selected local Ollama model to choose one configured MailAssist category, or `NA`, for each recent thread.
 - Gmail category labels live under a top-level `MailAssist` label; configured category labels are created as needed and prior MailAssist category labels are replaced/removed during reclassification.
 - Settings now stores `MAILASSIST_CATEGORIES`, with `Needs Reply` locked because it drives draft generation.
-- The desktop control panel has an `Organize Gmail` action with a bounded day horizon and confirmation copy that warns the run can take a few minutes while the user keeps working.
+- The desktop control panel has `Organize Gmail` and `Organize Outlook` actions with bounded day horizons and confirmation copy that warns the run can take a few minutes while the user keeps working.
+- Settings has one shared `MailAssist Categories` editor; Gmail uses those categories to create/update `MailAssist/<Category>` labels and Outlook uses them to create/update `MailAssist - <Category>` message categories.
 - `watch-once` and `watch-loop` now support a dry-run mode that produces `draft_ready` events without creating provider drafts.
 - The bot now has a polling `watch-loop` path that uses `MAILASSIST_BOT_POLL_SECONDS`.
 - The bot has a simplified `watch-once` pass that classifies mock threads, skips non-response mail, and creates one provider draft per actionable thread.
@@ -87,6 +89,9 @@ The bot watches provider inboxes, uses a local Ollama model to classify new thre
 - Controlled real Gmail draft creation on April 27, 2026 succeeded from sanitized mock content. The corrected draft `r75464073844852680` was fetched back through Gmail and verified as multipart plain/HTML, addressed to `ec92009@gmail.com`, with the controlled subject, review context, attribution in both parts, and no script HTML.
 - A real live Gmail `watch-once --provider gmail --force` provider-writing pass on April 28, 2026 created two unsent Gmail drafts for actionable inbox threads, `Nudge` and `Note to self`, after skipping automated/non-response mail. Gmail visual inspection showed review context, generated body text, and the saved signature rendered correctly.
 - A live Gmail MailAssist-label reclassification on April 28, 2026 processed 342 recent threads using the local Ollama model `qwen3.6:35b`, the configured category set (`Needs Reply`, `Needs Action`, `Subscriptions`, `Licenses & Accounts`, `Receipts & Finance`, `Appointments`, `Marketing`, `Political`), and the `NA` escape hatch. Gmail labels were applied, replaced, or removed without sending email.
+- Personal Outlook.com Microsoft Graph validation on April 28, 2026 succeeded for `ec92009@gmail.com`: device-code auth, `/me`, inbox preview, category writes, controlled reply-draft creation, and a targeted live watcher draft all worked without sending email.
+- A live Outlook category pass on April 28, 2026 classified 5 recent Outlook messages and applied one `MailAssist - <Category>` category to each through Microsoft Graph.
+- A real live Outlook `watch-once --provider outlook --thread-id ... --force` pass on April 28, 2026 created one unsent model-generated draft for `Test from PT` using `qwen3.6:35b`. A prior dry run produced one `draft_ready` event, and a follow-up pass did not create a duplicate draft.
 - `dist/MailAssist-v56.46-mac-gmail.dmg` was built locally at about 253 MB, well under GitHub Releases' 2 GiB per-asset limit.
 
 ## Draft Quality Findings
@@ -97,6 +102,7 @@ The bot watches provider inboxes, uses a local Ollama model to classify new thre
 - Drafts now include recent incoming review context so Gmail recipients can see what the generated reply is responding to.
 - Review context timestamps use local, readable wording such as `yesterday afternoon at 14:09`.
 - The bot post-checks generated bodies and replaces signature-only or promise-shaped responses with a conservative acknowledgement.
+- Automated sender safety now treats `noreply`, `do not reply`, `notificationmail`, `promomail`, and `emailnotify` as automated signals before drafting.
 
 ## Working Pieces To Keep
 
@@ -133,18 +139,18 @@ These were useful experiments, but the lighter product should not build on them 
 
 ## Latest Verified State
 
-- Latest visible version: `v59.8`.
-- Latest test run: 128 passing tests on April 28, 2026.
+- Latest visible version: `v59.12`.
+- Latest test run: 135 passing tests on April 28, 2026.
 - Current visible GUI surface is the compact bot control panel and setup wizard.
 - Gmail optional dependencies are installed in the local virtualenv.
 - Local Gmail setup has been proven for draft creation and readonly inbox preview.
 - Mac/Gmail DMG artifact was published as a GitHub release asset.
-- The next implementation phase requires a Microsoft 365 developer tenant or Magali tenant authorization to smoke-test Outlook Graph live while continuing to quarantine legacy two-candidate review helpers.
+- The next implementation phase requires a Microsoft 365 developer tenant or Magali tenant authorization to validate Outlook Graph against a real business tenant while continuing to quarantine legacy two-candidate review helpers.
 - The latest cleanup slices moved old review/runtime artifacts into a legacy subtree, removed the unused queue-phase lifecycle, deleted the old web review GUI path, removed the dead legacy local draft pipeline, and introduced a dedicated live-state store for watcher runtime data.
 - The latest live-watcher slice added watcher filters, provider thread-listing hooks, Gmail thread polling helpers, and background-bot integration for real provider thread sources.
 - Gmail actionable-thread listing now passes unread/time-window filters into Gmail search where available, while the watcher still uses broad candidate listing so it can emit `filtered_out` activity events.
 - Gmail dry-run and controlled-draft paths are now distinct: dry-run validates watcher flow without provider writes, while controlled draft creation proves Gmail write/rendering behavior with sanitized mock content.
-- Magali Outlook discovery is now partially resolved: Microsoft 365 first, with tenant/admin consent as the remaining provider-path question.
+- Personal Outlook.com Graph behavior is proven; Magali Outlook discovery is now partially resolved as Microsoft 365 first, with tenant/admin consent and Outlook Desktop behavior as the remaining provider-path questions.
 
 ## Conclusion
 

@@ -39,10 +39,13 @@ class OutlookGraphClient(Protocol):
     def get_me(self) -> dict[str, Any]:
         ...
 
-    def list_messages(self) -> list[dict[str, Any]]:
+    def list_messages(self, *, limit: int = 25) -> list[dict[str, Any]]:
         ...
 
     def create_reply_draft(self, *, message_id: str, draft: DraftRecord) -> dict[str, Any]:
+        ...
+
+    def update_message_categories(self, *, message_id: str, categories: list[str]) -> dict[str, Any]:
         ...
 
 
@@ -62,9 +65,9 @@ class InMemoryOutlookGraphClient:
         self.authenticate()
         return self.me
 
-    def list_messages(self) -> list[dict[str, Any]]:
+    def list_messages(self, *, limit: int = 25) -> list[dict[str, Any]]:
         self.authenticate()
-        return list(self.messages)
+        return list(self.messages)[:limit]
 
     def create_reply_draft(self, *, message_id: str, draft: DraftRecord) -> dict[str, Any]:
         self.authenticate()
@@ -85,6 +88,14 @@ class InMemoryOutlookGraphClient:
         }
         self.created_drafts.append(created)
         return created
+
+    def update_message_categories(self, *, message_id: str, categories: list[str]) -> dict[str, Any]:
+        self.authenticate()
+        for message in self.messages:
+            if str(message.get("id", "")) == message_id:
+                message["categories"] = list(categories)
+                return dict(message)
+        raise OutlookGraphHttpError(f"Outlook message not found: {message_id}")
 
 
 @dataclass
@@ -141,14 +152,15 @@ class MicrosoftGraphClient:
     def get_me(self) -> dict[str, Any]:
         return self._graph_request("GET", "/me")
 
-    def list_messages(self) -> list[dict[str, Any]]:
+    def list_messages(self, *, limit: int = 25) -> list[dict[str, Any]]:
+        safe_limit = max(1, min(100, int(limit or 25)))
         params = urlencode(
             {
-                "$top": "25",
+                "$top": str(safe_limit),
                 "$orderby": "receivedDateTime desc",
                 "$select": (
                     "id,conversationId,subject,from,toRecipients,ccRecipients,bccRecipients,"
-                    "receivedDateTime,sentDateTime,body,bodyPreview,isRead"
+                    "receivedDateTime,sentDateTime,body,bodyPreview,isRead,categories"
                 ),
             }
         )
@@ -173,6 +185,14 @@ class MicrosoftGraphClient:
             "POST",
             f"/me/messages/{quote(message_id, safe='')}/createReply",
             payload,
+        )
+
+    def update_message_categories(self, *, message_id: str, categories: list[str]) -> dict[str, Any]:
+        cleaned = [category for category in dict.fromkeys(str(item).strip() for item in categories) if category]
+        return self._graph_request(
+            "PATCH",
+            f"/me/messages/{quote(message_id, safe='')}",
+            {"categories": cleaned},
         )
 
     def has_saved_token(self) -> bool:
@@ -423,6 +443,11 @@ class OutlookProvider(DraftProvider):
             )
         return _graph_messages_to_email_threads(self.graph_client.list_messages())
 
+    def list_recent_threads(self, *, limit: int = 25) -> list[EmailThread]:
+        if self.graph_client is None:
+            raise NotImplementedError("Outlook thread listing requires Microsoft Graph.")
+        return _graph_messages_to_email_threads(self.graph_client.list_messages(limit=limit))
+
     def create_draft(self, draft: DraftRecord) -> ProviderDraftReference:
         if self.graph_client is None:
             raise NotImplementedError(
@@ -440,6 +465,38 @@ class OutlookProvider(DraftProvider):
             thread_id=str(created.get("conversationId", draft.thread_id)),
             message_id=str(created.get("replyToMessageId", source_message_id)),
         )
+
+    def replace_thread_categories(
+        self,
+        thread_id: str,
+        *,
+        add_categories: list[str],
+        remove_categories: list[str],
+    ) -> int:
+        if self.graph_client is None:
+            raise NotImplementedError("Outlook category updates require Microsoft Graph.")
+        messages = [
+            message
+            for message in self.graph_client.list_messages(limit=100)
+            if str(message.get("conversationId") or message.get("id") or "").strip() == thread_id
+        ]
+        updated_count = 0
+        remove_lookup = {category.lower() for category in remove_categories}
+        for message in messages:
+            existing = [
+                str(category).strip()
+                for category in message.get("categories", [])
+                if str(category).strip()
+            ]
+            preserved = [category for category in existing if category.lower() not in remove_lookup]
+            merged = [*preserved, *add_categories]
+            cleaned = [category for category in dict.fromkeys(merged) if category]
+            self.graph_client.update_message_categories(
+                message_id=str(message.get("id", "")),
+                categories=cleaned,
+            )
+            updated_count += 1
+        return updated_count
 
 
 def _account_email_from_me(payload: dict[str, Any]) -> str | None:

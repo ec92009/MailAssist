@@ -413,14 +413,29 @@ class MailAssistDesktopWindow(QMainWindow):
         self.gmail_label_rescan_button = QPushButton("Organize Gmail")
         gmail_label_rescan_button = self.gmail_label_rescan_button
         gmail_label_rescan_button.clicked.connect(self.run_gmail_label_rescan)
+        self.outlook_category_rescan_button = QPushButton("Organize Outlook")
+        outlook_category_rescan_button = self.outlook_category_rescan_button
+        outlook_category_rescan_button.clicked.connect(self.run_outlook_category_rescan)
         self.gmail_label_days_input = QSpinBox()
         self.gmail_label_days_input.setRange(1, 30)
         self.gmail_label_days_input.setValue(7)
         self.gmail_label_days_input.setSuffix(" days")
         self.gmail_label_days_input.setMinimumWidth(92)
         self.gmail_label_days_input.setMaximumWidth(104)
-        action_height = max(gmail_label_rescan_button.sizeHint().height(), self.gmail_label_days_input.sizeHint().height())
+        self.outlook_category_days_input = QSpinBox()
+        self.outlook_category_days_input.setRange(1, 30)
+        self.outlook_category_days_input.setValue(7)
+        self.outlook_category_days_input.setSuffix(" days")
+        self.outlook_category_days_input.setMinimumWidth(92)
+        self.outlook_category_days_input.setMaximumWidth(104)
+        action_height = max(
+            gmail_label_rescan_button.sizeHint().height(),
+            outlook_category_rescan_button.sizeHint().height(),
+            self.gmail_label_days_input.sizeHint().height(),
+            self.outlook_category_days_input.sizeHint().height(),
+        )
         self.gmail_label_days_input.setFixedHeight(action_height)
+        self.outlook_category_days_input.setFixedHeight(action_height)
         self.start_watch_loop_button = QPushButton("Start Auto-Check")
         start_watch_loop_button = self.start_watch_loop_button
         start_watch_loop_button.clicked.connect(self.start_watch_loop)
@@ -432,6 +447,7 @@ class MailAssistDesktopWindow(QMainWindow):
             gmail_draft_test_button,
             controlled_gmail_draft_button,
             gmail_label_rescan_button,
+            outlook_category_rescan_button,
             start_watch_loop_button,
             self.stop_bot_button,
         ):
@@ -440,6 +456,9 @@ class MailAssistDesktopWindow(QMainWindow):
         label_scan_actions.setSpacing(4)
         label_scan_actions.addWidget(gmail_label_rescan_button)
         label_scan_actions.addWidget(self.gmail_label_days_input)
+        label_scan_actions.addSpacing(6)
+        label_scan_actions.addWidget(outlook_category_rescan_button)
+        label_scan_actions.addWidget(self.outlook_category_days_input)
         bot_actions.addWidget(run_mock_pass_button)
         bot_actions.addWidget(gmail_draft_test_button)
         bot_actions.addWidget(controlled_gmail_draft_button)
@@ -842,7 +861,7 @@ class MailAssistDesktopWindow(QMainWindow):
         self._refresh_prompt_preview()
 
     def _build_category_settings_group(self) -> QGroupBox:
-        group = QGroupBox("MailAssist Gmail Labels")
+        group = QGroupBox("MailAssist Categories")
         group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         layout = QVBoxLayout(group)
         layout.setSpacing(8)
@@ -874,7 +893,11 @@ class MailAssistDesktopWindow(QMainWindow):
         content.addWidget(self.mailassist_category_list, 1)
         layout.addLayout(content)
 
-        note = QLabel("These categories constrain Ollama's Gmail label choices. Needs Reply is locked because MailAssist uses it for draft generation.")
+        note = QLabel(
+            "MailAssist uses these categories to create or update Gmail labels and/or "
+            "Outlook categories. Needs Reply is locked because MailAssist uses it for "
+            "draft generation."
+        )
         note.setWordWrap(True)
         note.setStyleSheet("color: #5e6978; font-size: 13px;")
         layout.addWidget(note)
@@ -1934,6 +1957,36 @@ class MailAssistDesktopWindow(QMainWindow):
             apply_labels=True,
         )
 
+    def run_outlook_category_rescan(self) -> None:
+        days = (
+            int(self.outlook_category_days_input.value())
+            if hasattr(self, "outlook_category_days_input")
+            else 25
+        )
+        confirmation = QMessageBox.question(
+            self,
+            "Organize Outlook",
+            (
+                f"MailAssist will classify Outlook messages from the last {days} day"
+                f"{'' if days == 1 else 's'} using the current category list. "
+                "It may add, replace, or remove MailAssist Outlook categories.\n\n"
+                "This can take a few minutes, but you can keep working while it runs. "
+                "Continue?"
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirmation != QMessageBox.StandardButton.Yes:
+            self._set_banner("Outlook category rescan canceled.", level="info")
+            return
+        self.save_settings(announce=False)
+        self.run_bot_action(
+            "outlook-populate-categories",
+            provider="outlook",
+            days=days,
+            apply_categories=True,
+        )
+
     def run_bot_action(
         self,
         action: str,
@@ -1946,6 +1999,7 @@ class MailAssistDesktopWindow(QMainWindow):
         days: int | None = None,
         limit: int | None = None,
         apply_labels: bool = False,
+        apply_categories: bool = False,
     ) -> None:
         if self.bot_process is not None:
             self._set_banner("A bot action is already running.", level="error")
@@ -1987,6 +2041,8 @@ class MailAssistDesktopWindow(QMainWindow):
             args.extend(["--limit", str(max(1, int(limit)))])
         if apply_labels:
             args.append("--apply-labels")
+        if apply_categories:
+            args.append("--apply-categories")
 
         self._append_bot_console(f"$ {sys.executable} {' '.join(args)}")
         self._set_banner(

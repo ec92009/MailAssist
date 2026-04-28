@@ -6,6 +6,29 @@ MailAssist's Outlook path uses Microsoft Graph delegated permissions. It reads t
 
 Create or use a Microsoft Entra app registration for the tenant that owns the mailbox.
 
+## Developer Tenant Options
+
+As of April 2026, Microsoft's free Microsoft 365 E5 developer sandbox is limited to
+qualifying Microsoft 365 Developer Program members. The most reliable path is a
+Visual Studio Professional or Enterprise subscription benefit; other qualifying
+programs may also be eligible from the Developer Program dashboard.
+
+For MailAssist testing, use one of these tenant paths:
+
+1. Microsoft 365 Developer Program E5 sandbox, if the account qualifies.
+2. A paid or trial Microsoft 365 Business/E5 tenant dedicated to testing.
+3. Magali's real Microsoft 365 tenant, after app registration and consent are
+   approved by the tenant owner/admin.
+4. A personal Outlook.com/Microsoft account for a limited Graph smoke test.
+
+Prefer an instant sandbox when available because it includes Outlook, sample
+mail/calendar data, test users, and an admin account. Use a configurable sandbox
+only when a custom tenant domain is useful enough to justify slower provisioning.
+
+Personal Outlook.com accounts are useful for validating delegated Graph mail
+read/write and draft creation, but they do not validate Microsoft 365 business
+tenant setup, Exchange Online admin policy, or tenant-admin consent.
+
 Recommended delegated Microsoft Graph scopes for the current implementation:
 
 - `offline_access`
@@ -20,7 +43,7 @@ Set these local environment values in `.env`:
 MAILASSIST_OUTLOOK_ENABLED=true
 MAILASSIST_DEFAULT_PROVIDER=outlook
 MAILASSIST_OUTLOOK_CLIENT_ID=<application-client-id>
-MAILASSIST_OUTLOOK_TENANT_ID=<tenant-id-or-organizations>
+MAILASSIST_OUTLOOK_TENANT_ID=<tenant-id-or-organizations-or-consumers>
 MAILASSIST_OUTLOOK_TOKEN_FILE=secrets/outlook-token.json
 ```
 

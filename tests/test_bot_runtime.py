@@ -391,6 +391,37 @@ def test_mailassist_gmail_label_classifier_accepts_ollama_category() -> None:
     assert error is None
 
 
+def test_mailassist_category_classifier_guards_needs_reply_for_automated_threads() -> None:
+    class FakeClassifier:
+        def compose_reply(self, prompt: str) -> str:
+            return "Needs Reply"
+
+    thread = EmailThread(
+        thread_id="thread-automated",
+        subject="Optimize performance with Azure Advisor",
+        participants=["azure@promomail.microsoft.com", "me@example.com"],
+        messages=[
+            EmailMessage(
+                message_id="msg-1",
+                sender="azure@promomail.microsoft.com",
+                to=["me@example.com"],
+                sent_at="2026-04-28T10:00:00Z",
+                text="Review these automated recommendations for your Azure account.",
+            )
+        ],
+    )
+
+    category, source, error = _mailassist_category_for_thread(
+        thread,
+        ("Needs Reply", "Needs Action", "Marketing"),
+        classifier=FakeClassifier(),
+    )
+
+    assert category == "Needs Action"
+    assert source == "ollama"
+    assert error is None
+
+
 def test_mailassist_gmail_label_classifier_accepts_ollama_no_category() -> None:
     class FakeClassifier:
         def compose_reply(self, prompt: str) -> str:
@@ -515,6 +546,188 @@ def test_review_bot_gmail_populate_labels_applies_recent_thread_bins(
     )
     assert provider.applied[0][2]
     assert lines[-1]["applied_count"] == 1
+
+
+def test_review_bot_outlook_populate_categories_previews_without_writes(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    class FakeProvider:
+        name = "outlook"
+
+        def readiness_check(self):
+            return ProviderReadiness(
+                provider="outlook",
+                status="ready",
+                message="ready",
+                account_email="me@example.com",
+                can_authenticate=True,
+                can_read=True,
+                can_create_drafts=True,
+            )
+
+        def list_recent_threads(self, *, limit: int = 25):
+            assert limit == 5
+            return [
+                EmailThread(
+                    thread_id="conv-1",
+                    subject="Weekly newsletter",
+                    participants=["sender@example.com", "me@example.com"],
+                    messages=[
+                        EmailMessage(
+                            message_id="msg-1",
+                            sender="sender@example.com",
+                            to=["me@example.com"],
+                            sent_at="2026-04-28T10:00:00Z",
+                            text="Unsubscribe from this newsletter",
+                        )
+                    ],
+                )
+            ]
+
+        def replace_thread_categories(self, *args, **kwargs):
+            raise AssertionError("dry run should not update Outlook categories")
+
+    monkeypatch.setattr(
+        "mailassist.bot_runtime.get_provider_for_settings",
+        lambda settings, provider_name: FakeProvider(),
+    )
+    monkeypatch.setattr(
+        "mailassist.bot_runtime.OllamaClient",
+        lambda base_url, selected_model: type(
+            "FakeClassifier",
+            (),
+            {"compose_reply": lambda self, prompt: "Subscriptions"},
+        )(),
+    )
+
+    args = argparse.Namespace(
+        command="review-bot",
+        action="outlook-populate-categories",
+        thread_id=None,
+        prompt=None,
+        base_url=None,
+        selected_model=None,
+        provider="outlook",
+        batch_size=1,
+        limit=5,
+        force=False,
+        dry_run=False,
+        poll_seconds=0,
+        max_passes=0,
+        create_draft=False,
+        older_than_years=5,
+        remove_labels=False,
+        delete_unused_labels=False,
+        days=7,
+        apply_labels=False,
+        apply_categories=False,
+    )
+
+    exit_code = command_review_bot(args)
+
+    assert exit_code == 0
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
+    assert any(
+        line["type"] == "outlook_thread_category_preview"
+        and line["categories"] == ["MailAssist - Subscriptions"]
+        for line in lines
+    )
+    assert lines[-1]["dry_run"] is True
+    assert lines[-1]["applied_count"] == 0
+
+
+def test_review_bot_outlook_populate_categories_can_apply(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    class FakeProvider:
+        name = "outlook"
+
+        def __init__(self) -> None:
+            self.applied = []
+
+        def readiness_check(self):
+            return ProviderReadiness(
+                provider="outlook",
+                status="ready",
+                message="ready",
+                account_email="me@example.com",
+                can_authenticate=True,
+                can_read=True,
+                can_create_drafts=True,
+            )
+
+        def list_recent_threads(self, *, limit: int = 25):
+            return [
+                EmailThread(
+                    thread_id="conv-1",
+                    subject="Invoice",
+                    participants=["sender@example.com", "me@example.com"],
+                    messages=[
+                        EmailMessage(
+                            message_id="msg-1",
+                            sender="sender@example.com",
+                            to=["me@example.com"],
+                            sent_at="2026-04-28T10:00:00Z",
+                            text="Your invoice is attached.",
+                        )
+                    ],
+                )
+            ]
+
+        def replace_thread_categories(self, thread_id, *, add_categories, remove_categories):
+            self.applied.append((thread_id, add_categories, remove_categories))
+            return 1
+
+    provider = FakeProvider()
+    monkeypatch.setattr(
+        "mailassist.bot_runtime.get_provider_for_settings",
+        lambda settings, provider_name: provider,
+    )
+    monkeypatch.setattr(
+        "mailassist.bot_runtime.OllamaClient",
+        lambda base_url, selected_model: type(
+            "FakeClassifier",
+            (),
+            {"compose_reply": lambda self, prompt: "Receipts & Finance"},
+        )(),
+    )
+
+    args = argparse.Namespace(
+        command="review-bot",
+        action="outlook-populate-categories",
+        thread_id=None,
+        prompt=None,
+        base_url=None,
+        selected_model=None,
+        provider="outlook",
+        batch_size=1,
+        limit=5,
+        force=False,
+        dry_run=False,
+        poll_seconds=0,
+        max_passes=0,
+        create_draft=False,
+        older_than_years=5,
+        remove_labels=False,
+        delete_unused_labels=False,
+        days=7,
+        apply_labels=False,
+        apply_categories=True,
+    )
+
+    exit_code = command_review_bot(args)
+
+    assert exit_code == 0
+    assert provider.applied[0][1] == ["MailAssist - Receipts & Finance"]
+    assert "MailAssist - Needs Reply" in provider.applied[0][2]
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
+    assert any(line["type"] == "outlook_thread_categorized" for line in lines)
+    assert lines[-1]["applied_count"] == 1
+    assert lines[-1]["message_update_count"] == 1
 
 
 def test_review_bot_outlook_smoke_test_reads_ready_provider(
