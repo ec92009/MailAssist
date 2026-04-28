@@ -22,7 +22,7 @@ Mac/Gmail remains the proving ground because it is already working locally and e
     - `sed -n '1,220p' TODO.md`
     - `sed -n '1,180p' SUMMARY.md`
 - Current baseline at handoff:
-  - Last synchronized commit before this TODO cleanup: `ac136d4`
+  - Last synchronized commit before this rscp update: `68d4b07`
   - Current visible version: `v59.1`
   - Local app/dev entrypoint: `./.venv/bin/mailassist desktop-gui`
   - Packaged app path: `/Applications/MailAssist.app`

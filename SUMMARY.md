@@ -16,12 +16,15 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 - Polished the control panel with separate `Run Gmail Dry Run`, `Create Gmail Test Draft`, `Start Watch Loop`, and `Stop` controls, plus clearer watch-loop activity/failure events.
 - Moved live drafting/classification helpers into `mailassist.drafting` so the background bot no longer imports them from legacy `review_state.py`. The old review module remains as compatibility/legacy support.
 - Bumped the visible version to `v59.1` for this user-visible build.
+- Refreshed docs, committed and pushed release commit `68d4b07` to `origin/main`, built `/Applications/MailAssist.app`, refreshed the Dock entry, and opened the native GUI.
 
 ## Current Verified State
 
 - Visible version: `v59.1`.
 - Full test suite: 94 passing tests on April 28, 2026.
 - Native desktop app is the active GUI surface; it has no localhost or LAN URL.
+- Latest pushed implementation commit: `68d4b07`.
+- Installed app path: `/Applications/MailAssist.app`.
 - Gmail optional dependencies are installed in the local virtualenv.
 - Gmail read-only probing, Gmail dry-run watching, controlled Gmail provider-write draft creation, and Gmail multipart draft validation have all been exercised locally.
 - The corrected controlled Gmail draft validation proves recipient, subject, review context, attribution, HTML/plain multipart fallback, and HTML sanitizing through the actual Gmail provider path.
