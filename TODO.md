@@ -23,7 +23,7 @@ Mac/Gmail remains the proving ground because it is already working locally and e
     - `sed -n '1,180p' SUMMARY.md`
 - Current baseline at handoff:
   - Last synchronized commit before this handoff commit: `5935e1c`
-  - Handoff commit: reported in the assistant response after commit/push.
+  - Handoff commit: `49c2f85`
   - Current visible version: `v59.12`
   - Local app/dev entrypoint: `./.venv/bin/mailassist desktop-gui`
   - Packaged app path: `/Applications/MailAssist.app`
@@ -85,6 +85,7 @@ Mac/Gmail remains the proving ground because it is already working locally and e
 - Created one controlled unsent Outlook reply draft for the `Test outlook` thread through Graph, then created one real model-generated unsent Outlook watcher draft for the fresh `Test from PT` thread. No email was sent. (Managed by Codex)
 - Tightened automated-mail safety by treating `noreply`, `do not reply`, `notificationmail`, `promomail`, and `emailnotify` as automated signals before drafting. (Managed by Codex)
 - Bumped visible version through `v59.12` for the Outlook category/drafting and organizer UI work; latest full local test suite passed with 135 tests on April 28, 2026. (Managed by Codex)
+- After handoff, updated the TODO handoff block to record the pushed handoff commit explicitly. (Managed by Codex)
 
 ## Remaining Backlog
 
