@@ -12,11 +12,42 @@ from mailassist.background_bot import (
     build_draft_body_html,
     run_watch_pass,
 )
-from mailassist.config import ATTRIBUTION_BELOW_SIGNATURE, ATTRIBUTION_HIDE, load_settings
+from mailassist.config import (
+    ATTRIBUTION_BELOW_SIGNATURE,
+    ATTRIBUTION_HIDE,
+    DEFAULT_MAILASSIST_CATEGORIES,
+    LOCKED_NEEDS_REPLY_CATEGORY,
+    load_settings,
+)
+from mailassist.drafting import fallback_classification_for_thread
 from mailassist.fixtures.mock_threads import build_mock_threads
 from mailassist.llm.ollama import OllamaClient
 from mailassist.models import DraftRecord, utc_now_iso
 from mailassist.providers.factory import get_provider_for_settings
+
+MAILASSIST_GMAIL_PARENT_LABEL = "MailAssist"
+MAILASSIST_NO_CATEGORY = "NA"
+
+
+def _category_key(category: str) -> str:
+    return category.lower().replace("&", "and").replace(" ", "_")
+
+
+def _gmail_label_for_category(category: str) -> str:
+    return f"{MAILASSIST_GMAIL_PARENT_LABEL}/{category}"
+
+
+MAILASSIST_GMAIL_LABELS = {
+    _category_key(category): _gmail_label_for_category(category)
+    for category in DEFAULT_MAILASSIST_CATEGORIES
+}
+MAILASSIST_GMAIL_LABELS["licenses_accounts"] = _gmail_label_for_category("Licenses & Accounts")
+MAILASSIST_GMAIL_LABELS["receipts_finance"] = _gmail_label_for_category("Receipts & Finance")
+
+
+def _mailassist_gmail_label_names(categories: tuple[str, ...] | list[str] | None = None) -> list[str]:
+    selected = list(categories or DEFAULT_MAILASSIST_CATEGORIES)
+    return [MAILASSIST_GMAIL_PARENT_LABEL, *[_gmail_label_for_category(category) for category in selected]]
 
 
 class BotEventReporter:
@@ -54,6 +85,10 @@ def build_review_bot_parser(subparsers: argparse._SubParsersAction[argparse.Argu
             "watch-loop",
             "gmail-inbox-preview",
             "gmail-controlled-draft",
+            "gmail-label-cleanup",
+            "gmail-unused-label-cleanup",
+            "gmail-populate-labels",
+            "outlook-smoke-test",
         ),
         help="Bot action to run.",
     )
@@ -91,6 +126,38 @@ def build_review_bot_parser(subparsers: argparse._SubParsersAction[argparse.Argu
         action="store_true",
         help="Run watch-once/watch-loop without creating provider drafts.",
     )
+    parser.add_argument(
+        "--create-draft",
+        action="store_true",
+        help="For outlook-smoke-test only: create one controlled Outlook reply draft for --thread-id.",
+    )
+    parser.add_argument(
+        "--older-than-years",
+        type=int,
+        default=5,
+        help="For gmail-label-cleanup only: labels with no newer messages than this are candidates.",
+    )
+    parser.add_argument(
+        "--remove-labels",
+        action="store_true",
+        help="For gmail-label-cleanup only: remove matching labels from old messages.",
+    )
+    parser.add_argument(
+        "--delete-unused-labels",
+        action="store_true",
+        help="For gmail-unused-label-cleanup only: delete empty user-created labels.",
+    )
+    parser.add_argument(
+        "--days",
+        type=int,
+        default=7,
+        help="For gmail-populate-labels only: number of recent days to label.",
+    )
+    parser.add_argument(
+        "--apply-labels",
+        action="store_true",
+        help="For gmail-populate-labels only: apply labels after the dry-run preview.",
+    )
 
 
 def command_review_bot(args: argparse.Namespace) -> int:
@@ -113,6 +180,12 @@ def command_review_bot(args: argparse.Namespace) -> int:
             "max_passes": int(getattr(args, "max_passes", 0) or 0),
             "batch_size": max(1, int(getattr(args, "batch_size", 1) or 1)),
             "dry_run": bool(getattr(args, "dry_run", False)),
+            "create_draft": bool(getattr(args, "create_draft", False)),
+            "older_than_years": int(getattr(args, "older_than_years", 5) or 5),
+            "remove_labels": bool(getattr(args, "remove_labels", False)),
+            "delete_unused_labels": bool(getattr(args, "delete_unused_labels", False)),
+            "days": int(getattr(args, "days", 7) or 7),
+            "apply_labels": bool(getattr(args, "apply_labels", False)),
         },
     )
     reporter.emit("log_file", path=str(reporter.log_path))
@@ -138,6 +211,275 @@ def command_review_bot(args: argparse.Namespace) -> int:
                 message="Gmail inbox preview completed.",
                 provider="gmail",
                 message_count=len(messages),
+            )
+            return 0
+
+        if args.action == "gmail-label-cleanup":
+            provider = get_provider_for_settings(settings, "gmail")
+            finder = getattr(provider, "find_old_labeled_message_groups", None)
+            if not callable(finder):
+                raise RuntimeError("The configured Gmail provider cannot inspect labels.")
+            older_than_years = max(1, int(getattr(args, "older_than_years", 5) or 5))
+            remove_labels = bool(getattr(args, "remove_labels", False))
+            reporter.emit(
+                "info",
+                message="Inspecting Gmail labels for old messages.",
+                provider="gmail",
+                older_than_years=older_than_years,
+                remove_labels=remove_labels,
+            )
+            groups = finder(older_than_years=older_than_years)
+            for group in groups:
+                reporter.emit(
+                    "gmail_label_old_messages",
+                    provider="gmail",
+                    label_id=group["id"],
+                    label_name=group["name"],
+                    message_count=group["message_count"],
+                    limited=group["limited"],
+                    older_than_years=older_than_years,
+                )
+            removed_count = 0
+            if remove_labels:
+                remover = getattr(provider, "remove_label_from_messages", None)
+                if not callable(remover):
+                    raise RuntimeError("The configured Gmail provider cannot remove labels from messages.")
+                for group in groups:
+                    removed = remover(group["id"], group["message_ids"])
+                    removed_count += removed
+                    reporter.emit(
+                        "gmail_label_removed_from_old_messages",
+                        provider="gmail",
+                        label_id=group["id"],
+                        label_name=group["name"],
+                        removed_count=removed,
+                    )
+            reporter.emit(
+                "completed",
+                message=(
+                    "Gmail old-message label cleanup completed."
+                    if remove_labels
+                    else "Gmail old-message label cleanup dry run completed."
+                ),
+                provider="gmail",
+                label_count=len(groups),
+                removed_count=removed_count,
+                dry_run=not remove_labels,
+            )
+            return 0
+
+        if args.action == "gmail-unused-label-cleanup":
+            provider = get_provider_for_settings(settings, "gmail")
+            finder = getattr(provider, "find_unused_user_labels", None)
+            if not callable(finder):
+                raise RuntimeError("The configured Gmail provider cannot inspect labels.")
+            delete_unused_labels = bool(getattr(args, "delete_unused_labels", False))
+            reporter.emit(
+                "info",
+                message="Inspecting Gmail for unused user labels.",
+                provider="gmail",
+                delete_unused_labels=delete_unused_labels,
+            )
+            labels = finder()
+            for label in labels:
+                reporter.emit(
+                    "gmail_unused_label",
+                    provider="gmail",
+                    label_id=label["id"],
+                    label_name=label["name"],
+                    messages_total=label["messages_total"],
+                    threads_total=label["threads_total"],
+                )
+            deleted_count = 0
+            if delete_unused_labels:
+                deleter = getattr(provider, "delete_user_label", None)
+                if not callable(deleter):
+                    raise RuntimeError("The configured Gmail provider cannot delete labels.")
+                for label in labels:
+                    deleter(label["id"])
+                    deleted_count += 1
+                    reporter.emit(
+                        "gmail_unused_label_deleted",
+                        provider="gmail",
+                        label_id=label["id"],
+                        label_name=label["name"],
+                    )
+            reporter.emit(
+                "completed",
+                message=(
+                    "Gmail unused label cleanup completed."
+                    if delete_unused_labels
+                    else "Gmail unused label cleanup dry run completed."
+                ),
+                provider="gmail",
+                label_count=len(labels),
+                deleted_count=deleted_count,
+                dry_run=not delete_unused_labels,
+            )
+            return 0
+
+        if args.action == "gmail-populate-labels":
+            provider = get_provider_for_settings(settings, "gmail")
+            ensure_labels = getattr(provider, "ensure_user_labels", None)
+            list_threads = getattr(provider, "list_threads_by_query", None)
+            add_labels = getattr(provider, "add_labels_to_thread", None)
+            replace_labels = getattr(provider, "replace_thread_labels", None)
+            if not callable(ensure_labels) or not callable(list_threads) or not callable(add_labels):
+                raise RuntimeError("The configured Gmail provider cannot populate labels.")
+            days = max(1, int(getattr(args, "days", 7) or 7))
+            apply_labels = bool(getattr(args, "apply_labels", False))
+            categories = settings.mailassist_categories
+            label_ids = ensure_labels(_mailassist_gmail_label_names(categories))
+            category_label_names = [_gmail_label_for_category(category) for category in categories]
+            threads = list_threads(f"newer_than:{days}d", max_threads=max(1, int(getattr(args, "limit", 100) or 100)))
+            classifier = OllamaClient(base_url, selected_model)
+            applied_count = 0
+            reporter.emit(
+                "info",
+                message="Classifying recent Gmail threads into MailAssist labels.",
+                provider="gmail",
+                days=days,
+                thread_count=len(threads),
+                apply_labels=apply_labels,
+                categories=list(categories),
+            )
+            for thread in threads:
+                category, classification_source, classification_error = _mailassist_category_for_thread(
+                    thread,
+                    categories,
+                    classifier=classifier,
+                )
+                label_names = [_gmail_label_for_category(category)] if category else []
+                if apply_labels:
+                    add_label_ids = [label_ids[name] for name in label_names if name in label_ids]
+                    remove_label_ids = [
+                        label_ids[name]
+                        for name in category_label_names
+                        if name in label_ids and name not in label_names
+                    ]
+                    if callable(replace_labels):
+                        replace_labels(thread.thread_id, add_label_ids, remove_label_ids)
+                    else:
+                        add_labels(thread.thread_id, add_label_ids)
+                    applied_count += 1
+                reporter.emit(
+                    "gmail_thread_labeled" if apply_labels else "gmail_thread_label_preview",
+                    provider="gmail",
+                    thread_id=thread.thread_id,
+                    subject=thread.subject,
+                    classification=fallback_classification_for_thread(thread),
+                    category=category or MAILASSIST_NO_CATEGORY,
+                    classification_source=classification_source,
+                    classification_error=classification_error,
+                    labels=label_names,
+                    message_count=len(thread.messages),
+                )
+            reporter.emit(
+                "completed",
+                message=(
+                    "Gmail MailAssist label population completed."
+                    if apply_labels
+                    else "Gmail MailAssist label population dry run completed."
+                ),
+                provider="gmail",
+                days=days,
+                thread_count=len(threads),
+                applied_count=applied_count,
+                dry_run=not apply_labels,
+            )
+            return 0
+
+        if args.action == "outlook-smoke-test":
+            provider = get_provider_for_settings(settings, "outlook")
+            reporter.emit(
+                "info",
+                message="Running Outlook Microsoft Graph smoke test.",
+                provider="outlook",
+                create_draft=bool(getattr(args, "create_draft", False)),
+            )
+            readiness = provider.readiness_check()
+            reporter.emit(
+                "outlook_readiness",
+                provider="outlook",
+                status=readiness.status,
+                ready=readiness.ready,
+                message=readiness.message,
+                account_email=readiness.account_email,
+                can_authenticate=readiness.can_authenticate,
+                can_read=readiness.can_read,
+                can_create_drafts=readiness.can_create_drafts,
+                requires_admin_consent=readiness.requires_admin_consent,
+                details=readiness.details,
+            )
+            if not readiness.ready:
+                reporter.emit(
+                    "completed",
+                    message="Outlook smoke test stopped before mailbox reads because provider is not ready.",
+                    provider="outlook",
+                    ready=False,
+                    thread_count=0,
+                    draft_count=0,
+                )
+                return 0
+
+            threads = provider.list_candidate_threads()
+            limit = max(1, int(getattr(args, "limit", 10) or 10))
+            selected_thread_id = str(getattr(args, "thread_id", "") or "").strip()
+            visible_threads = threads[:limit]
+            for thread in visible_threads:
+                reporter.emit(
+                    "outlook_thread_preview",
+                    provider="outlook",
+                    thread_id=thread.thread_id,
+                    subject=thread.subject,
+                    unread=thread.unread,
+                    message_count=len(thread.messages),
+                    latest_message_id=thread.messages[-1].message_id if thread.messages else "",
+                    latest_sender=thread.messages[-1].sender if thread.messages else "",
+                )
+
+            draft_count = 0
+            if bool(getattr(args, "create_draft", False)):
+                if not selected_thread_id:
+                    raise RuntimeError("--thread-id is required with outlook-smoke-test --create-draft")
+                thread = next((item for item in threads if item.thread_id == selected_thread_id), None)
+                if thread is None:
+                    raise RuntimeError(f"Outlook thread not found for controlled draft: {selected_thread_id}")
+                recipient = _safe_reply_recipient(thread, readiness.account_email)
+                draft = DraftRecord(
+                    draft_id=f"controlled-outlook-{thread.thread_id}",
+                    thread_id=thread.thread_id,
+                    provider="outlook",
+                    subject=f"MailAssist controlled draft test - Re: {thread.subject}",
+                    body=(
+                        "MailAssist controlled Outlook draft test. "
+                        "This draft validates Microsoft Graph write access and should be deleted."
+                    ),
+                    model="controlled-test",
+                    to=[recipient] if recipient else [],
+                )
+                reference = provider.create_draft(draft)
+                draft_count = 1
+                reporter.emit(
+                    "draft_created",
+                    provider="outlook",
+                    thread_id=thread.thread_id,
+                    subject=draft.subject,
+                    classification="controlled_test",
+                    provider_draft_id=reference.draft_id,
+                    provider_thread_id=reference.thread_id,
+                    provider_message_id=reference.message_id,
+                    generation_model=draft.model,
+                )
+
+            reporter.emit(
+                "completed",
+                message="Outlook smoke test completed.",
+                provider="outlook",
+                ready=True,
+                thread_count=len(threads),
+                preview_count=len(visible_threads),
+                draft_count=draft_count,
             )
             return 0
 
@@ -394,3 +736,185 @@ def command_review_bot(args: argparse.Namespace) -> int:
     except Exception as exc:
         reporter.emit("error", message=str(exc))
         return 1
+
+
+def _safe_reply_recipient(thread, account_email: str | None) -> str:
+    account = str(account_email or "").strip().lower()
+    for message in reversed(thread.messages):
+        sender = str(message.sender or "").strip().lower()
+        if sender and sender != account:
+            return sender
+    for participant in thread.participants:
+        address = str(participant or "").strip().lower()
+        if address and address != account:
+            return address
+    return ""
+
+
+def _mailassist_labels_for_thread(thread) -> list[str]:
+    category, _source, _error = _mailassist_category_for_thread(
+        thread,
+        DEFAULT_MAILASSIST_CATEGORIES,
+        classifier=None,
+    )
+    return [_gmail_label_for_category(category)]
+
+
+def _mailassist_category_for_thread(
+    thread,
+    categories: tuple[str, ...] | list[str],
+    *,
+    classifier: OllamaClient | None,
+) -> tuple[str | None, str, str | None]:
+    normalized_categories = _normalized_categories(categories)
+    if classifier is not None:
+        prompt = _mailassist_category_prompt(thread, normalized_categories)
+        try:
+            response = classifier.compose_reply(prompt)
+            parsed = _parse_mailassist_category_response(response, normalized_categories)
+            if parsed != "":
+                return parsed, "ollama", None
+            return (
+                _fallback_mailassist_category(thread, normalized_categories),
+                "fallback",
+                f"Ollama returned an unknown category: {response[:120]}",
+            )
+        except RuntimeError as exc:
+            return _fallback_mailassist_category(thread, normalized_categories), "fallback", str(exc)
+    return _fallback_mailassist_category(thread, normalized_categories), "fallback", None
+
+
+def _normalized_categories(categories: tuple[str, ...] | list[str]) -> tuple[str, ...]:
+    resolved = [LOCKED_NEEDS_REPLY_CATEGORY]
+    for category in categories:
+        cleaned = str(category).replace("/", " ").strip()
+        if not cleaned or cleaned.lower() == LOCKED_NEEDS_REPLY_CATEGORY.lower():
+            continue
+        if cleaned.lower() not in {item.lower() for item in resolved}:
+            resolved.append(cleaned)
+    return tuple(resolved)
+
+
+def _mailassist_category_prompt(thread, categories: tuple[str, ...]) -> str:
+    messages = "\n\n".join(
+        f"From: {message.sender}\nTo: {', '.join(message.to)}\nDate: {message.sent_at}\nBody:\n{message.text[:4000]}"
+        for message in thread.messages[-3:]
+    )
+    category_lines = "\n".join(f"- {category}" for category in categories)
+    return f"""You classify email threads for Gmail labels.
+
+Choose exactly one category from the allowed list, or return NA when there is no obvious fit.
+Return only the category name, exactly as written, or NA. Do not explain.
+
+Allowed categories:
+{category_lines}
+Allowed no-category responses:
+- NA
+- No obvious category
+
+Decision rules:
+- {LOCKED_NEEDS_REPLY_CATEGORY}: choose this only when the sender likely expects a human reply from the user. This category drives draft generation.
+- Needs Action: choose this when the user must do something but a reply is not the primary next step, such as pay, approve, confirm, review, upload, renew, sign, schedule, or fix an account issue.
+- For all other categories, choose the single best fit from the user's allowed list.
+- If multiple categories seem possible, choose the one that represents the user's most likely next action.
+- If none of the allowed categories clearly apply, return NA.
+
+Thread:
+Subject: {thread.subject}
+Participants: {", ".join(thread.participants)}
+
+Messages:
+{messages}
+"""
+
+
+def _parse_mailassist_category_response(response: str, categories: tuple[str, ...]) -> str | None:
+    cleaned = response.strip().strip("`").strip()
+    if "\n" in cleaned:
+        cleaned = cleaned.splitlines()[0].strip()
+    cleaned = cleaned.strip('"').strip("'").strip()
+    if cleaned.lower() in {"na", "n/a", "no obvious category", "no category", "none"}:
+        return None
+    for category in categories:
+        if cleaned.lower() == category.lower():
+            return category
+    return ""
+
+
+def _fallback_mailassist_category(thread, categories: tuple[str, ...]) -> str | None:
+    haystack = " ".join(
+        [thread.subject, *thread.participants, *(message.text for message in thread.messages)]
+    ).lower()
+    classification = fallback_classification_for_thread(thread)
+
+    if classification in {"urgent", "reply_needed"}:
+        return _category_if_enabled(LOCKED_NEEDS_REPLY_CATEGORY, categories)
+
+    if _contains_any(
+        haystack,
+        (
+            "action needed",
+            "approve",
+            "approval",
+            "sign",
+            "signature",
+            "upload",
+            "complete",
+            "review",
+            "renew",
+            "pay",
+            "payment due",
+            "confirm",
+            "verification required",
+        ),
+    ):
+        return _category_if_enabled("Needs Action", categories)
+
+    if _contains_any(haystack, ("unsubscribe", "newsletter", "digest", "webinar", "promotion")):
+        return _category_if_enabled("Subscriptions", categories)
+
+    if _contains_any(
+        haystack,
+        (
+            "license",
+            "licenses",
+            "subscription",
+            "account",
+            "login",
+            "password",
+            "security alert",
+            "domain",
+            "hosting",
+            "api key",
+            "renewal",
+        ),
+    ):
+        return _category_if_enabled("Licenses & Accounts", categories)
+
+    if _contains_any(
+        haystack,
+        ("receipt", "invoice", "order", "payment", "paid", "bank", "credit card", "statement", "refund"),
+    ):
+        return _category_if_enabled("Receipts & Finance", categories)
+
+    if _contains_any(
+        haystack,
+        ("appointment", "calendar", "meeting", "reservation", "booking", "schedule", "scheduled"),
+    ):
+        return _category_if_enabled("Appointments", categories)
+
+    if classification == "spam" or _contains_any(haystack, ("phishing", "wire money", "lottery", "crypto")):
+        return _category_if_enabled("Suspicious", categories)
+
+    return _category_if_enabled("FYI", categories)
+
+
+def _category_if_enabled(category: str, categories: tuple[str, ...]) -> str | None:
+    for item in categories:
+        if item.lower() == category.lower():
+            return item
+    return None
+
+
+def _contains_any(haystack: str, needles: tuple[str, ...]) -> bool:
+    return any(needle in haystack for needle in needles)

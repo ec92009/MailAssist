@@ -22,13 +22,13 @@ Mac/Gmail remains the proving ground because it is already working locally and e
     - `sed -n '1,220p' TODO.md`
     - `sed -n '1,180p' SUMMARY.md`
 - Current baseline at handoff:
-  - Last synchronized commit before this handoff update: `f5009aa`
-  - Current visible version: `v59.3`
+  - Last synchronized commit before this pickup: `6b65687`
+  - Current visible version: `v59.8`
   - Local app/dev entrypoint: `./.venv/bin/mailassist desktop-gui`
   - Packaged app path: `/Applications/MailAssist.app`
 - Known open issue to continue:
   - Highest unblocked implementation work is now Outlook/Microsoft 365 progress beyond the mock Graph provider contract.
-  - Immediate next implementation step: add real Microsoft Graph OAuth/token storage, then smoke-test `/me` and draft creation against a developer tenant when available.
+  - Immediate next implementation step: create/authorize a Microsoft 365 developer or Magali tenant app, then run `mailassist outlook-auth` and `review-bot --action outlook-smoke-test`.
   - The small GUI polish tasks from the prior handoff are complete: Settings now has a `Signature + Attribution` preview with `Hide`/`Above Signature`/`Below Signature`, draft assembly honors placement in plain and HTML bodies, and the check-frequency spinner height now matches neighboring fields without shrinking them.
 - Handoff protocol for this repo:
   - Run `prepare for handoff` before switching machines or ending a work block that should resume elsewhere.
@@ -64,15 +64,28 @@ Mac/Gmail remains the proving ground because it is already working locally and e
 - Exercised a real live Gmail provider-writing pass against actionable inbox threads. The pass created two real Gmail drafts (`Nudge` and `Note to self`) with review context, generated body text, and saved signature rendered in Gmail; no email was sent. (Managed by Codex)
 - Added the first Microsoft Graph mock-fixture slice for Outlook/Microsoft 365: `/me` account email discovery, synthetic mailbox messages, conversation/thread parsing, watcher filter support, reply-draft payload mapping, and admin-consent auth failure reporting through the provider readiness contract. (Managed by Codex)
 - Bumped visible version to `v59.3` for the Outlook/Microsoft 365 Graph fixture and provider-contract progress. (Managed by Codex)
+- Added real Microsoft Graph device-code OAuth, refresh-token storage under the ignored Outlook token path, a real Graph client for `/me`, inbox listing, and reply-draft creation, and an `outlook-auth` CLI command for first authorization. (Managed by Codex)
+- Bumped visible version to `v59.4` for the Outlook OAuth/token-storage provider progress. (Managed by Codex)
+- Added a safe Outlook smoke-test bot action for readiness, `/me`, inbox preview, and explicit controlled reply-draft validation by thread id; added Microsoft 365 app-registration/admin-consent notes under `docs/outlook-m365-admin-consent.md`. (Managed by Codex)
+- Bumped visible version to `v59.5` for the Outlook smoke-test and tenant-consent readiness slice. (Managed by Codex)
+- Moved visible-version loading out of legacy `review_state.py` into `mailassist.version`, leaving `review_state.py` as compatibility-only support for the old two-candidate review path. (Managed by Codex)
+- Simplified the live batch LLM output shape by removing the redundant `SHOULD_DRAFT` flag; draft/no-draft is now inferred from classification and body content. (Managed by Codex)
+- Added Windows packaging notes and a Parallels/VM checklist under `docs/windows-packaging.md`. (Managed by Codex)
+- Added a dry-run-first Gmail label cleanup command that finds old messages under user labels and can explicitly remove those labels from matching old messages without deleting labels or emails. (Managed by Codex)
+- Excluded archive labels from Gmail old-message label cleanup because old archived mail can remain archived. (Managed by Codex)
+- Added MailAssist Gmail category labels under a top-level `MailAssist` label. Categories are user-configurable, `Needs Reply` is locked because it drives draft generation, and Ollama now chooses exactly one configured category or `NA` for no obvious category. (Managed by Codex)
+- Added the desktop `Organize Gmail` control with a limited day horizon, confirmation copy that discloses the run can take a few minutes while the user keeps working, and compact user-centered bot-control labels. (Managed by Codex)
+- Ran a live Gmail reclassification for the last 7 days with the updated category set including `Marketing` and `Political`; it processed 342 threads and applied/replaced/removed MailAssist labels through Gmail without sending email. (Managed by Codex)
+- Bumped visible version to `v59.8` for the Gmail category-labeling and control-panel polish release. (Managed by Codex)
 
 ## Remaining Backlog
 
-1. Continue the Outlook/Microsoft 365 provider path for Magali on the new provider contract. Graph mock fixtures, auth/readiness checks, account email discovery, inbox/thread parsing, and provider-native draft payload mapping now exist. Next steps are real Microsoft Graph OAuth/token storage, developer-tenant smoke tests where available, and packaging the consent/admin guidance for Magali's tenant. (Managed by Codex) (Waiting on Magali/admin where noted)
+1. Continue the Outlook/Microsoft 365 provider path for Magali on the new provider contract. Graph mock fixtures, auth/readiness checks, account email discovery, inbox/thread parsing, provider-native draft payload mapping, real OAuth/token storage, smoke-test tooling, and tenant/admin guidance now exist. Next step requires a Microsoft 365 developer tenant or Magali tenant app authorization. (Managed by Codex) (Blocked on user/tenant)
 
 2. Continue product safety and trust hardening. Send automation stays out of scope, provider-writing actions stay explicit, live provider tests stay behind confirmation/developer UI, and real tokens/logs/drafts/queues/email artifacts stay out of git. (Managed by Codex)
 
-3. Continue architecture cleanup. Move any remaining live-only prompt helpers out of legacy paths, then quarantine remaining two-candidate review helpers as legacy-only test/support code. (Managed by Codex)
+3. Continue architecture cleanup. Remaining two-candidate review helpers are now legacy-only compatibility/test support; future cleanup should delete them only after no archived tests or support paths need them. (Managed by Codex)
 
 4. Maintain the Mac/Gmail sandbox. Keep mock-to-Gmail draft tests, read-only Gmail preview, ignored OAuth credential paths, hidden developer OAuth settings, and optional Mac/Gmail `.dmg` artifacts available for regression and learning. (Managed by Codex)
 
-5. Prepare packaging and distribution. Keep `dist/` ignored, publish test builds through GitHub Releases when useful, keep README download links in sync with the visible version, research Windows signing/installer needs before handing a build to Magali, and defer Mac signing/notarization until broader Mac use requires it. (Managed by Codex)
+5. Prepare packaging and distribution. Windows packaging notes now exist; the next real packaging step requires a Parallels VM or another Windows build machine. Keep `dist/` ignored, publish test builds through GitHub Releases when useful, keep README download links in sync with the visible version, and defer Mac signing/notarization until broader Mac use requires it. (Managed by Codex) (Blocked on Windows VM for Windows build)

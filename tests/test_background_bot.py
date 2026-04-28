@@ -362,7 +362,6 @@ def test_parse_batch_candidate_response_unpacks_thread_blocks() -> None:
     response = """
 BEGIN THREAD thread-001
 CLASSIFICATION: urgent
-SHOULD_DRAFT: yes
 BODY:
 Alex,
 
@@ -370,7 +369,6 @@ I will send the notes today.
 -- END THREAD thread-001 --
 BEGIN THREAD thread-002
 CLASSIFICATION: automated
-SHOULD_DRAFT: no
 BODY:
 -- END THREAD thread-002 --
 """
@@ -381,10 +379,8 @@ BODY:
     )
 
     assert parsed["thread-001"]["classification"] == "urgent"
-    assert parsed["thread-001"]["should_draft"] is True
     assert "send the notes" in parsed["thread-001"]["body"]
     assert parsed["thread-002"]["classification"] == "automated"
-    assert parsed["thread-002"]["should_draft"] is False
     assert parsed["thread-002"]["body"] == ""
 
 

@@ -67,6 +67,8 @@ def test_factory_passes_outlook_settings_to_provider(monkeypatch, tmp_path: Path
 
     assert isinstance(provider, OutlookProvider)
     readiness = provider.readiness_check()
+    assert readiness.status == "auth_required"
     assert readiness.details["client_id"] == "client-123"
     assert readiness.details["tenant_id"] == "tenant-456"
     assert readiness.details["redirect_uri"] == "http://localhost:9999/callback"
+    assert readiness.details["token_file"].endswith("secrets/outlook-token.json")

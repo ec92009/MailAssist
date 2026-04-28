@@ -23,6 +23,7 @@ def get_provider_for_settings(settings: Settings, provider_name: str) -> DraftPr
             client_id=settings.outlook_client_id,
             tenant_id=settings.outlook_tenant_id,
             redirect_uri=settings.outlook_redirect_uri,
+            token_file=settings.outlook_token_file,
         )
 
     raise RuntimeError(f"Unknown provider: {provider_name}")

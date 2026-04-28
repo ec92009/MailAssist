@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +16,17 @@ ATTRIBUTION_PLACEMENTS = {
     ATTRIBUTION_ABOVE_SIGNATURE,
     ATTRIBUTION_BELOW_SIGNATURE,
 }
+LOCKED_NEEDS_REPLY_CATEGORY = "Needs Reply"
+DEFAULT_MAILASSIST_CATEGORIES = (
+    LOCKED_NEEDS_REPLY_CATEGORY,
+    "Needs Action",
+    "Subscriptions",
+    "Licenses & Accounts",
+    "Receipts & Finance",
+    "Appointments",
+    "FYI",
+    "Suspicious",
+)
 
 
 @dataclass(frozen=True)
@@ -40,6 +52,7 @@ class Settings:
     outlook_client_id: str
     outlook_tenant_id: str
     outlook_redirect_uri: str
+    outlook_token_file: Path
     gmail_watcher_unread_only: bool
     gmail_watcher_time_window: str
     outlook_watcher_unread_only: bool
@@ -48,6 +61,7 @@ class Settings:
     watcher_time_window: str
     draft_attribution: bool
     draft_attribution_placement: str
+    mailassist_categories: tuple[str, ...]
 
 
 def parse_bool(value: str | None, default: bool = False) -> bool:
@@ -70,6 +84,27 @@ def parse_attribution_placement(value: str | None, *, fallback_enabled: bool = F
     if cleaned in ATTRIBUTION_PLACEMENTS:
         return cleaned
     return ATTRIBUTION_BELOW_SIGNATURE if fallback_enabled else ATTRIBUTION_HIDE
+
+
+def parse_mailassist_categories(value: str | None) -> tuple[str, ...]:
+    raw = (value or "").strip()
+    items: list[str] = []
+    if raw:
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = [part.strip() for part in raw.split(",")]
+        if isinstance(parsed, list):
+            items = [str(item).strip() for item in parsed]
+
+    categories: list[str] = [LOCKED_NEEDS_REPLY_CATEGORY]
+    for item in items or list(DEFAULT_MAILASSIST_CATEGORIES):
+        cleaned = item.replace("/", " ").strip()
+        if not cleaned or cleaned.lower() == LOCKED_NEEDS_REPLY_CATEGORY.lower():
+            continue
+        if cleaned.lower() not in {category.lower() for category in categories}:
+            categories.append(cleaned)
+    return tuple(categories)
 
 
 def path_from_env(value: str | None, default: Path, *, root_dir: Path) -> Path:
@@ -247,6 +282,11 @@ def load_settings() -> Settings:
         outlook_redirect_uri=env(
             "MAILASSIST_OUTLOOK_REDIRECT_URI", "http://localhost:8765/outlook/callback"
         ),
+        outlook_token_file=path_from_env(
+            env("MAILASSIST_OUTLOOK_TOKEN_FILE"),
+            root_dir / "secrets" / "outlook-token.json",
+            root_dir=root_dir,
+        ),
         gmail_watcher_unread_only=gmail_watcher_unread_only,
         gmail_watcher_time_window=gmail_watcher_time_window,
         outlook_watcher_unread_only=outlook_watcher_unread_only,
@@ -255,4 +295,5 @@ def load_settings() -> Settings:
         watcher_time_window=watcher_time_window,
         draft_attribution=draft_attribution_placement != ATTRIBUTION_HIDE,
         draft_attribution_placement=draft_attribution_placement,
+        mailassist_categories=parse_mailassist_categories(env("MAILASSIST_CATEGORIES")),
     )

@@ -297,6 +297,7 @@ def test_watcher_filter_controls_persist_and_show_on_dashboard(monkeypatch, tmp_
     window.attribution_placement_combo.setCurrentIndex(
         window.attribution_placement_combo.findData("above_signature")
     )
+    window.mailassist_category_list.addItem("Travel")
     window.bot_poll_seconds_input.setValue(45)
     window.save_settings(announce=False)
 
@@ -310,6 +311,8 @@ def test_watcher_filter_controls_persist_and_show_on_dashboard(monkeypatch, tmp_
     assert env_values["MAILASSIST_OUTLOOK_WATCHER_TIME_WINDOW"] == "30d"
     assert env_values["MAILASSIST_DRAFT_ATTRIBUTION"] == "true"
     assert env_values["MAILASSIST_DRAFT_ATTRIBUTION_PLACEMENT"] == "above_signature"
+    assert json.loads(env_values["MAILASSIST_CATEGORIES"])[0] == "Needs Reply"
+    assert "Travel" in json.loads(env_values["MAILASSIST_CATEGORIES"])
     assert window.watcher_filter_status_label.text() == "unread only, last 7 days"
     assert "Watcher filter: unread only, last 7 days" in window.settings_summary.toPlainText()
     assert "Attribution: Above Signature" in window.settings_summary.toPlainText()
@@ -474,4 +477,78 @@ def test_controlled_gmail_draft_runs_after_confirmation(monkeypatch) -> None:
     window.run_controlled_gmail_draft()
 
     assert called == [("gmail-controlled-draft", "thread-008", "gmail", False, False)]
+    window.close()
+
+
+def test_gmail_label_rescan_requires_confirmation(monkeypatch) -> None:
+    window = MailAssistDesktopWindow()
+    called = []
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.No,
+    )
+    monkeypatch.setattr(window, "save_settings", lambda *args, **kwargs: called.append(("save",)))
+    monkeypatch.setattr(window, "run_bot_action", lambda *args, **kwargs: called.append(("run",)))
+
+    window.run_gmail_label_rescan()
+
+    assert called == []
+    assert window.banner.text() == "Gmail label rescan canceled."
+    window.close()
+
+
+def test_gmail_label_rescan_runs_with_limited_horizon(monkeypatch) -> None:
+    window = MailAssistDesktopWindow()
+    called = []
+    confirmation_messages = []
+    window.gmail_label_days_input.setValue(3)
+
+    def fake_question(_parent, title, message, *args, **kwargs):
+        confirmation_messages.append((title, message))
+        return QMessageBox.StandardButton.Yes
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        fake_question,
+    )
+    monkeypatch.setattr(window, "save_settings", lambda *args, **kwargs: called.append(("save", kwargs)))
+    monkeypatch.setattr(
+        window,
+        "run_bot_action",
+        lambda action, **kwargs: called.append((action, kwargs)),
+    )
+
+    window.run_gmail_label_rescan()
+
+    assert called == [
+        ("save", {"announce": False}),
+        (
+            "gmail-populate-labels",
+            {
+                "provider": "gmail",
+                "days": 3,
+                "limit": 500,
+                "apply_labels": True,
+            },
+        ),
+    ]
+    assert confirmation_messages[0][0] == "Organize Gmail"
+    assert "take a few minutes" in confirmation_messages[0][1]
+    assert "keep working" in confirmation_messages[0][1]
+    window.close()
+
+
+def test_bot_control_actions_use_user_centered_labels_and_compact_days_input() -> None:
+    window = MailAssistDesktopWindow()
+
+    assert window.demo_inbox_button.text() == "Try Demo Inbox"
+    assert window.gmail_draft_preview_button.text() == "Preview Gmail Draft"
+    assert window.controlled_gmail_draft_button.text() == "Create Test Draft"
+    assert window.gmail_label_rescan_button.text() == "Organize Gmail"
+    assert window.start_watch_loop_button.text() == "Start Auto-Check"
+    assert window.gmail_label_days_input.maximumWidth() <= 104
+    assert window.gmail_label_days_input.height() == window.gmail_label_rescan_button.height()
     window.close()

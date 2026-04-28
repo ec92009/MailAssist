@@ -9,6 +9,7 @@ Open questions:
 - Outlook: confirm whether her tenant allows third-party apps and whether admin consent is needed.
 - Outlook: Microsoft Graph delta queries vs periodic polling.
 - Outlook: required permissions for read + draft creation.
+- Outlook: real Graph device-code OAuth and ignored token storage now exist locally; next proof point is a developer-tenant smoke test for `/me`, inbox listing, and draft creation.
 - Gmail: polling interval vs push notifications.
 - Gmail: which query best finds actionable new mail without reprocessing old threads.
 - Gmail: how to detect whether the user already replied manually.
@@ -19,7 +20,7 @@ Current product research checkpoint:
 
 - Magali is the north-star user: a CPA in San Diego, Windows user, Outlook Desktop business email.
 - Mac/Gmail is a useful sandbox, not the main product destination.
-- The immediate Outlook research blocker is account type. Screenshots requested: Outlook `File` > `Account Settings` > `Account Settings...` > `Email` tab for classic Outlook, or `Settings` > `Accounts` > `Email accounts` > `Manage` for new Outlook.
+- Magali's main business mailbox appears to be Microsoft 365, so the immediate Outlook research blocker is now tenant authorization/admin consent rather than broad account-type discovery.
 - If the account is Microsoft-hosted, prefer Microsoft Graph.
 - If the account is IMAP/SMTP, evaluate whether direct IMAP/SMTP drafting is possible and safe enough, or whether Outlook local automation is more appropriate.
 
@@ -32,6 +33,8 @@ Current Gmail research checkpoint:
 - Batch-size 5 and 10 have been tested against Gmail draft creation with `gemma4:31b`.
 - The next Gmail step is no longer the top product priority. Keep Gmail as a sandbox and regression path while Windows/Outlook research proceeds.
 - The project now has two setup PDFs for the Google Cloud/OAuth steps because the Google Console is dense enough to need explicit navigation cues.
+- Gmail category labeling now uses a separate local Ollama categorization prompt from the draft-generation prompt. The prompt receives the user-configured category list, asks for exactly one category or `NA`, and Gmail only applies/removes labels based on that local model output.
+- This creates useful plumbing for future better local models: Gmail remains only the mail/label API, Codex is not part of runtime classification, and the user can add/remove category options without code changes.
 
 ## Deduplication
 

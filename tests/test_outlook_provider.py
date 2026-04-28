@@ -1,10 +1,19 @@
+import json
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
 from mailassist.fixtures.graph import (
     build_graph_admin_consent_blocked_client,
     build_graph_fixture_client,
 )
 from mailassist.live_filters import WatcherFilter
 from mailassist.models import DraftRecord
-from mailassist.providers.outlook import OutlookProvider
+from mailassist.providers.outlook import (
+    MicrosoftGraphClient,
+    OUTLOOK_GRAPH_SCOPES,
+    OutlookGraphTokenStore,
+    OutlookProvider,
+)
 
 
 def _provider(graph_client=None) -> OutlookProvider:
@@ -98,3 +107,101 @@ def test_outlook_create_draft_maps_to_graph_reply_payload() -> None:
     assert created["ccRecipients"] == [
         {"emailAddress": {"address": "bookkeeper@example-cpa.com"}}
     ]
+
+
+def test_outlook_graph_scopes_do_not_request_send_permission() -> None:
+    assert "Mail.ReadWrite" in OUTLOOK_GRAPH_SCOPES
+    assert "Mail.Send" not in OUTLOOK_GRAPH_SCOPES
+
+
+def test_graph_token_store_saves_expiry_metadata(tmp_path: Path) -> None:
+    token_file = tmp_path / "secrets" / "outlook-token.json"
+    saved = OutlookGraphTokenStore(token_file).save(
+        {"access_token": "access-1", "refresh_token": "refresh-1", "expires_in": 3600}
+    )
+
+    payload = json.loads(token_file.read_text(encoding="utf-8"))
+    assert payload["access_token"] == "access-1"
+    assert payload["refresh_token"] == "refresh-1"
+    assert payload["expires_at"] == saved["expires_at"]
+
+
+def test_real_graph_client_device_flow_persists_token(tmp_path: Path) -> None:
+    requests: list[tuple[str, str, dict[str, str], bytes | None]] = []
+    prompts: list[str] = []
+
+    def transport(method: str, url: str, headers: dict[str, str], data: bytes | None):
+        requests.append((method, url, headers, data))
+        if url.endswith("/devicecode"):
+            form = parse_qs((data or b"").decode("utf-8"))
+            assert form["client_id"] == ["client-123"]
+            assert "Mail.ReadWrite" in form["scope"][0]
+            assert "offline_access" in form["scope"][0]
+            return {
+                "device_code": "device-123",
+                "message": "Open https://microsoft.com/devicelogin and enter ABCD.",
+                "interval": 1,
+                "expires_in": 60,
+            }
+        if url.endswith("/token"):
+            form = parse_qs((data or b"").decode("utf-8"))
+            assert form["grant_type"] == ["urn:ietf:params:oauth:grant-type:device_code"]
+            assert form["device_code"] == ["device-123"]
+            return {
+                "access_token": "access-123",
+                "refresh_token": "refresh-123",
+                "expires_in": 3600,
+            }
+        raise AssertionError(url)
+
+    client = MicrosoftGraphClient(
+        client_id="client-123",
+        tenant_id="tenant-456",
+        token_file=tmp_path / "outlook-token.json",
+        auth_prompt=prompts.append,
+        transport=transport,
+        sleep=lambda _seconds: None,
+    )
+
+    assert client.authenticate() == "ok"
+
+    assert prompts == ["Open https://microsoft.com/devicelogin and enter ABCD."]
+    token = json.loads((tmp_path / "outlook-token.json").read_text(encoding="utf-8"))
+    assert token["access_token"] == "access-123"
+    assert token["refresh_token"] == "refresh-123"
+    assert [urlparse(request[1]).path for request in requests] == [
+        "/tenant-456/oauth2/v2.0/devicecode",
+        "/tenant-456/oauth2/v2.0/token",
+    ]
+
+
+def test_real_graph_client_uses_refresh_token_for_me_request(tmp_path: Path) -> None:
+    token_file = tmp_path / "outlook-token.json"
+    token_file.write_text(
+        json.dumps({"refresh_token": "refresh-123", "expires_at": 1}),
+        encoding="utf-8",
+    )
+
+    def transport(method: str, url: str, headers: dict[str, str], data: bytes | None):
+        if url.endswith("/token"):
+            form = parse_qs((data or b"").decode("utf-8"))
+            assert form["grant_type"] == ["refresh_token"]
+            assert form["refresh_token"] == ["refresh-123"]
+            return {
+                "access_token": "access-new",
+                "refresh_token": "refresh-new",
+                "expires_in": 3600,
+            }
+        if url.endswith("/me"):
+            assert headers["Authorization"] == "Bearer access-new"
+            return {"mail": "magali@example-cpa.com"}
+        raise AssertionError(url)
+
+    client = MicrosoftGraphClient(
+        client_id="client-123",
+        tenant_id="tenant-456",
+        token_file=token_file,
+        transport=transport,
+    )
+
+    assert client.get_me()["mail"] == "magali@example-cpa.com"

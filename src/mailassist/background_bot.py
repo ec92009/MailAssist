@@ -91,7 +91,11 @@ def build_prompt_preview(
     if not user_facing:
         return prompt
     prompt = re.sub(r"(?ms)^Output format requirements:.*?^Threads:\n", "Example email sent to the local model:\n", prompt)
-    prompt = re.sub(r"(?m)^- If classification is `automated`, `no_response`, or `spam`, set `SHOULD_DRAFT: no` and leave `BODY:` empty\.\n", "", prompt)
+    prompt = re.sub(
+        r"(?m)^- If classification is `automated`, `no_response`, or `spam`, leave `BODY:` empty\.\n",
+        "",
+        prompt,
+    )
     return prompt
 
 
@@ -441,7 +445,7 @@ def generate_batch_candidates_for_tone(
         item = parsed[thread.thread_id]
         heuristic_classification = fallback_classification_for_thread(thread)
         classification = merge_classification(item["classification"], heuristic_classification)
-        body = item["body"].strip() if item["should_draft"] else ""
+        body = item["body"].strip() if classification not in SET_ASIDE_CLASSIFICATIONS else ""
         results[thread.thread_id] = {
             "body": body,
             "classification": classification,
@@ -482,7 +486,7 @@ Classification rules:
 - Use `spam` when the message is junk, deceptive, or obviously irrelevant.
 
 Drafting rules:
-- If classification is `automated`, `no_response`, or `spam`, set `SHOULD_DRAFT: no` and leave `BODY:` empty.
+- If classification is `automated`, `no_response`, or `spam`, leave `BODY:` empty.
 - If a reply is appropriate, write as the recipient of that specific thread.
 - Stay grounded in that thread only.
 - Do not turn email domains into company names unless that company name appears explicitly in the thread.
@@ -508,7 +512,6 @@ Output format requirements:
 
 BEGIN THREAD <thread_id>
 CLASSIFICATION: <urgent|reply_needed|automated|no_response|spam>
-SHOULD_DRAFT: <yes|no>
 BODY:
 <candidate email body, or empty>
 -- END THREAD <thread_id> --
@@ -539,24 +542,17 @@ def parse_batch_candidate_response(
 
 def _parse_batch_block(block: str, thread_id: str) -> dict[str, Any]:
     classification_match = re.search(r"^CLASSIFICATION:\s*(.+)$", block, flags=re.MULTILINE)
-    should_draft_match = re.search(r"^SHOULD_DRAFT:\s*(.+)$", block, flags=re.MULTILINE)
     body_match = re.search(r"^BODY:\s*\n?(.*)$", block, flags=re.MULTILINE | re.DOTALL)
     if classification_match is None:
         raise ValueError(f"Missing classification for {thread_id}.")
-    if should_draft_match is None:
-        raise ValueError(f"Missing should-draft flag for {thread_id}.")
     if body_match is None:
         raise ValueError(f"Missing body marker for {thread_id}.")
 
     classification = normalize_classification(classification_match.group(1))
     if classification == "unclassified":
         raise ValueError(f"Invalid classification for {thread_id}.")
-    should_draft_value = should_draft_match.group(1).strip().lower()
-    if should_draft_value not in {"yes", "no"}:
-        raise ValueError(f"Invalid should-draft flag for {thread_id}.")
     return {
         "classification": classification,
-        "should_draft": should_draft_value == "yes",
         "body": body_match.group(1).strip(),
     }
 

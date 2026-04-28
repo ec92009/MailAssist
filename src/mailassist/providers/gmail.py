@@ -21,6 +21,19 @@ GMAIL_SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.settings.basic",
 ]
+GMAIL_LABEL_CLEANUP_SCOPES = [
+    *GMAIL_SCOPES,
+    "https://www.googleapis.com/auth/gmail.modify",
+]
+GMAIL_LABEL_ADMIN_SCOPES = [
+    *GMAIL_SCOPES,
+    "https://www.googleapis.com/auth/gmail.labels",
+]
+GMAIL_LABEL_WRITE_SCOPES = [
+    *GMAIL_SCOPES,
+    "https://www.googleapis.com/auth/gmail.labels",
+    "https://www.googleapis.com/auth/gmail.modify",
+]
 
 
 @dataclass(frozen=True)
@@ -49,18 +62,24 @@ class GmailProvider(DraftProvider):
             ) from exc
         return Request, Credentials, InstalledAppFlow, build
 
-    def _credentials(self, *, allow_interactive_auth: bool = True) -> Any:
+    def _credentials(
+        self,
+        *,
+        allow_interactive_auth: bool = True,
+        scopes: list[str] | None = None,
+    ) -> Any:
+        scopes = scopes or GMAIL_SCOPES
         Request, Credentials, InstalledAppFlow, _ = self._load_google_modules()
         creds = None
         if self.token_file.exists():
-            if not _token_file_covers_scopes(self.token_file, GMAIL_SCOPES):
+            if not _token_file_covers_scopes(self.token_file, scopes):
                 if not allow_interactive_auth:
                     raise RuntimeError(
                         "Gmail needs one-time permission to read the saved signature. "
                         "Use Import from Gmail to authorize that access."
                     )
             else:
-                creds = Credentials.from_authorized_user_file(str(self.token_file), GMAIL_SCOPES)
+                creds = Credentials.from_authorized_user_file(str(self.token_file), scopes)
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
                 creds.refresh(Request())
@@ -72,7 +91,7 @@ class GmailProvider(DraftProvider):
                         f"Gmail credentials file not found at {self.credentials_file}"
                     )
                 flow = InstalledAppFlow.from_client_secrets_file(
-                    str(self.credentials_file), GMAIL_SCOPES
+                    str(self.credentials_file), scopes
                 )
                 creds = flow.run_local_server(port=0)
             self.token_file.parent.mkdir(parents=True, exist_ok=True)
@@ -266,6 +285,198 @@ class GmailProvider(DraftProvider):
                 threads.append(thread)
         return threads
 
+    def find_old_labeled_message_groups(
+        self,
+        *,
+        older_than_years: int = 5,
+        include_mailassist_labels: bool = False,
+        max_messages_per_label: int = 500,
+    ) -> list[dict[str, Any]]:
+        _, _, _, build = self._load_google_modules()
+        creds = self._credentials(allow_interactive_auth=False)
+        service = build("gmail", "v1", credentials=creds)
+        response = service.users().labels().list(userId="me").execute()
+        groups: list[dict[str, Any]] = []
+        for label in response.get("labels", []):
+            label_id = str(label.get("id", "")).strip()
+            label_name = str(label.get("name", "")).strip()
+            if str(label.get("type", "")).lower() != "user":
+                continue
+            if not include_mailassist_labels and label_name.startswith("MailAssist/"):
+                continue
+            if _is_label_cleanup_excluded(label_name):
+                continue
+            message_ids = _list_message_ids_for_label_query(
+                service,
+                label_id=label_id,
+                query=f"older_than:{max(1, older_than_years)}y",
+                max_messages=max(1, max_messages_per_label),
+            )
+            if not message_ids:
+                continue
+            groups.append(
+                {
+                    "id": label_id,
+                    "name": label_name,
+                    "message_ids": message_ids,
+                    "message_count": len(message_ids),
+                    "limited": len(message_ids) >= max(1, max_messages_per_label),
+                    "older_than_years": older_than_years,
+                }
+            )
+        return groups
+
+    def remove_label_from_messages(self, label_id: str, message_ids: list[str]) -> int:
+        if not message_ids:
+            return 0
+        _, _, _, build = self._load_google_modules()
+        creds = self._credentials(allow_interactive_auth=True, scopes=GMAIL_LABEL_CLEANUP_SCOPES)
+        service = build("gmail", "v1", credentials=creds)
+        removed = 0
+        for chunk in _chunks(message_ids, 1000):
+            service.users().messages().batchModify(
+                userId="me",
+                body={"ids": chunk, "removeLabelIds": [label_id]},
+            ).execute()
+            removed += len(chunk)
+        return removed
+
+    def find_unused_user_labels(self, *, include_mailassist_labels: bool = False) -> list[dict[str, Any]]:
+        _, _, _, build = self._load_google_modules()
+        creds = self._credentials(allow_interactive_auth=False)
+        service = build("gmail", "v1", credentials=creds)
+        response = service.users().labels().list(userId="me").execute()
+        labels = [
+            label
+            for label in response.get("labels", [])
+            if str(label.get("type", "")).lower() == "user"
+        ]
+        label_names = {str(label.get("name", "")).strip() for label in labels}
+        unused: list[dict[str, Any]] = []
+        for label in labels:
+            label_id = str(label.get("id", "")).strip()
+            label_name = str(label.get("name", "")).strip()
+            if not include_mailassist_labels and label_name.startswith("MailAssist/"):
+                continue
+            if _is_label_cleanup_excluded(label_name):
+                continue
+            if _has_child_label(label_name, label_names):
+                continue
+            messages_total = int(label.get("messagesTotal") or 0)
+            threads_total = int(label.get("threadsTotal") or 0)
+            if messages_total or threads_total:
+                continue
+            unused.append(
+                {
+                    "id": label_id,
+                    "name": label_name,
+                    "messages_total": messages_total,
+                    "threads_total": threads_total,
+                }
+            )
+        return unused
+
+    def delete_user_label(self, label_id: str) -> None:
+        _, _, _, build = self._load_google_modules()
+        creds = self._credentials(allow_interactive_auth=True, scopes=GMAIL_LABEL_ADMIN_SCOPES)
+        service = build("gmail", "v1", credentials=creds)
+        service.users().labels().delete(userId="me", id=label_id).execute()
+
+    def ensure_user_labels(self, label_names: list[str]) -> dict[str, str]:
+        _, _, _, build = self._load_google_modules()
+        creds = self._credentials(allow_interactive_auth=True, scopes=GMAIL_LABEL_WRITE_SCOPES)
+        service = build("gmail", "v1", credentials=creds)
+        response = service.users().labels().list(userId="me").execute()
+        existing = {
+            str(label.get("name", "")).strip(): str(label.get("id", "")).strip()
+            for label in response.get("labels", [])
+        }
+        resolved: dict[str, str] = {}
+        for label_name in label_names:
+            if label_name in existing:
+                resolved[label_name] = existing[label_name]
+                continue
+            created = (
+                service.users()
+                .labels()
+                .create(
+                    userId="me",
+                    body={
+                        "name": label_name,
+                        "labelListVisibility": "labelShow",
+                        "messageListVisibility": "show",
+                    },
+                )
+                .execute()
+            )
+            resolved[label_name] = str(created.get("id", "")).strip()
+        return resolved
+
+    def list_threads_by_query(self, query: str, *, max_threads: int = 100) -> list[EmailThread]:
+        _, _, _, build = self._load_google_modules()
+        creds = self._credentials(allow_interactive_auth=False)
+        service = build("gmail", "v1", credentials=creds)
+        raw_threads = []
+        page_token = None
+        while len(raw_threads) < max_threads:
+            kwargs: dict[str, Any] = {
+                "userId": "me",
+                "q": query,
+                "maxResults": min(100, max_threads - len(raw_threads)),
+            }
+            if page_token:
+                kwargs["pageToken"] = page_token
+            response = service.users().threads().list(**kwargs).execute()
+            raw_threads.extend(response.get("threads", []))
+            page_token = response.get("nextPageToken")
+            if not page_token:
+                break
+
+        threads: list[EmailThread] = []
+        for item in raw_threads:
+            thread_payload = (
+                service.users()
+                .threads()
+                .get(userId="me", id=item["id"], format="full")
+                .execute()
+            )
+            thread = _gmail_thread_to_email_thread(thread_payload)
+            if thread is not None:
+                threads.append(thread)
+        return threads
+
+    def add_labels_to_thread(self, thread_id: str, label_ids: list[str]) -> None:
+        if not label_ids:
+            return
+        _, _, _, build = self._load_google_modules()
+        creds = self._credentials(allow_interactive_auth=True, scopes=GMAIL_LABEL_WRITE_SCOPES)
+        service = build("gmail", "v1", credentials=creds)
+        service.users().threads().modify(
+            userId="me",
+            id=thread_id,
+            body={"addLabelIds": label_ids},
+        ).execute()
+
+    def replace_thread_labels(
+        self,
+        thread_id: str,
+        add_label_ids: list[str],
+        remove_label_ids: list[str],
+    ) -> None:
+        if not add_label_ids and not remove_label_ids:
+            return
+        _, _, _, build = self._load_google_modules()
+        creds = self._credentials(allow_interactive_auth=True, scopes=GMAIL_LABEL_WRITE_SCOPES)
+        service = build("gmail", "v1", credentials=creds)
+        service.users().threads().modify(
+            userId="me",
+            id=thread_id,
+            body={
+                "addLabelIds": add_label_ids,
+                "removeLabelIds": remove_label_ids,
+            },
+        ).execute()
+
 
 def _credentials_cover_scopes(creds: Any, scopes: list[str]) -> bool:
     has_scopes = getattr(creds, "has_scopes", None)
@@ -311,6 +522,46 @@ def _build_gmail_thread_query(watcher_filter: WatcherFilter) -> str:
         parts.append("newer_than:30d")
 
     return " ".join(parts)
+
+
+def _list_message_ids_for_label_query(
+    service: Any,
+    *,
+    label_id: str,
+    query: str,
+    max_messages: int,
+) -> list[str]:
+    message_ids: list[str] = []
+    page_token = None
+    while len(message_ids) < max_messages:
+        kwargs: dict[str, Any] = {
+            "userId": "me",
+            "labelIds": [label_id],
+            "q": query,
+            "maxResults": min(500, max_messages - len(message_ids)),
+        }
+        if page_token:
+            kwargs["pageToken"] = page_token
+        response = service.users().messages().list(**kwargs).execute()
+        message_ids.extend(str(item.get("id", "")) for item in response.get("messages", []) if item.get("id"))
+        page_token = response.get("nextPageToken")
+        if not page_token:
+            break
+    return message_ids
+
+
+def _is_label_cleanup_excluded(label_name: str) -> bool:
+    parts = [part.strip().lower() for part in label_name.split("/") if part.strip()]
+    return bool(parts and parts[-1] == "archive")
+
+
+def _has_child_label(label_name: str, label_names: set[str]) -> bool:
+    prefix = f"{label_name}/"
+    return any(candidate.startswith(prefix) for candidate in label_names)
+
+
+def _chunks(items: list[str], size: int) -> list[list[str]]:
+    return [items[index : index + size] for index in range(0, len(items), size)]
 
 
 def _gmail_thread_to_email_thread(payload: dict[str, Any]) -> EmailThread | None:

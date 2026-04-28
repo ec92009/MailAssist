@@ -253,6 +253,48 @@ Preview the latest 10 Gmail inbox messages without creating drafts:
 ./.venv/bin/mailassist review-bot --action gmail-inbox-preview --limit 10
 ```
 
+Authorize Outlook/Microsoft 365 through Microsoft Graph after setting the Outlook client and tenant values in `.env`:
+
+```bash
+./.venv/bin/mailassist outlook-auth
+```
+
+Smoke-test Outlook reads without creating drafts:
+
+```bash
+./.venv/bin/mailassist review-bot --action outlook-smoke-test --limit 5
+```
+
+Create one controlled Outlook reply draft only after selecting an explicit conversation id:
+
+```bash
+./.venv/bin/mailassist review-bot \
+  --action outlook-smoke-test \
+  --thread-id <conversation-id> \
+  --create-draft
+```
+
+See `docs/outlook-m365-admin-consent.md` for Microsoft 365 app registration and tenant/admin-consent notes.
+See `docs/windows-packaging.md` for the Windows packaging path and Parallels/VM checklist.
+
+Preview old Gmail messages that still carry user-created labels:
+
+```bash
+./.venv/bin/mailassist review-bot --action gmail-label-cleanup --older-than-years 5
+```
+
+Remove those labels from the old messages after reviewing the dry-run output:
+
+```bash
+./.venv/bin/mailassist review-bot \
+  --action gmail-label-cleanup \
+  --older-than-years 5 \
+  --remove-labels
+```
+
+This removes labels from matching old messages; it does not delete the labels themselves or delete any emails.
+Archive labels are excluded from this cleanup because old archived mail can remain archived.
+
 ## Runtime Data
 
 When running from source, active bot runtime files live under `data/` and should generally stay out of git:
@@ -276,8 +318,8 @@ When running the packaged Mac app, the same runtime data lives under:
 
 ## Current Verified Baseline
 
-- Visible version: `v59.3`.
-- Test suite: 94 passing tests.
+- Visible version: `v59.8`.
+- Test suite: 128 passing tests.
 - `gemma4:31b` works locally after MailAssist sends `think: false` to Ollama.
 - Controlled mock-to-Gmail draft creation has been tested with batch sizes 1, 5, and 10.
 - MailAssist creates drafts only; it does not send email.

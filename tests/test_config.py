@@ -424,8 +424,10 @@ def test_load_settings_reads_new_gui_polish_env_vars(monkeypatch, tmp_path: Path
             "MAILASSIST_GMAIL_WATCHER_TIME_WINDOW": "24h",
             "MAILASSIST_OUTLOOK_WATCHER_UNREAD_ONLY": "true",
             "MAILASSIST_OUTLOOK_WATCHER_TIME_WINDOW": "30d",
+            "MAILASSIST_OUTLOOK_TOKEN_FILE": "secrets/custom-outlook-token.json",
             "MAILASSIST_DRAFT_ATTRIBUTION": "true",
             "MAILASSIST_DRAFT_ATTRIBUTION_PLACEMENT": "above_signature",
+            "MAILASSIST_CATEGORIES": '["Needs Action", "Licenses & Accounts"]',
         },
     )
 
@@ -436,10 +438,16 @@ def test_load_settings_reads_new_gui_polish_env_vars(monkeypatch, tmp_path: Path
     assert settings.gmail_watcher_time_window == "24h"
     assert settings.outlook_watcher_unread_only is True
     assert settings.outlook_watcher_time_window == "30d"
+    assert settings.outlook_token_file == tmp_path / "secrets" / "custom-outlook-token.json"
     assert settings.watcher_unread_only is False
     assert settings.watcher_time_window == "24h"
     assert settings.draft_attribution is True
     assert settings.draft_attribution_placement == "above_signature"
+    assert settings.mailassist_categories == (
+        "Needs Reply",
+        "Needs Action",
+        "Licenses & Accounts",
+    )
 
 
 def test_load_settings_defaults_for_new_gui_polish_env_vars(monkeypatch, tmp_path: Path) -> None:
@@ -452,8 +460,10 @@ def test_load_settings_defaults_for_new_gui_polish_env_vars(monkeypatch, tmp_pat
         "MAILASSIST_GMAIL_WATCHER_TIME_WINDOW",
         "MAILASSIST_OUTLOOK_WATCHER_UNREAD_ONLY",
         "MAILASSIST_OUTLOOK_WATCHER_TIME_WINDOW",
+        "MAILASSIST_OUTLOOK_TOKEN_FILE",
         "MAILASSIST_DRAFT_ATTRIBUTION",
         "MAILASSIST_DRAFT_ATTRIBUTION_PLACEMENT",
+        "MAILASSIST_CATEGORIES",
     ):
         monkeypatch.delenv(var, raising=False)
 
@@ -464,10 +474,12 @@ def test_load_settings_defaults_for_new_gui_polish_env_vars(monkeypatch, tmp_pat
     assert settings.gmail_watcher_time_window == "all"
     assert settings.outlook_watcher_unread_only is False
     assert settings.outlook_watcher_time_window == "all"
+    assert settings.outlook_token_file == tmp_path / "secrets" / "outlook-token.json"
     assert settings.watcher_unread_only is False
     assert settings.watcher_time_window == "all"
     assert settings.draft_attribution is False
     assert settings.draft_attribution_placement == "hide"
+    assert settings.mailassist_categories[:2] == ("Needs Reply", "Needs Action")
 
 
 def test_load_settings_maps_legacy_attribution_boolean_to_below_signature(

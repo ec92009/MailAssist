@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QLineEdit,
+    QListWidget,
     QMainWindow,
     QMessageBox,
     QProgressBar,
@@ -39,12 +40,13 @@ from mailassist.config import (
     ATTRIBUTION_ABOVE_SIGNATURE,
     ATTRIBUTION_BELOW_SIGNATURE,
     ATTRIBUTION_HIDE,
+    LOCKED_NEEDS_REPLY_CATEGORY,
     load_settings,
     read_env_file,
     write_env_file,
 )
 from mailassist.background_bot import TONE_OPTIONS, build_prompt_preview, tone_label
-from mailassist.review_state import load_visible_version
+from mailassist.version import load_visible_version
 from mailassist.models import utc_now_iso
 from mailassist.llm.ollama import OllamaClient
 from mailassist.providers.gmail import GmailProvider
@@ -398,20 +400,50 @@ class MailAssistDesktopWindow(QMainWindow):
         control_layout.addLayout(status_grid)
 
         bot_actions = QHBoxLayout()
-        run_mock_pass_button = QPushButton("Run Mock Pass")
+        bot_actions.setSpacing(6)
+        self.demo_inbox_button = QPushButton("Try Demo Inbox")
+        run_mock_pass_button = self.demo_inbox_button
         run_mock_pass_button.clicked.connect(self.run_mock_watch_once)
-        gmail_draft_test_button = QPushButton("Run Gmail Dry Run")
+        self.gmail_draft_preview_button = QPushButton("Preview Gmail Draft")
+        gmail_draft_test_button = self.gmail_draft_preview_button
         gmail_draft_test_button.clicked.connect(self.run_gmail_draft_test)
-        controlled_gmail_draft_button = QPushButton("Create Gmail Test Draft")
+        self.controlled_gmail_draft_button = QPushButton("Create Test Draft")
+        controlled_gmail_draft_button = self.controlled_gmail_draft_button
         controlled_gmail_draft_button.clicked.connect(self.run_controlled_gmail_draft)
-        start_watch_loop_button = QPushButton("Start Watch Loop")
+        self.gmail_label_rescan_button = QPushButton("Organize Gmail")
+        gmail_label_rescan_button = self.gmail_label_rescan_button
+        gmail_label_rescan_button.clicked.connect(self.run_gmail_label_rescan)
+        self.gmail_label_days_input = QSpinBox()
+        self.gmail_label_days_input.setRange(1, 30)
+        self.gmail_label_days_input.setValue(7)
+        self.gmail_label_days_input.setSuffix(" days")
+        self.gmail_label_days_input.setMinimumWidth(92)
+        self.gmail_label_days_input.setMaximumWidth(104)
+        action_height = max(gmail_label_rescan_button.sizeHint().height(), self.gmail_label_days_input.sizeHint().height())
+        self.gmail_label_days_input.setFixedHeight(action_height)
+        self.start_watch_loop_button = QPushButton("Start Auto-Check")
+        start_watch_loop_button = self.start_watch_loop_button
         start_watch_loop_button.clicked.connect(self.start_watch_loop)
         self.stop_bot_button = QPushButton("Stop")
         self.stop_bot_button.clicked.connect(self.stop_bot_action)
         self.stop_bot_button.setEnabled(False)
+        for button in (
+            run_mock_pass_button,
+            gmail_draft_test_button,
+            controlled_gmail_draft_button,
+            gmail_label_rescan_button,
+            start_watch_loop_button,
+            self.stop_bot_button,
+        ):
+            button.setFixedHeight(action_height)
+        label_scan_actions = QHBoxLayout()
+        label_scan_actions.setSpacing(4)
+        label_scan_actions.addWidget(gmail_label_rescan_button)
+        label_scan_actions.addWidget(self.gmail_label_days_input)
         bot_actions.addWidget(run_mock_pass_button)
         bot_actions.addWidget(gmail_draft_test_button)
         bot_actions.addWidget(controlled_gmail_draft_button)
+        bot_actions.addLayout(label_scan_actions)
         bot_actions.addWidget(start_watch_loop_button)
         bot_actions.addWidget(self.stop_bot_button)
         bot_actions.addStretch(1)
@@ -744,6 +776,7 @@ class MailAssistDesktopWindow(QMainWindow):
                 self.outlook_watcher_time_window_combo,
             )
         )
+        layout.addWidget(self._build_category_settings_group())
         layout.addStretch(1)
         return widget
 
@@ -764,6 +797,87 @@ class MailAssistDesktopWindow(QMainWindow):
         form.addRow("Unread", unread_checkbox)
         form.addRow("Time window", time_window_combo)
         layout.addLayout(form)
+        return group
+
+    def _mailassist_category_values(self) -> list[str]:
+        if not hasattr(self, "mailassist_category_list"):
+            return list(self.settings.mailassist_categories)
+        values: list[str] = []
+        for index in range(self.mailassist_category_list.count()):
+            category = str(self.mailassist_category_list.item(index).text()).strip()
+            if category:
+                values.append(category)
+        return values
+
+    def _add_mailassist_category(self) -> None:
+        value, ok = QInputDialog.getText(self, "Add Category", "Category name")
+        if not ok:
+            return
+        category = value.replace("/", " ").strip()
+        if not category:
+            return
+        existing = {item.lower() for item in self._mailassist_category_values()}
+        if category.lower() in existing:
+            for index in range(self.mailassist_category_list.count()):
+                if self.mailassist_category_list.item(index).text().lower() == category.lower():
+                    self.mailassist_category_list.setCurrentRow(index)
+                    break
+            return
+        self.mailassist_category_list.addItem(category)
+        self.mailassist_category_list.setCurrentRow(self.mailassist_category_list.count() - 1)
+        self._refresh_prompt_preview()
+
+    def _remove_selected_mailassist_category(self) -> None:
+        if not hasattr(self, "mailassist_category_list"):
+            return
+        item = self.mailassist_category_list.currentItem()
+        if item is None:
+            return
+        index = self.mailassist_category_list.row(item)
+        category = item.text().strip()
+        if category.lower() == LOCKED_NEEDS_REPLY_CATEGORY.lower():
+            self._set_banner("Needs Reply is locked because it drives draft generation.", level="info")
+            return
+        self.mailassist_category_list.takeItem(index)
+        self._refresh_prompt_preview()
+
+    def _build_category_settings_group(self) -> QGroupBox:
+        group = QGroupBox("MailAssist Gmail Labels")
+        group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        layout = QVBoxLayout(group)
+        layout.setSpacing(8)
+        layout.setContentsMargins(18, 16, 18, 16)
+
+        content = QHBoxLayout()
+        content.setSpacing(12)
+        actions = QVBoxLayout()
+        actions.setSpacing(6)
+        self.mailassist_category_list = QListWidget()
+        self.mailassist_category_list.setMinimumWidth(420)
+        self.mailassist_category_list.setMinimumHeight(128)
+        self.mailassist_category_list.setMaximumHeight(170)
+        for category in self.settings.mailassist_categories:
+            self.mailassist_category_list.addItem(category)
+        if self.mailassist_category_list.count():
+            self.mailassist_category_list.setCurrentRow(0)
+
+        add_button = QPushButton("Add")
+        remove_button = QPushButton("Remove")
+        add_button.setMinimumWidth(100)
+        remove_button.setMinimumWidth(100)
+        add_button.clicked.connect(self._add_mailassist_category)
+        remove_button.clicked.connect(self._remove_selected_mailassist_category)
+        actions.addWidget(add_button)
+        actions.addWidget(remove_button)
+        actions.addStretch(1)
+        content.addLayout(actions)
+        content.addWidget(self.mailassist_category_list, 1)
+        layout.addLayout(content)
+
+        note = QLabel("These categories constrain Ollama's Gmail label choices. Needs Reply is locked because MailAssist uses it for draft generation.")
+        note.setWordWrap(True)
+        note.setStyleSheet("color: #5e6978; font-size: 13px;")
+        layout.addWidget(note)
         return group
 
     def _build_wizard_ollama_model_page(self) -> QWidget:
@@ -1676,6 +1790,7 @@ class MailAssistDesktopWindow(QMainWindow):
         gmail_unread, gmail_window = self._watcher_filter_values("gmail")
         outlook_unread, outlook_window = self._watcher_filter_values("outlook")
         active_unread, active_window = self._watcher_filter_values(provider)
+        categories = self._mailassist_category_values()
         current.update(
             {
                 "MAILASSIST_OLLAMA_URL": self.ollama_url_input.text().strip() or "http://localhost:11434",
@@ -1699,11 +1814,16 @@ class MailAssistDesktopWindow(QMainWindow):
                     "true" if self._attribution_placement() != ATTRIBUTION_HIDE else "false"
                 ),
                 "MAILASSIST_DRAFT_ATTRIBUTION_PLACEMENT": self._attribution_placement(),
+                "MAILASSIST_CATEGORIES": json.dumps(categories),
                 "MAILASSIST_OUTLOOK_CLIENT_ID": current.get("MAILASSIST_OUTLOOK_CLIENT_ID", ""),
                 "MAILASSIST_OUTLOOK_TENANT_ID": current.get("MAILASSIST_OUTLOOK_TENANT_ID", ""),
                 "MAILASSIST_OUTLOOK_REDIRECT_URI": current.get(
                     "MAILASSIST_OUTLOOK_REDIRECT_URI",
                     "http://localhost:8765/outlook/callback",
+                ),
+                "MAILASSIST_OUTLOOK_TOKEN_FILE": current.get(
+                    "MAILASSIST_OUTLOOK_TOKEN_FILE",
+                    str(self.settings.outlook_token_file),
                 ),
                 "MAILASSIST_SETUP_COMPLETE": setup_complete,
             }
@@ -1787,6 +1907,33 @@ class MailAssistDesktopWindow(QMainWindow):
             return
         self.run_bot_action("gmail-controlled-draft", provider="gmail", thread_id="thread-008")
 
+    def run_gmail_label_rescan(self) -> None:
+        days = int(self.gmail_label_days_input.value()) if hasattr(self, "gmail_label_days_input") else 7
+        confirmation = QMessageBox.question(
+            self,
+            "Organize Gmail",
+            (
+                f"MailAssist will reclassify Gmail threads from the last {days} day"
+                f"{'' if days == 1 else 's'} using the current category list. "
+                "It may add, replace, or remove MailAssist labels.\n\n"
+                "This can take a few minutes, but you can keep working while it runs. "
+                "Continue?"
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirmation != QMessageBox.StandardButton.Yes:
+            self._set_banner("Gmail label rescan canceled.", level="info")
+            return
+        self.save_settings(announce=False)
+        self.run_bot_action(
+            "gmail-populate-labels",
+            provider="gmail",
+            days=days,
+            limit=500,
+            apply_labels=True,
+        )
+
     def run_bot_action(
         self,
         action: str,
@@ -1796,6 +1943,9 @@ class MailAssistDesktopWindow(QMainWindow):
         provider: str = "",
         force: bool = False,
         dry_run: bool = False,
+        days: int | None = None,
+        limit: int | None = None,
+        apply_labels: bool = False,
     ) -> None:
         if self.bot_process is not None:
             self._set_banner("A bot action is already running.", level="error")
@@ -1831,6 +1981,12 @@ class MailAssistDesktopWindow(QMainWindow):
             args.append("--force")
         if dry_run:
             args.append("--dry-run")
+        if days is not None:
+            args.extend(["--days", str(max(1, int(days)))])
+        if limit is not None:
+            args.extend(["--limit", str(max(1, int(limit)))])
+        if apply_labels:
+            args.append("--apply-labels")
 
         self._append_bot_console(f"$ {sys.executable} {' '.join(args)}")
         self._set_banner(

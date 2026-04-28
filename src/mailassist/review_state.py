@@ -10,6 +10,7 @@ from mailassist.config import migrate_legacy_runtime_layout
 from mailassist.fixtures.mock_threads import build_mock_threads
 from mailassist.llm.ollama import OllamaClient
 from mailassist.models import EmailThread, utc_now_iso
+from mailassist.version import load_visible_version
 
 REVIEW_STATE_SCHEMA_VERSION = 2
 REVIEW_STATE_FILENAME = "review-inbox.json"
@@ -1042,14 +1043,3 @@ def update_thread_status(thread_state: dict[str, Any], action: str) -> dict[str,
         return thread_state
 
     raise ValueError("Unsupported thread action.")
-
-
-def load_visible_version(root_dir: Path) -> str:
-    version_file = root_dir / "VERSION"
-    if not version_file.exists():
-        try:
-            from mailassist import __version__
-        except ImportError:
-            return "0.0"
-        return __version__.removesuffix(".0")
-    return version_file.read_text(encoding="utf-8").strip()

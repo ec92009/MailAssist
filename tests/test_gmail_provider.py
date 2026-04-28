@@ -11,6 +11,8 @@ from mailassist.providers.gmail import (
     GmailProvider,
     _build_gmail_thread_query,
     _gmail_signature_to_text,
+    _has_child_label,
+    _is_label_cleanup_excluded,
     _select_send_as_entry,
 )
 
@@ -104,6 +106,23 @@ def test_gmail_provider_includes_recipients_in_raw_draft(monkeypatch, tmp_path: 
     assert parsed["subject"] == "Re: Test"
 
 
+def test_gmail_label_cleanup_excludes_archive_labels() -> None:
+    assert _is_label_cleanup_excluded("[Mailbox]/Archive") is True
+    assert _is_label_cleanup_excluded("Archive") is True
+    assert _is_label_cleanup_excluded("[Mailbox]/Receipts") is False
+
+
+def test_unused_label_cleanup_preserves_container_labels() -> None:
+    names = {"[Mailbox]", "[Mailbox]/Receipts", "Old Empty"}
+    assert _has_child_label("[Mailbox]", names) is True
+    assert _has_child_label("[Mailbox]/Receipts", names) is False
+    assert _has_child_label("Old Empty", names) is False
+
+
+def test_unused_label_cleanup_uses_archive_exclusion() -> None:
+    assert _is_label_cleanup_excluded("[Mailbox]/Archive") is True
+
+
 def test_gmail_provider_creates_multipart_draft_when_html_body_present(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -164,6 +183,42 @@ def test_gmail_scopes_include_compose_and_readonly() -> None:
     assert "https://www.googleapis.com/auth/gmail.compose" in GMAIL_SCOPES
     assert "https://www.googleapis.com/auth/gmail.readonly" in GMAIL_SCOPES
     assert "https://www.googleapis.com/auth/gmail.settings.basic" in GMAIL_SCOPES
+
+
+def test_gmail_provider_can_replace_thread_labels(monkeypatch, tmp_path: Path) -> None:
+    captured = {}
+
+    class FakeThreads:
+        def modify(self, *, userId, id, body):
+            captured.update({"userId": userId, "id": id, "body": body})
+            return self
+
+        def execute(self):
+            return {}
+
+    class FakeUsers:
+        def threads(self):
+            return FakeThreads()
+
+    class FakeService:
+        def users(self):
+            return FakeUsers()
+
+    provider = GmailProvider(tmp_path / "credentials.json", tmp_path / "token.json")
+    monkeypatch.setattr(provider, "_credentials", lambda **kwargs: object())
+    monkeypatch.setattr(
+        provider,
+        "_load_google_modules",
+        lambda: (object, object, object, lambda *args, **kwargs: FakeService()),
+    )
+
+    provider.replace_thread_labels("thread-1", ["label-new"], ["label-old"])
+
+    assert captured == {
+        "userId": "me",
+        "id": "thread-1",
+        "body": {"addLabelIds": ["label-new"], "removeLabelIds": ["label-old"]},
+    }
 
 
 def test_gmail_signature_html_is_sanitized_to_plain_text() -> None:
