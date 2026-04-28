@@ -58,13 +58,14 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 - During the Magali screen-share, confirmed her Microsoft account home organization is Golden Years Tax Strategy, `admin.microsoft.com` opens for her, her mailbox license is Microsoft 365 Business Standard (no Teams), Outlook web opens the Golden Years mailbox, and Classic Outlook Desktop reports the account type as Microsoft Exchange.
 - A direct terminal `ollama run qwen3:8b ...` check was slow and showed thinking behavior; the real setup check should use MailAssist's own Ollama path with `think: false`.
 - Added `mailassist outlook-setup-check`, a read-only one-command Outlook setup path that runs Graph authorization, verifies readiness, checks an optional expected mailbox email, previews inbox thread subjects only, and explicitly avoids draft creation/sending. Bumped visible version to `v59.14` and ran the full local test suite: 140 passing tests on April 28, 2026.
+- Ran `rscp`, committed and pushed `0d1ddb3` to `main`, then prepared handoff docs. The current resume point is to verify or create a work/school-compatible Microsoft Entra app registration, then stage the Magali Windows run for `mailassist outlook-setup-check --expected-email MagaliDomingue@goldenyearstaxstrategy.com`.
 
 ## Current Verified State
 
 - Visible version: `v59.14`.
 - Full test suite: 140 passing tests on April 28, 2026.
 - Native desktop app is the active GUI surface; it has no localhost or LAN URL.
-- Latest synchronized commit before the handoff commit: `5935e1c`.
+- Latest synchronized commit before the handoff commit: `0d1ddb3`.
 - Installed app path: `/Applications/MailAssist.app`.
 - Gmail optional dependencies are installed in the local virtualenv.
 - Gmail read-only probing, Gmail dry-run watching, controlled Gmail provider-write draft creation, and Gmail multipart draft validation have all been exercised locally.
