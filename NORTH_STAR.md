@@ -4,6 +4,8 @@ MailAssist is being built with Magali in mind.
 
 Magali is a CPA in San Diego, runs her own business, prefers Windows, and gets her company email in Outlook Desktop. The first useful version does not need to be commercial-grade software. It needs to help her with real work, feel safe, and be simple enough that setup and daily use do not become another obligation.
 
+Her Windows laptop is fairly recent, has plenty of SSD storage, and has 32 GB of RAM. Ollama is already installed on that machine with `qwen3:8b` (5.2 GB). Raw terminal use was slow and showed thinking behavior, so MailAssist should use its own `think: false` model check for setup.
+
 ## Product North Star
 
 Make something Magali can install, trust, and forget is running until useful draft replies appear in Outlook.

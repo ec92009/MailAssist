@@ -457,6 +457,61 @@ def test_gmail_draft_test_runs_safe_dry_run_after_confirmation(monkeypatch) -> N
     window.close()
 
 
+def test_outlook_draft_preview_requires_confirmation(monkeypatch) -> None:
+    window = MailAssistDesktopWindow()
+    called = []
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.No,
+    )
+    monkeypatch.setattr(window, "save_settings", lambda *args, **kwargs: called.append(("save",)))
+    monkeypatch.setattr(window, "run_bot_action", lambda *args, **kwargs: called.append(("run",)))
+
+    window.run_outlook_draft_preview()
+
+    assert called == []
+    assert window.banner.text() == "Outlook draft preview canceled."
+    window.close()
+
+
+def test_outlook_draft_preview_runs_safe_dry_run_after_confirmation(monkeypatch) -> None:
+    window = MailAssistDesktopWindow()
+    called = []
+    confirmation_messages = []
+
+    def fake_question(_parent, title, message, *args, **kwargs):
+        confirmation_messages.append((title, message))
+        return QMessageBox.StandardButton.Yes
+
+    monkeypatch.setattr(QMessageBox, "question", fake_question)
+    monkeypatch.setattr(window, "save_settings", lambda *args, **kwargs: called.append(("save", kwargs)))
+    monkeypatch.setattr(
+        window,
+        "run_bot_action",
+        lambda action, **kwargs: called.append((action, kwargs)),
+    )
+
+    window.run_outlook_draft_preview()
+
+    assert called == [
+        ("save", {"announce": False}),
+        (
+            "watch-once",
+            {
+                "provider": "outlook",
+                "force": True,
+                "dry_run": True,
+            },
+        ),
+    ]
+    assert confirmation_messages[0][0] == "Preview Outlook Draft"
+    assert "without creating real Outlook drafts" in confirmation_messages[0][1]
+    assert "Nothing will be sent" in confirmation_messages[0][1]
+    window.close()
+
+
 def test_controlled_gmail_draft_runs_after_confirmation(monkeypatch) -> None:
     window = MailAssistDesktopWindow()
     called: list[tuple[str, str, str, bool, bool]] = []
@@ -606,6 +661,7 @@ def test_bot_control_actions_use_user_centered_labels_and_compact_days_input() -
 
     assert window.demo_inbox_button.text() == "Try Demo Inbox"
     assert window.gmail_draft_preview_button.text() == "Preview Gmail Draft"
+    assert window.outlook_draft_preview_button.text() == "Preview Outlook Draft"
     assert window.controlled_gmail_draft_button.text() == "Create Test Draft"
     assert window.gmail_label_rescan_button.text() == "Organize Gmail"
     assert window.outlook_category_rescan_button.text() == "Organize Outlook"

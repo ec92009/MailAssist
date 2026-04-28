@@ -38,11 +38,13 @@ The bot watches provider inboxes, uses a local Ollama model to classify new thre
 - The bot has JSONL stdout/log event reporting.
 - The bot has `watch-once` and Gmail preview/test paths.
 - The bot has an Outlook smoke-test path that checks provider readiness and inbox preview without writing drafts by default.
+- The CLI has an `outlook-setup-check` path for Magali-style setup: authorize Outlook, verify the signed-in mailbox, optionally enforce an expected email, preview inbox thread subjects only, and create no drafts.
 - The bot has an Outlook category-population path that classifies recent Outlook threads into MailAssist categories, dry-runs by default, and only writes Graph message categories with `--apply-categories`.
 - The bot has a Gmail category-labeling path that asks the selected local Ollama model to choose one configured MailAssist category, or `NA`, for each recent thread.
 - Gmail category labels live under a top-level `MailAssist` label; configured category labels are created as needed and prior MailAssist category labels are replaced/removed during reclassification.
 - Settings now stores `MAILASSIST_CATEGORIES`, with `Needs Reply` locked because it drives draft generation.
 - The desktop control panel has `Organize Gmail` and `Organize Outlook` actions with bounded day horizons and confirmation copy that warns the run can take a few minutes while the user keeps working.
+- The desktop control panel has a confirmation-gated `Preview Outlook Draft` action that runs Outlook draft classification in dry-run mode without creating provider drafts.
 - Settings has one shared `MailAssist Categories` editor; Gmail uses those categories to create/update `MailAssist/<Category>` labels and Outlook uses them to create/update `MailAssist - <Category>` message categories.
 - `watch-once` and `watch-loop` now support a dry-run mode that produces `draft_ready` events without creating provider drafts.
 - The bot now has a polling `watch-loop` path that uses `MAILASSIST_BOT_POLL_SECONDS`.
@@ -72,7 +74,8 @@ The bot watches provider inboxes, uses a local Ollama model to classify new thre
 - The packaged app stores runtime data under `~/Library/Application Support/MailAssist/`.
 - The README now points GitHub users to the `.dmg` through GitHub Releases.
 - `NORTH_STAR.md` now captures the Magali/Windows/Outlook product compass.
-- Magali's screenshots show her main Outlook Desktop business mailbox is Microsoft 365; an Outlook.com account is also present, but the business mailbox is the north-star account.
+- Magali's screen-share confirmed her business mailbox is Microsoft 365 / Exchange Online: Microsoft account home organization is Golden Years Tax Strategy, `admin.microsoft.com` opens for her, the mailbox is licensed as Microsoft 365 Business Standard (no Teams), Outlook web opens the mailbox, and Classic Outlook Desktop reports Microsoft Exchange.
+- Magali's Windows laptop is reported to be fairly recent with plenty of SSD storage and 32 GB of RAM. Ollama is installed there with `qwen3:8b` (5.2 GB), but a raw terminal `ollama run` check was slow and showed thinking behavior.
 
 ## Recent Verified Experiments
 
@@ -139,18 +142,19 @@ These were useful experiments, but the lighter product should not build on them 
 
 ## Latest Verified State
 
-- Latest visible version: `v59.12`.
-- Latest test run: 135 passing tests on April 28, 2026.
+- Latest visible version: `v59.14`.
+- Latest test run: 140 passing tests on April 28, 2026.
 - Current visible GUI surface is the compact bot control panel and setup wizard.
 - Gmail optional dependencies are installed in the local virtualenv.
 - Local Gmail setup has been proven for draft creation and readonly inbox preview.
 - Mac/Gmail DMG artifact was published as a GitHub release asset.
-- The next implementation phase requires a Microsoft 365 developer tenant or Magali tenant authorization to validate Outlook Graph against a real business tenant while continuing to quarantine legacy two-candidate review helpers.
+- The next implementation phase should package or stage a safe Magali-ready Windows run, then validate read-only Outlook Graph readiness with `outlook-setup-check` against her real Microsoft 365 tenant before any controlled draft write.
 - The latest cleanup slices moved old review/runtime artifacts into a legacy subtree, removed the unused queue-phase lifecycle, deleted the old web review GUI path, removed the dead legacy local draft pipeline, and introduced a dedicated live-state store for watcher runtime data.
 - The latest live-watcher slice added watcher filters, provider thread-listing hooks, Gmail thread polling helpers, and background-bot integration for real provider thread sources.
 - Gmail actionable-thread listing now passes unread/time-window filters into Gmail search where available, while the watcher still uses broad candidate listing so it can emit `filtered_out` activity events.
 - Gmail dry-run and controlled-draft paths are now distinct: dry-run validates watcher flow without provider writes, while controlled draft creation proves Gmail write/rendering behavior with sanitized mock content.
-- Personal Outlook.com Graph behavior is proven; Magali Outlook discovery is now partially resolved as Microsoft 365 first, with tenant/admin consent and Outlook Desktop behavior as the remaining provider-path questions.
+- Personal Outlook.com Graph behavior is proven; Magali Outlook discovery is now resolved as Microsoft 365 / Exchange Online with admin center access.
+- Magali's target hardware should be capable of running a medium local model; the unknowns are MailAssist-path model performance with `think: false` and the tenant authorization experience, not baseline RAM.
 
 ## Conclusion
 

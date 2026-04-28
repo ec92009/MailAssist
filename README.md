@@ -253,15 +253,16 @@ Preview the latest 10 Gmail inbox messages without creating drafts:
 ./.venv/bin/mailassist review-bot --action gmail-inbox-preview --limit 10
 ```
 
-Authorize Outlook/Microsoft 365 through Microsoft Graph after setting the Outlook client and tenant values in `.env`:
+Run a read-only Outlook/Microsoft 365 setup check after setting the Outlook client and tenant values in `.env`:
+
+```bash
+./.venv/bin/mailassist outlook-setup-check --expected-email <mailbox-email>
+```
+
+This authorizes Outlook, verifies the signed-in mailbox, previews inbox thread subjects only, and creates no drafts. Authorization-only and lower-level smoke-test commands remain available:
 
 ```bash
 ./.venv/bin/mailassist outlook-auth
-```
-
-Smoke-test Outlook reads without creating drafts:
-
-```bash
 ./.venv/bin/mailassist review-bot --action outlook-smoke-test --limit 5
 ```
 
@@ -318,8 +319,8 @@ When running the packaged Mac app, the same runtime data lives under:
 
 ## Current Verified Baseline
 
-- Visible version: `v59.12`.
-- Test suite: 135 passing tests.
+- Visible version: `v59.14`.
+- Test suite: 140 passing tests.
 - `gemma4:31b` works locally after MailAssist sends `think: false` to Ollama.
 - Controlled mock-to-Gmail draft creation has been tested with batch sizes 1, 5, and 10.
 - Personal Outlook.com Microsoft Graph auth, category writes, controlled draft creation, and one targeted watcher-created draft have been tested.

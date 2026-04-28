@@ -50,11 +50,19 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 - Sent a fresh Outlook test email (`Test from PT`), ran `watch-once --provider outlook --dry-run --force`, confirmed one `draft_ready` event, then ran a targeted real Outlook watcher pass that created one model-generated unsent Outlook draft with `qwen3.6:35b`. No email was sent.
 - Tightened automated-mail safety so `noreply`, `do not reply`, `notificationmail`, `promomail`, and `emailnotify` are treated as automated signals before drafting, and guarded MailAssist `Needs Reply` category assignment for automated/newsletter-like messages.
 - Bumped the visible version through `v59.12` and ran the full test suite after the Outlook category/drafting/UI work: 135 passing tests on April 28, 2026.
+- Picked up from the handoff on `main` at `e39fa7f`, synced with origin, refreshed the environment with `uv sync`, and confirmed the Microsoft 365 tenant validation step remains blocked on a developer tenant or Magali tenant authorization.
+- Added a safe desktop `Preview Outlook Draft` action that confirms first, saves current settings, then runs Outlook `watch-once` with `--dry-run --force`; it reads/classifies recent Outlook threads but does not create provider drafts or send email.
+- Bumped the visible version to `v59.13` and ran the full local test suite after the Outlook preview GUI work: 137 passing tests on April 28, 2026.
+- Confirmed the Golden Years Tax Strategy website is hosted by Squarespace while the domain's primary mail MX points to Microsoft 365 / Exchange Online, then added `docs/magali-outlook-call-checklist.md` so the eventual screen-share can quickly capture account/admin state without exposing passwords or private mail.
+- Recorded updated target-machine context for Magali: recent Windows laptop, 32 GB RAM, ample SSD storage, Ollama already installed, and local model `qwen3:8b` installed.
+- During the Magali screen-share, confirmed her Microsoft account home organization is Golden Years Tax Strategy, `admin.microsoft.com` opens for her, her mailbox license is Microsoft 365 Business Standard (no Teams), Outlook web opens the Golden Years mailbox, and Classic Outlook Desktop reports the account type as Microsoft Exchange.
+- A direct terminal `ollama run qwen3:8b ...` check was slow and showed thinking behavior; the real setup check should use MailAssist's own Ollama path with `think: false`.
+- Added `mailassist outlook-setup-check`, a read-only one-command Outlook setup path that runs Graph authorization, verifies readiness, checks an optional expected mailbox email, previews inbox thread subjects only, and explicitly avoids draft creation/sending. Bumped visible version to `v59.14` and ran the full local test suite: 140 passing tests on April 28, 2026.
 
 ## Current Verified State
 
-- Visible version: `v59.12`.
-- Full test suite: 135 passing tests on April 28, 2026.
+- Visible version: `v59.14`.
+- Full test suite: 140 passing tests on April 28, 2026.
 - Native desktop app is the active GUI surface; it has no localhost or LAN URL.
 - Latest synchronized commit before the handoff commit: `5935e1c`.
 - Installed app path: `/Applications/MailAssist.app`.
@@ -70,11 +78,12 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 - Visible version loading now lives in `mailassist.version`; `review_state.py` is compatibility-only support for the old two-candidate review path.
 - Live batch LLM output no longer asks for a separate `SHOULD_DRAFT` report flag.
 - Live watcher state lives in `data/live-state.json` with provider-scoped slots, account email discovery, recent activity, and migration from the older `data/bot-state.json`.
-- Magali's Outlook account discovery remains partially resolved: her main business mailbox is Microsoft 365, so the next Outlook validation should focus on Graph tenant/admin consent and Outlook Desktop behavior using a Microsoft 365 developer tenant or Magali's tenant.
+- Magali's Outlook account discovery is resolved enough to proceed: her main business mailbox is Microsoft 365 / Exchange Online, she can access the Microsoft 365 admin center, and Outlook Desktop uses Microsoft Exchange.
 
 ## Remaining Backlog
 
-- Continue the Outlook/Microsoft 365 provider path once a developer tenant or Magali tenant app authorization is available; personal Outlook.com Graph auth/read/category/write/draft behavior is already proven.
+- Verify or create a MailAssist Microsoft Entra app registration that supports work/school accounts, then package or stage a Magali-ready Windows run that can execute `mailassist outlook-setup-check --expected-email MagaliDomingue@goldenyearstaxstrategy.com`; run any controlled draft write only after read-only readiness succeeds.
+- Run MailAssist's own small local model check on her `qwen3:8b` setup; hardware RAM is likely sufficient, but raw terminal Ollama thinking was slow.
 - Use `docs/outlook-m365-admin-consent.md` as the packaged tenant/admin-consent guidance before attempting Magali's Microsoft 365 account.
 - Decide the next Outlook GUI exposure for drafting. Current GUI exposes `Organize Outlook`; targeted Outlook draft creation remains available through explicit CLI/smoke-test commands.
 - Continue product safety and trust hardening around explicit provider writes and ignored runtime artifacts.

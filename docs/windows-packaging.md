@@ -40,9 +40,8 @@ When a Windows VM is available:
 5. Confirm `./.venv/Scripts/mailassist.exe desktop-gui` launches.
 6. Install and validate Ollama for Windows.
 7. Configure `.env` for Outlook/Microsoft 365.
-8. Run `mailassist outlook-auth`.
-9. Run `mailassist review-bot --action outlook-smoke-test --limit 5`.
-10. Only after choosing a thread id, run the controlled draft smoke:
+8. Run `mailassist outlook-setup-check --expected-email <mailbox-email>`.
+9. Only after choosing a thread id, run the controlled draft smoke:
 
 ```powershell
 mailassist review-bot --action outlook-smoke-test --thread-id <conversation-id> --create-draft

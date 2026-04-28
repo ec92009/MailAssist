@@ -407,6 +407,9 @@ class MailAssistDesktopWindow(QMainWindow):
         self.gmail_draft_preview_button = QPushButton("Preview Gmail Draft")
         gmail_draft_test_button = self.gmail_draft_preview_button
         gmail_draft_test_button.clicked.connect(self.run_gmail_draft_test)
+        self.outlook_draft_preview_button = QPushButton("Preview Outlook Draft")
+        outlook_draft_preview_button = self.outlook_draft_preview_button
+        outlook_draft_preview_button.clicked.connect(self.run_outlook_draft_preview)
         self.controlled_gmail_draft_button = QPushButton("Create Test Draft")
         controlled_gmail_draft_button = self.controlled_gmail_draft_button
         controlled_gmail_draft_button.clicked.connect(self.run_controlled_gmail_draft)
@@ -445,6 +448,7 @@ class MailAssistDesktopWindow(QMainWindow):
         for button in (
             run_mock_pass_button,
             gmail_draft_test_button,
+            outlook_draft_preview_button,
             controlled_gmail_draft_button,
             gmail_label_rescan_button,
             outlook_category_rescan_button,
@@ -461,6 +465,7 @@ class MailAssistDesktopWindow(QMainWindow):
         label_scan_actions.addWidget(self.outlook_category_days_input)
         bot_actions.addWidget(run_mock_pass_button)
         bot_actions.addWidget(gmail_draft_test_button)
+        bot_actions.addWidget(outlook_draft_preview_button)
         bot_actions.addWidget(controlled_gmail_draft_button)
         bot_actions.addLayout(label_scan_actions)
         bot_actions.addWidget(start_watch_loop_button)
@@ -1929,6 +1934,28 @@ class MailAssistDesktopWindow(QMainWindow):
             self._set_banner("Controlled Gmail draft canceled.", level="info")
             return
         self.run_bot_action("gmail-controlled-draft", provider="gmail", thread_id="thread-008")
+
+    def run_outlook_draft_preview(self) -> None:
+        confirmation = QMessageBox.question(
+            self,
+            "Preview Outlook Draft",
+            (
+                "MailAssist will read recent Outlook threads and prepare draft results without "
+                "creating real Outlook drafts. Nothing will be sent. Continue?"
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirmation != QMessageBox.StandardButton.Yes:
+            self._set_banner("Outlook draft preview canceled.", level="info")
+            return
+        self.save_settings(announce=False)
+        self.run_bot_action(
+            "watch-once",
+            provider="outlook",
+            force=True,
+            dry_run=True,
+        )
 
     def run_gmail_label_rescan(self) -> None:
         days = int(self.gmail_label_days_input.value()) if hasattr(self, "gmail_label_days_input") else 7

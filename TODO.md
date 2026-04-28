@@ -2,7 +2,7 @@
 
 This backlog is ordered around the north-star user: Magali, a CPA in San Diego who runs her own business, uses Windows, and gets business email in Outlook Desktop.
 
-Mac/Gmail remains the proving ground because it is already working locally and exercises the drafting loop. Windows/Outlook is the more important destination. Magali's screenshots show her business mailbox in Outlook Desktop is a Microsoft 365 account, so the first Outlook provider decision should now focus on Microsoft Graph feasibility and tenant/admin consent instead of broad account-type discovery.
+Mac/Gmail remains the proving ground because it is already working locally and exercises the drafting loop. Windows/Outlook is the more important destination. Magali's screen-share confirmed her business mailbox is Microsoft 365 / Exchange Online, she can access the Microsoft 365 admin center, and Microsoft Graph is the right Outlook provider path.
 
 ## Handoff
 
@@ -24,12 +24,14 @@ Mac/Gmail remains the proving ground because it is already working locally and e
 - Current baseline at handoff:
   - Last synchronized commit before this handoff commit: `5935e1c`
   - Handoff commit: `49c2f85`
-  - Current visible version: `v59.12`
+  - Current visible version: `v59.14`
   - Local app/dev entrypoint: `./.venv/bin/mailassist desktop-gui`
   - Packaged app path: `/Applications/MailAssist.app`
 - Known open issue to continue:
   - Personal Outlook.com Microsoft Graph is now proven end to end: auth, inbox reads, category writes, controlled draft creation, and live watcher-created model draft creation all succeeded without sending email.
-  - Immediate next implementation step: validate the same Outlook Graph path against a Microsoft 365 developer tenant or Magali's tenant/admin-consented app, then decide whether to expose Outlook draft runs in the GUI beyond the existing targeted CLI/smoke-test path.
+  - Magali's Windows laptop is fairly recent with plenty of SSD storage and 32 GB RAM. Ollama is already installed with `qwen3:8b` (5.2 GB). Raw `ollama run` was slow/thinking; use MailAssist's own `think: false` model check during setup.
+  - Magali's Microsoft 365 state is now confirmed: home organization Golden Years Tax Strategy, admin center access works, mailbox license is Microsoft 365 Business Standard (no Teams), Outlook web opens the mailbox, and Classic Outlook Desktop account type is Microsoft Exchange.
+  - Immediate next implementation step: verify or create a MailAssist Microsoft Entra app registration that supports work/school accounts, then package or stage a Magali-ready Windows run that can execute `mailassist outlook-setup-check --expected-email MagaliDomingue@goldenyearstaxstrategy.com` before any controlled draft write.
   - Keep Outlook provider writes explicit. Current safe commands are `review-bot --action outlook-smoke-test --thread-id <id> --create-draft`, `review-bot --action watch-once --provider outlook --thread-id <id> --force`, and `review-bot --action outlook-populate-categories --days <n> --apply-categories`.
 - Handoff protocol for this repo:
   - Run `prepare for handoff` before switching machines or ending a work block that should resume elsewhere.
@@ -86,12 +88,18 @@ Mac/Gmail remains the proving ground because it is already working locally and e
 - Tightened automated-mail safety by treating `noreply`, `do not reply`, `notificationmail`, `promomail`, and `emailnotify` as automated signals before drafting. (Managed by Codex)
 - Bumped visible version through `v59.12` for the Outlook category/drafting and organizer UI work; latest full local test suite passed with 135 tests on April 28, 2026. (Managed by Codex)
 - After handoff, updated the TODO handoff block to record the pushed handoff commit explicitly. (Managed by Codex)
+- Added a confirmation-gated desktop `Preview Outlook Draft` action that runs Outlook `watch-once` in dry-run mode only, so the GUI can exercise Outlook draft classification without creating provider drafts. Bumped visible version to `v59.13`; full local test suite passed with 137 tests on April 28, 2026. (Managed by Codex)
+- Added `pytest` to uv's default dev dependency group and updated the environment SOP so plain `uv sync` keeps the test runner installed for normal pickup/test workflows. (Managed by Codex)
+- Added `docs/magali-outlook-call-checklist.md` with a nontechnical screen-share script, safety ground rules, public DNS findings, Microsoft account/admin checks, and safe Outlook authorization/readiness commands. (Managed by Codex)
+- Recorded Magali's target machine context: recent Windows laptop, 32 GB RAM, ample SSD storage, Ollama already installed, exact local model still unknown. (Managed by Codex)
+- Completed the Magali discovery call: confirmed Microsoft 365 / Exchange Online mailbox, Golden Years Tax Strategy home organization, admin center access, Microsoft 365 Business Standard license, Outlook web access, Classic Outlook Desktop Microsoft Exchange account type, and installed Ollama model `qwen3:8b`. (Managed by Codex)
+- Added `mailassist outlook-setup-check`, a one-command read-only Outlook setup path that authorizes Graph, verifies the signed-in mailbox, enforces an optional expected email, previews inbox thread subjects without bodies, and confirms no drafts were created or sent. Bumped visible version to `v59.14`; full local test suite passed with 140 tests on April 28, 2026. (Managed by Codex)
 
 ## Remaining Backlog
 
-1. Continue the Outlook/Microsoft 365 provider path for Magali on the proven Graph provider contract. Personal Outlook.com auth/read/category/write/draft paths are validated; next step requires a Microsoft 365 developer tenant or Magali tenant app authorization to verify business-tenant consent and Outlook Desktop behavior. (Managed by Codex) (Blocked on user/tenant)
+1. Prepare the Magali-ready Outlook authorization/install flow. Personal Outlook.com auth/read/category/write/draft paths are validated, and Magali's Microsoft 365 / Exchange account/admin state is now confirmed. Next step is to verify or create a MailAssist Microsoft Entra app registration that supports work/school accounts, then package or stage a Windows run that can execute `mailassist outlook-setup-check --expected-email MagaliDomingue@goldenyearstaxstrategy.com` before any controlled draft write. (Managed by Codex)
 
-2. Decide the next Outlook GUI exposure. The CLI can safely create targeted Outlook drafts and apply categories; the GUI currently exposes `Organize Outlook` but not a general Outlook draft button. Keep provider-writing actions explicit and confirmation-gated. (Managed by Codex)
+2. Decide the next Outlook GUI exposure after Microsoft 365 tenant validation. The GUI now exposes dry-run-only Outlook draft preview and `Organize Outlook`; real Outlook draft creation remains limited to explicit CLI/smoke-test paths until business-tenant behavior is proven. Keep provider-writing actions explicit and confirmation-gated. (Managed by Codex)
 
 3. Continue product safety and trust hardening. Send automation stays out of scope, provider-writing actions stay explicit, live provider tests stay behind confirmation/developer UI, and real tokens/logs/drafts/queues/email artifacts stay out of git. (Managed by Codex)
 
