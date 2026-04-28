@@ -19,6 +19,10 @@ def get_provider_for_settings(settings: Settings, provider_name: str) -> DraftPr
     if provider_name == "outlook":
         if not settings.outlook_enabled:
             raise RuntimeError("Outlook is disabled in the current MailAssist settings.")
-        return OutlookProvider()
+        return OutlookProvider(
+            client_id=settings.outlook_client_id,
+            tenant_id=settings.outlook_tenant_id,
+            redirect_uri=settings.outlook_redirect_uri,
+        )
 
     raise RuntimeError(f"Unknown provider: {provider_name}")

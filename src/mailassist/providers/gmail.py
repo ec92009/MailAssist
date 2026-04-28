@@ -13,7 +13,7 @@ from typing import Any
 
 from mailassist.live_filters import WatcherFilter, thread_passes_filter
 from mailassist.models import DraftRecord, EmailMessage, EmailThread, ProviderDraftReference
-from mailassist.providers.base import DraftProvider
+from mailassist.providers.base import DraftProvider, ProviderReadiness
 from mailassist.rich_text import html_to_plain_text, sanitize_html_fragment
 
 GMAIL_SCOPES = [
@@ -189,6 +189,32 @@ class GmailProvider(DraftProvider):
                 return "ok"
             raise
         return "ok"
+
+    def authenticate(self) -> str:
+        self._credentials(allow_interactive_auth=True)
+        return "ok"
+
+    def readiness_check(self) -> ProviderReadiness:
+        try:
+            account_email = self.get_account_email()
+        except Exception as exc:
+            return ProviderReadiness(
+                provider=self.name,
+                status="not_configured",
+                message=str(exc),
+                can_authenticate=False,
+                can_read=False,
+                can_create_drafts=False,
+            )
+        return ProviderReadiness(
+            provider=self.name,
+            status="ready",
+            message="Gmail provider is ready.",
+            account_email=account_email,
+            can_authenticate=True,
+            can_read=True,
+            can_create_drafts=True,
+        )
 
     def get_account_email(self) -> str | None:
         _, _, _, build = self._load_google_modules()

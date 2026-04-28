@@ -8,7 +8,7 @@ from mailassist.fixtures.mock_threads import build_mock_threads
 from mailassist.live_filters import WatcherFilter, thread_passes_filter
 from mailassist.models import EmailThread
 from mailassist.models import DraftRecord, ProviderDraftReference
-from mailassist.providers.base import DraftProvider
+from mailassist.providers.base import DraftProvider, ProviderReadiness
 
 
 class MockProvider(DraftProvider):
@@ -20,6 +20,17 @@ class MockProvider(DraftProvider):
 
     def get_account_email(self) -> str | None:
         return self.account_email
+
+    def readiness_check(self) -> ProviderReadiness:
+        return ProviderReadiness(
+            provider=self.name,
+            status="ready",
+            message="Mock provider is ready.",
+            account_email=self.account_email,
+            can_authenticate=True,
+            can_read=True,
+            can_create_drafts=True,
+        )
 
     def list_actionable_threads(self, watcher_filter: WatcherFilter) -> list[EmailThread]:
         now = datetime.now(timezone.utc)

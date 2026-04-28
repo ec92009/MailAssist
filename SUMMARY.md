@@ -17,13 +17,15 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 - Moved live drafting/classification helpers into `mailassist.drafting` so the background bot no longer imports them from legacy `review_state.py`. The old review module remains as compatibility/legacy support.
 - Bumped the visible version to `v59.1` for this user-visible build.
 - Refreshed docs, committed and pushed release commit `68d4b07` to `origin/main`, built `/Applications/MailAssist.app`, refreshed the Dock entry, and opened the native GUI.
+- Started today's Outlook/Microsoft 365 work by defining the provider readiness/auth contract. Providers now expose `authenticate`, `get_account_email`, `list_candidate_threads`, `create_draft`, and `readiness_check`; Outlook reports missing Graph client-id and admin-consent/Graph implementation blockers without requiring a real Outlook subscription.
+- Added two GUI polish TODOs requested by the user: show a `Signature + Attribution` preview with attribution placement options (`Hide`, `Above Signature`, `Below Signature`), and harmonize Advanced Settings field heights by increasing the check-frequency spinner height rather than shrinking neighboring text fields.
 
 ## Current Verified State
 
 - Visible version: `v59.1`.
-- Full test suite: 94 passing tests on April 28, 2026.
+- Full test suite: 98 passing tests on April 28, 2026.
 - Native desktop app is the active GUI surface; it has no localhost or LAN URL.
-- Latest pushed implementation commit: `68d4b07`.
+- Latest pushed commit before this handoff update: `59cf4ae`.
 - Installed app path: `/Applications/MailAssist.app`.
 - Gmail optional dependencies are installed in the local virtualenv.
 - Gmail read-only probing, Gmail dry-run watching, controlled Gmail provider-write draft creation, and Gmail multipart draft validation have all been exercised locally.
@@ -37,6 +39,9 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 - Visually inspect the corrected controlled Gmail draft in Gmail's draft editor if manual/browser confirmation is useful; API validation is already complete.
 - Exercise one real live-watch provider-writing pass when a genuinely actionable Gmail inbox thread is available; the controlled provider-write path is proven, but the latest real inbox slice had no actionable candidate.
 - Build the Outlook/Microsoft 365 provider path for Magali.
+- Add Microsoft Graph mock fixtures and use them to implement Outlook readiness checks, account email discovery, thread parsing, and draft payload mapping before testing on Magali's tenant.
+- Add the `Signature + Attribution` preview and attribution placement setting.
+- Increase the check-frequency spinner height to match the neighboring fields.
 - Continue product safety and trust hardening around explicit provider writes and ignored runtime artifacts.
 - Continue architecture cleanup by quarantining remaining two-candidate review helpers as legacy-only support.
 - Maintain the Mac/Gmail sandbox and prepare packaging/distribution work, especially Windows signing/installer research.
