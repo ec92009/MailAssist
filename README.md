@@ -27,6 +27,10 @@ The user reviews, edits, sends, or deletes drafts in the normal mail client. Mai
 - [SUMMARY.md](~/Dev/MailAssist/SUMMARY.md): latest project snapshot
 - [docs/setting_up_gmail_connection_for_MailAssist.pdf](~/Dev/MailAssist/docs/setting_up_gmail_connection_for_MailAssist.pdf): first-time Gmail setup guide
 - [docs/gmail_oauth_advanced.pdf](~/Dev/MailAssist/docs/gmail_oauth_advanced.pdf): detailed Gmail OAuth setup reference
+- [docs/magali-pre-zoom-checklist.md](~/Dev/MailAssist/docs/magali-pre-zoom-checklist.md): pre-call checklist for Magali setup
+- [docs/magali-zoom-operator-script.md](~/Dev/MailAssist/docs/magali-zoom-operator-script.md): Magali call-time script
+- [docs/magali-windows-readiness-runbook.md](~/Dev/MailAssist/docs/magali-windows-readiness-runbook.md): Windows Outlook/Ollama readiness flow
+- [docs/mailassist-outlook-entra-portal-steps.md](~/Dev/MailAssist/docs/mailassist-outlook-entra-portal-steps.md): Entra app registration steps
 - [ENVIRONMENT_SOP.md](~/Dev/MailAssist/ENVIRONMENT_SOP.md): local Python workflow
 - [VERSIONING_SOP.md](~/Dev/MailAssist/VERSIONING_SOP.md): visible version rules
 - [SHOW_ME_SOP.md](~/Dev/MailAssist/SHOW_ME_SOP.md): local UI launch workflow
@@ -149,13 +153,7 @@ Apple references:
 cd ~/Dev/MailAssist
 uv venv .venv
 source .venv/bin/activate
-uv pip install --python .venv/bin/python -e .
-```
-
-For Gmail support:
-
-```bash
-uv pip install --python .venv/bin/python -e ".[gmail]"
+uv sync
 ```
 
 Developer Gmail setup requires a local OAuth Desktop client JSON at:
@@ -266,6 +264,12 @@ This authorizes Outlook, verifies the signed-in mailbox, previews inbox thread s
 ./.venv/bin/mailassist review-bot --action outlook-smoke-test --limit 5
 ```
 
+Check a local Ollama model through MailAssist's own `think:false` generation path:
+
+```bash
+./.venv/bin/mailassist ollama-setup-check --model qwen3:8b
+```
+
 Create one controlled Outlook reply draft only after selecting an explicit conversation id:
 
 ```bash
@@ -276,6 +280,7 @@ Create one controlled Outlook reply draft only after selecting an explicit conve
 ```
 
 See `docs/outlook-m365-admin-consent.md` for Microsoft 365 app registration and tenant/admin-consent notes.
+See `docs/magali-windows-readiness-runbook.md` and `tools/magali-readiness.ps1` for the Magali Windows setup check.
 See `docs/windows-packaging.md` for the Windows packaging path and Parallels/VM checklist.
 
 Preview old Gmail messages that still carry user-created labels:
@@ -319,8 +324,8 @@ When running the packaged Mac app, the same runtime data lives under:
 
 ## Current Verified Baseline
 
-- Visible version: `v59.14`.
-- Test suite: 140 passing tests.
+- Visible version: `v60.1`.
+- Test suite: 147 passing tests.
 - `gemma4:31b` works locally after MailAssist sends `think: false` to Ollama.
 - Controlled mock-to-Gmail draft creation has been tested with batch sizes 1, 5, and 10.
 - Personal Outlook.com Microsoft Graph auth, category writes, controlled draft creation, and one targeted watcher-created draft have been tested.

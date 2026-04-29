@@ -43,9 +43,13 @@ authorized without turning the call into technical support.
 - Have a MailAssist Outlook app registration client id ready that supports
   work/school Microsoft 365 accounts. A personal-Microsoft-account-only client
   id will not be enough for Magali's Golden Years mailbox.
+- Start from `docs/magali-outlook.env.example` for the Windows machine `.env`.
+  Replace only `MAILASSIST_OUTLOOK_CLIENT_ID` before the call; keep the token
+  path under ignored `secrets/`.
 - Have the local commands ready, but do not run provider-writing commands until
   consent/readiness is understood.
 - Keep this file and `docs/outlook-m365-admin-consent.md` open.
+- Keep `docs/magali-zoom-operator-script.md` open for the call-time script.
 - Suggested screen-share tool: Zoom or Google Meet. Avoid remote control unless
   it is truly needed.
 
@@ -106,6 +110,15 @@ thread subjects, and does not create drafts or send email.
 
 Do not create provider drafts until the read-only setup check succeeds and the
 account identity is clearly the Golden Years mailbox.
+
+Then run MailAssist's own Ollama path instead of raw `ollama run`:
+
+```bash
+./.venv/bin/mailassist ollama-setup-check --model qwen3:8b
+```
+
+This uses the same local Ollama HTTP path as MailAssist drafts and sends
+`think:false`, so it is the relevant model check for her installed model.
 
 If the read-only smoke test succeeds, a controlled draft test is the next safe
 write:

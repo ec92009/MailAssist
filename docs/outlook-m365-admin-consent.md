@@ -18,6 +18,39 @@ school accounts. Use one of these supported account type choices:
 Do not use a personal-Microsoft-account-only app registration for Magali's
 Golden Years mailbox.
 
+Verified against Microsoft Learn on April 29, 2026:
+
+- Microsoft exposes supported account types through the app registration's
+  `signInAudience`; work/school multitenant maps to `AzureADMultipleOrgs`.
+- MailAssist is a local desktop/public-client app. It should use delegated
+  permissions with user sign-in, not application permissions.
+- Device-code/public-client auth is appropriate for a command-line setup check
+  on a user's machine.
+- Microsoft documents that device-code flow is not supported under `/common`
+  or `/consumers`; use `organizations` or the Golden Years tenant id for
+  Magali's work/school account.
+- `offline_access` must be requested when MailAssist needs refresh tokens from
+  the v2.0 identity platform endpoint.
+
+Concrete registration checklist:
+
+1. Create or open the MailAssist app registration in Microsoft Entra.
+2. Set Supported account types to either:
+   - Accounts in any organizational directory.
+   - Accounts in any organizational directory and personal Microsoft accounts.
+3. In Authentication, allow public-client/native flows for the desktop/CLI
+   setup path.
+4. Add delegated Microsoft Graph permissions only:
+   `offline_access`, `User.Read`, and `Mail.ReadWrite`.
+5. Do not add `Mail.Send`.
+6. Copy the Application (client) ID into the local `.env`.
+7. Use `MAILASSIST_OUTLOOK_TENANT_ID=organizations` until the Golden Years
+   tenant id is known; then prefer the tenant id for repeat setup.
+
+See `docs/mailassist-outlook-entra-portal-steps.md` for portal-by-portal
+click steps, and `docs/mailassist-outlook-entra-app-manifest.json` for the
+expected manifest cross-check.
+
 ## Developer Tenant Options
 
 As of April 2026, Microsoft's free Microsoft 365 E5 developer sandbox is limited to
@@ -60,6 +93,11 @@ MAILASSIST_OUTLOOK_TOKEN_FILE=secrets/outlook-token.json
 ```
 
 The token file path stays under `secrets/`, which is ignored by git.
+
+For the Magali call, start from `docs/magali-outlook.env.example` and replace
+only the app registration client id before running setup checks.
+Use `docs/magali-windows-readiness-runbook.md` for the exact Windows command
+sequence after the client id is available.
 
 For Magali's setup, prefer her tenant id if known. Otherwise use
 `MAILASSIST_OUTLOOK_TENANT_ID=organizations` so the device-code flow targets
@@ -115,7 +153,11 @@ Use the tenant id when possible. The redirect URI must match the app registratio
 
 Primary Microsoft references:
 
+- https://learn.microsoft.com/en-us/entra/identity-platform/supported-accounts-validation
+- https://learn.microsoft.com/en-us/entra/identity-platform/authentication-flows-app-scenarios
+- https://learn.microsoft.com/en-us/entra/identity-platform/msal-client-applications
 - https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-device-code
 - https://learn.microsoft.com/en-us/entra/identity-platform/v2-admin-consent
+- https://learn.microsoft.com/en-us/entra/identity-platform/scopes-oidc
 - https://learn.microsoft.com/en-us/graph/permissions-reference
 - https://learn.microsoft.com/en-us/graph/api/message-createreply?view=graph-rest-1.0

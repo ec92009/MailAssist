@@ -58,7 +58,7 @@ class GmailProvider(DraftProvider):
             from googleapiclient.discovery import build
         except ImportError as exc:
             raise RuntimeError(
-                "Gmail dependencies are missing. Install with: uv pip install -e \".[gmail]\""
+                "Gmail dependencies are missing. Refresh the environment with: uv sync"
             ) from exc
         return Request, Credentials, InstalledAppFlow, build
 

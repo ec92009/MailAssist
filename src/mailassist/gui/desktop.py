@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 import sys
 from datetime import datetime, timezone
 from functools import partial
@@ -141,6 +143,17 @@ def _format_model_age(modified_at: object) -> str:
     return f"{unit_value} {unit}{suffix}"
 
 
+def _ollama_force_quit_commands(platform: str) -> list[list[str]]:
+    if platform == "win32":
+        return [
+            ["taskkill", "/IM", "ollama.exe", "/F"],
+            ["taskkill", "/IM", "Ollama.exe", "/F"],
+        ]
+    if platform == "darwin":
+        return [["pkill", "-x", "ollama"], ["pkill", "-x", "Ollama"]]
+    return [["pkill", "-x", "ollama"]]
+
+
 def _model_display_label(model_detail: dict[str, Any]) -> str:
     name = str(model_detail.get("name", "")).strip()
     age = _format_model_age(model_detail.get("modified_at"))
@@ -244,7 +257,6 @@ class MailAssistDesktopWindow(QMainWindow):
     def _install_shortcuts(self) -> None:
         shortcuts = (
             ("Ctrl+,", self.open_settings_wizard),
-            ("Ctrl+R", self.run_mock_watch_once),
             ("Ctrl+L", self.open_bot_logs_dialog),
             ("Esc", lambda: self._set_banner("")),
         )
@@ -401,36 +413,56 @@ class MailAssistDesktopWindow(QMainWindow):
 
         bot_actions = QHBoxLayout()
         bot_actions.setSpacing(6)
-        self.demo_inbox_button = QPushButton("Try Demo Inbox")
-        run_mock_pass_button = self.demo_inbox_button
-        run_mock_pass_button.clicked.connect(self.run_mock_watch_once)
         self.gmail_draft_preview_button = QPushButton("Preview Gmail Draft")
         gmail_draft_test_button = self.gmail_draft_preview_button
         gmail_draft_test_button.clicked.connect(self.run_gmail_draft_test)
+        gmail_draft_test_button.setToolTip(
+            "Read recent Gmail messages and ask the local model what it would draft. "
+            "This is a dry run: MailAssist will not create a Gmail draft and will not send email. "
+            "Use it to check whether Gmail access, filters, and the model are behaving before starting auto-check."
+        )
         self.outlook_draft_preview_button = QPushButton("Preview Outlook Draft")
         outlook_draft_preview_button = self.outlook_draft_preview_button
         outlook_draft_preview_button.clicked.connect(self.run_outlook_draft_preview)
-        self.controlled_gmail_draft_button = QPushButton("Create Test Draft")
-        controlled_gmail_draft_button = self.controlled_gmail_draft_button
-        controlled_gmail_draft_button.clicked.connect(self.run_controlled_gmail_draft)
+        outlook_draft_preview_button.setToolTip(
+            "Read recent Outlook messages and ask the local model what it would draft. "
+            "This is a dry run: MailAssist will not create an Outlook draft and will not send email. "
+            "Use it after Outlook setup to validate classification without writing to the mailbox."
+        )
         self.gmail_label_rescan_button = QPushButton("Organize Gmail")
         gmail_label_rescan_button = self.gmail_label_rescan_button
         gmail_label_rescan_button.clicked.connect(self.run_gmail_label_rescan)
+        gmail_label_rescan_button.setToolTip(
+            "Classify recent Gmail threads into your MailAssist categories and apply MailAssist labels. "
+            "This can take several minutes because each thread may use the local model. "
+            "It changes MailAssist labels only; it does not delete mail and does not send email."
+        )
         self.outlook_category_rescan_button = QPushButton("Organize Outlook")
         outlook_category_rescan_button = self.outlook_category_rescan_button
         outlook_category_rescan_button.clicked.connect(self.run_outlook_category_rescan)
+        outlook_category_rescan_button.setToolTip(
+            "Classify recent Outlook messages into your MailAssist categories and apply Outlook categories. "
+            "This can take several minutes because each message may use the local model. "
+            "It changes MailAssist categories only; it does not create drafts and does not send email."
+        )
         self.gmail_label_days_input = QSpinBox()
         self.gmail_label_days_input.setRange(1, 30)
         self.gmail_label_days_input.setValue(7)
         self.gmail_label_days_input.setSuffix(" days")
         self.gmail_label_days_input.setMinimumWidth(92)
         self.gmail_label_days_input.setMaximumWidth(104)
+        self.gmail_label_days_input.setToolTip(
+            "How far back Organize Gmail should look. Keep this small for quick checks; larger windows take longer."
+        )
         self.outlook_category_days_input = QSpinBox()
         self.outlook_category_days_input.setRange(1, 30)
         self.outlook_category_days_input.setValue(7)
         self.outlook_category_days_input.setSuffix(" days")
         self.outlook_category_days_input.setMinimumWidth(92)
         self.outlook_category_days_input.setMaximumWidth(104)
+        self.outlook_category_days_input.setToolTip(
+            "How far back Organize Outlook should look. Keep this small for quick checks; larger windows take longer."
+        )
         action_height = max(
             gmail_label_rescan_button.sizeHint().height(),
             outlook_category_rescan_button.sizeHint().height(),
@@ -442,18 +474,32 @@ class MailAssistDesktopWindow(QMainWindow):
         self.start_watch_loop_button = QPushButton("Start Auto-Check")
         start_watch_loop_button = self.start_watch_loop_button
         start_watch_loop_button.clicked.connect(self.start_watch_loop)
+        start_watch_loop_button.setToolTip(
+            "Start continuous background checking for the selected provider. "
+            "MailAssist periodically reads matching threads, uses the local model, and creates provider drafts only when needed. "
+            "It never sends email. Stop pauses the background process."
+        )
         self.stop_bot_button = QPushButton("Stop")
         self.stop_bot_button.clicked.connect(self.stop_bot_action)
         self.stop_bot_button.setEnabled(False)
+        self.stop_bot_button.setToolTip(
+            "Stop the currently running MailAssist action or auto-check loop. "
+            "This does not delete provider drafts or undo labels/categories that were already written."
+        )
+        self.stop_ollama_button = QPushButton("Stop Ollama")
+        self.stop_ollama_button.clicked.connect(self.stop_ollama_action)
+        self.stop_ollama_button.setToolTip(
+            "Force quit the local Ollama process if a model is stuck or still using memory after MailAssist stops. "
+            "This interrupts any current model work. Start Ollama again before running more draft previews or auto-checks."
+        )
         for button in (
-            run_mock_pass_button,
             gmail_draft_test_button,
             outlook_draft_preview_button,
-            controlled_gmail_draft_button,
             gmail_label_rescan_button,
             outlook_category_rescan_button,
             start_watch_loop_button,
             self.stop_bot_button,
+            self.stop_ollama_button,
         ):
             button.setFixedHeight(action_height)
         label_scan_actions = QHBoxLayout()
@@ -463,13 +509,12 @@ class MailAssistDesktopWindow(QMainWindow):
         label_scan_actions.addSpacing(6)
         label_scan_actions.addWidget(outlook_category_rescan_button)
         label_scan_actions.addWidget(self.outlook_category_days_input)
-        bot_actions.addWidget(run_mock_pass_button)
         bot_actions.addWidget(gmail_draft_test_button)
         bot_actions.addWidget(outlook_draft_preview_button)
-        bot_actions.addWidget(controlled_gmail_draft_button)
         bot_actions.addLayout(label_scan_actions)
         bot_actions.addWidget(start_watch_loop_button)
         bot_actions.addWidget(self.stop_bot_button)
+        bot_actions.addWidget(self.stop_ollama_button)
         bot_actions.addStretch(1)
         control_layout.addLayout(bot_actions)
         shell.addWidget(self.control_group)
@@ -1632,6 +1677,10 @@ class MailAssistDesktopWindow(QMainWindow):
         self.last_activity_summary = message
         self.refresh_dashboard()
 
+    def _announce_long_action(self, message: str) -> None:
+        self._append_recent_activity(message)
+        self._set_banner(message, level="info")
+
     def refresh_bot_logs(self) -> None:
         self.bot_log_selector.blockSignals(True)
         self.bot_log_selector.clear()
@@ -1887,6 +1936,10 @@ class MailAssistDesktopWindow(QMainWindow):
         self.run_bot_action("watch-once", provider="mock")
 
     def start_watch_loop(self) -> None:
+        self._announce_long_action(
+            "Starting auto-check. MailAssist will keep checking in the background; "
+            "drafting can take a minute when the local model is needed."
+        )
         self.run_bot_action("watch-loop", provider=self._selected_provider())
 
     def stop_bot_action(self) -> None:
@@ -1896,6 +1949,84 @@ class MailAssistDesktopWindow(QMainWindow):
         self.bot_process.terminate()
         if not self.bot_process.waitForFinished(1500):
             self.bot_process.kill()
+
+    def stop_ollama_action(self) -> None:
+        confirmation = QMessageBox.question(
+            self,
+            "Stop Ollama",
+            (
+                "MailAssist will force quit the local Ollama process. This can interrupt any model work "
+                "currently running, and draft previews or auto-checks will fail until Ollama starts again.\n\n"
+                "Continue?"
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirmation != QMessageBox.StandardButton.Yes:
+            self._set_banner("Stop Ollama canceled.", level="info")
+            return
+
+        if self.bot_process is not None:
+            self.stop_bot_action()
+        model = str(self.settings.ollama_model or "").strip()
+        if hasattr(self, "ollama_model_picker"):
+            model = str(self.ollama_model_picker.currentData() or model).strip()
+        self._append_recent_activity("Stopping Ollama. Any running local model work will be interrupted.")
+        ok, message = self._stop_ollama_process(model)
+        self._append_recent_activity(message)
+        self.ollama_health = ("stopped" if ok else "stop failed", "warn" if ok else "error")
+        self.refresh_dashboard()
+        self._set_banner(message, level="info" if ok else "error")
+
+    def _stop_ollama_process(self, model: str) -> tuple[bool, str]:
+        commands_run: list[str] = []
+        had_success = False
+        errors: list[str] = []
+
+        ollama_bin = shutil.which("ollama")
+        if ollama_bin and model:
+            commands_run.append(f"ollama stop {model}")
+            try:
+                result = subprocess.run(
+                    [ollama_bin, "stop", model],
+                    capture_output=True,
+                    text=True,
+                    timeout=8,
+                    check=False,
+                )
+                if result.returncode == 0:
+                    had_success = True
+                elif result.stderr.strip():
+                    errors.append(result.stderr.strip())
+            except Exception as exc:
+                errors.append(f"ollama stop failed: {exc}")
+
+        for command in _ollama_force_quit_commands(sys.platform):
+            commands_run.append(" ".join(command))
+            try:
+                result = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+                if result.returncode == 0:
+                    had_success = True
+                elif result.returncode not in {1, 128} and result.stderr.strip():
+                    errors.append(result.stderr.strip())
+            except FileNotFoundError:
+                continue
+            except Exception as exc:
+                errors.append(f"{command[0]} failed: {exc}")
+
+        if had_success:
+            return True, "Ollama stop requested. Restart Ollama before running more model actions."
+        if commands_run and not errors:
+            return True, "No running Ollama process was found."
+        if errors:
+            return False, f"Could not stop Ollama automatically: {errors[-1]}"
+        return False, "Could not stop Ollama automatically because no stop command was available."
 
     def run_gmail_draft_test(self) -> None:
         confirmation = QMessageBox.question(
@@ -1911,6 +2042,10 @@ class MailAssistDesktopWindow(QMainWindow):
         if confirmation != QMessageBox.StandardButton.Yes:
             self._set_banner("Gmail draft dry run canceled.", level="info")
             return
+        self._announce_long_action(
+            "Previewing a Gmail draft. MailAssist will read recent Gmail threads and ask the local model; "
+            "this may take a minute, and no Gmail draft will be created."
+        )
         self.run_bot_action(
             "watch-once",
             provider="gmail",
@@ -1933,6 +2068,9 @@ class MailAssistDesktopWindow(QMainWindow):
         if confirmation != QMessageBox.StandardButton.Yes:
             self._set_banner("Controlled Gmail draft canceled.", level="info")
             return
+        self._announce_long_action(
+            "Creating one controlled Gmail test draft. This may take a minute; nothing will be sent."
+        )
         self.run_bot_action("gmail-controlled-draft", provider="gmail", thread_id="thread-008")
 
     def run_outlook_draft_preview(self) -> None:
@@ -1950,6 +2088,10 @@ class MailAssistDesktopWindow(QMainWindow):
             self._set_banner("Outlook draft preview canceled.", level="info")
             return
         self.save_settings(announce=False)
+        self._announce_long_action(
+            "Previewing an Outlook draft. MailAssist will read recent Outlook threads and ask the local model; "
+            "this may take a minute, and no Outlook draft will be created."
+        )
         self.run_bot_action(
             "watch-once",
             provider="outlook",
@@ -1976,6 +2118,10 @@ class MailAssistDesktopWindow(QMainWindow):
             self._set_banner("Gmail label rescan canceled.", level="info")
             return
         self.save_settings(announce=False)
+        self._announce_long_action(
+            f"Organizing Gmail for the last {days} day{'' if days == 1 else 's'}. "
+            "This can take a few minutes while the local model classifies messages."
+        )
         self.run_bot_action(
             "gmail-populate-labels",
             provider="gmail",
@@ -2007,6 +2153,10 @@ class MailAssistDesktopWindow(QMainWindow):
             self._set_banner("Outlook category rescan canceled.", level="info")
             return
         self.save_settings(announce=False)
+        self._announce_long_action(
+            f"Organizing Outlook for the last {days} day{'' if days == 1 else 's'}. "
+            "This can take a few minutes while the local model classifies messages."
+        )
         self.run_bot_action(
             "outlook-populate-categories",
             provider="outlook",

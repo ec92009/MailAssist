@@ -12,7 +12,7 @@ The bot watches provider inboxes, uses a local Ollama model to classify new thre
 - Ollama integration exists through a local HTTP client.
 - Ollama generation requests pass `think: false`.
 - The Ollama generation timeout is 300 seconds for slower local models.
-- Gmail draft creation exists as an optional provider path.
+- Gmail draft creation exists as a provider path, and its Google client packages are installed by the default project dependency set.
 - Gmail provider can preview recent inbox message metadata/snippets using read-only access.
 - Gmail provider can retrieve the account send-as signature as a starting point for MailAssist settings.
 - Outlook now has a mockable Microsoft Graph provider slice for account discovery, mailbox message parsing, readiness/admin-consent reporting, category updates, and reply-draft payload mapping. It also has a real Graph client with device-code OAuth, ignored local refresh-token storage, `/me`, inbox listing, message category updates, and reply-draft creation.
@@ -39,6 +39,8 @@ The bot watches provider inboxes, uses a local Ollama model to classify new thre
 - The bot has `watch-once` and Gmail preview/test paths.
 - The bot has an Outlook smoke-test path that checks provider readiness and inbox preview without writing drafts by default.
 - The CLI has an `outlook-setup-check` path for Magali-style setup: authorize Outlook, verify the signed-in mailbox, optionally enforce an expected email, preview inbox thread subjects only, and create no drafts.
+- The CLI has an `ollama-setup-check` path for Magali-style setup: list installed Ollama models, verify the configured or requested model exists, run a small prompt through MailAssist's own `think:false` Ollama client, and report response time without touching mail.
+- The desktop GUI has a confirmation-gated `Stop Ollama` control for stuck local model runs.
 - The bot has an Outlook category-population path that classifies recent Outlook threads into MailAssist categories, dry-runs by default, and only writes Graph message categories with `--apply-categories`.
 - The bot has a Gmail category-labeling path that asks the selected local Ollama model to choose one configured MailAssist category, or `NA`, for each recent thread.
 - Gmail category labels live under a top-level `MailAssist` label; configured category labels are created as needed and prior MailAssist category labels are replaced/removed during reclassification.
@@ -142,13 +144,13 @@ These were useful experiments, but the lighter product should not build on them 
 
 ## Latest Verified State
 
-- Latest visible version: `v59.14`.
-- Latest test run: 140 passing tests on April 28, 2026.
+- Latest visible version: `v60.1`.
+- Latest test run: 147 passing tests on April 29, 2026.
 - Current visible GUI surface is the compact bot control panel and setup wizard.
-- Gmail optional dependencies are installed in the local virtualenv.
+- Gmail provider dependencies are installed by plain `uv sync`.
 - Local Gmail setup has been proven for draft creation and readonly inbox preview.
 - Mac/Gmail DMG artifact was published as a GitHub release asset.
-- The next implementation phase should package or stage a safe Magali-ready Windows run, then validate read-only Outlook Graph readiness with `outlook-setup-check` against her real Microsoft 365 tenant before any controlled draft write.
+- The next implementation phase should create the work/school-compatible MailAssist Entra app registration, package or stage a safe Magali-ready Windows run, then validate read-only Outlook Graph readiness with `outlook-setup-check` and model readiness with `ollama-setup-check` before any controlled draft write.
 - The latest cleanup slices moved old review/runtime artifacts into a legacy subtree, removed the unused queue-phase lifecycle, deleted the old web review GUI path, removed the dead legacy local draft pipeline, and introduced a dedicated live-state store for watcher runtime data.
 - The latest live-watcher slice added watcher filters, provider thread-listing hooks, Gmail thread polling helpers, and background-bot integration for real provider thread sources.
 - Gmail actionable-thread listing now passes unread/time-window filters into Gmail search where available, while the watcher still uses broad candidate listing so it can emit `filtered_out` activity events.

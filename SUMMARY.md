@@ -59,15 +59,20 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 - A direct terminal `ollama run qwen3:8b ...` check was slow and showed thinking behavior; the real setup check should use MailAssist's own Ollama path with `think: false`.
 - Added `mailassist outlook-setup-check`, a read-only one-command Outlook setup path that runs Graph authorization, verifies readiness, checks an optional expected mailbox email, previews inbox thread subjects only, and explicitly avoids draft creation/sending. Bumped visible version to `v59.14` and ran the full local test suite: 140 passing tests on April 28, 2026.
 - Ran `rscp`, committed and pushed `0d1ddb3` to `main`, then prepared handoff docs. The current resume point is to verify or create a work/school-compatible Microsoft Entra app registration, then stage the Magali Windows run for `mailassist outlook-setup-check --expected-email MagaliDomingue@goldenyearstaxstrategy.com`.
+- Prepared the pre-Zoom Magali bundle: added `docs/magali-outlook.env.example`, refreshed `docs/outlook-m365-admin-consent.md` with a work/school app-registration checklist verified against Microsoft Learn on April 28, 2026, added `mailassist ollama-setup-check` for the MailAssist `think:false` Ollama path, and updated the call checklist/Windows notes/README. Bumped visible version to `v59.15`; full local test suite passed with 142 tests on April 28, 2026.
+- Fixed the Gmail dependency regression visible in the desktop GUI after plain `uv sync`: Gmail provider packages are now default project dependencies, stale `.[gmail]` setup guidance was removed, and the missing-dependency error now points to `uv sync`. Bumped visible version to `v59.16`; full local test suite passed with 142 tests on April 28, 2026.
+- Simplified the desktop bot action row for normal use: removed the demo inbox and controlled test-draft buttons from the main strip, added fuller tooltips to the remaining actions, and made slow actions write an immediate wait-time note in Recent Activity before starting. Bumped visible version to `v59.17`; full local test suite passed with 143 tests on April 28, 2026.
+- Added a confirmation-gated desktop `Stop Ollama` control for stuck model runs. It stops any active MailAssist bot process, tries `ollama stop <model>`, and force-quits the local Ollama process with the platform command. Bumped visible version to `v60.1`; full local test suite passed with 147 tests on April 29, 2026.
+- Prepared the pre-Zoom Magali execution path: added `docs/magali-pre-zoom-checklist.md`, `docs/magali-zoom-operator-script.md`, `docs/magali-windows-readiness-runbook.md`, `docs/mailassist-outlook-entra-portal-steps.md`, `docs/mailassist-outlook-entra-app-manifest.json`, `docs/mailassist-outlook-graph-permissions.json`, `tools/create-outlook-entra-app.sh`, `tools/prezoom-check.sh`, and `tools/magali-readiness.ps1`. Azure CLI 2.85.0 is installed locally. The Entra helper creates or updates a work/school public-client app with delegated `offline_access`, `User.Read`, and `Mail.ReadWrite` only; the Windows helper can take `-ClientId`, writes it to `.env`, rejects personal-account/common tenant settings, runs `uv sync`, then runs the read-only Outlook setup check and MailAssist-path `qwen3:8b` Ollama check. Full local test suite passed with 147 tests on April 29, 2026.
 
 ## Current Verified State
 
-- Visible version: `v59.14`.
-- Full test suite: 140 passing tests on April 28, 2026.
+- Visible version: `v60.1`.
+- Full test suite: 147 passing tests on April 29, 2026.
 - Native desktop app is the active GUI surface; it has no localhost or LAN URL.
 - Latest synchronized commit before the handoff commit: `0d1ddb3`.
 - Installed app path: `/Applications/MailAssist.app`.
-- Gmail optional dependencies are installed in the local virtualenv.
+- Gmail provider dependencies are default dependencies and are installed by plain `uv sync`.
 - Gmail read-only probing, Gmail dry-run watching, controlled Gmail provider-write draft creation, and Gmail multipart draft validation have all been exercised locally.
 - The corrected controlled Gmail draft validation proves recipient, subject, review context, attribution, HTML/plain multipart fallback, and HTML sanitizing through the actual Gmail provider path.
 - Attribution placement is now persisted with `MAILASSIST_DRAFT_ATTRIBUTION_PLACEMENT`; legacy `MAILASSIST_DRAFT_ATTRIBUTION=true` maps to `below_signature`.
@@ -83,8 +88,9 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 
 ## Remaining Backlog
 
-- Verify or create a MailAssist Microsoft Entra app registration that supports work/school accounts, then package or stage a Magali-ready Windows run that can execute `mailassist outlook-setup-check --expected-email MagaliDomingue@goldenyearstaxstrategy.com`; run any controlled draft write only after read-only readiness succeeds.
-- Run MailAssist's own small local model check on her `qwen3:8b` setup; hardware RAM is likely sufficient, but raw terminal Ollama thinking was slow.
+- Run `az login` with an account that can create app registrations, then create or update the work/school MailAssist Entra app using `./tools/create-outlook-entra-app.sh --write-env` or the documented portal path. The current local `.env` is still the old personal Outlook smoke-test configuration with `MAILASSIST_OUTLOOK_TENANT_ID=consumers`; switch to `organizations` or the Golden Years tenant id before Magali readiness.
+- Paste/pass the work/school client id into the Magali Windows `.env`, then run the staged `tools/magali-readiness.ps1` path; run any controlled draft write only after read-only readiness succeeds.
+- Run `mailassist ollama-setup-check --model qwen3:8b` on her setup; hardware RAM is likely sufficient, but raw terminal Ollama thinking was slow.
 - Use `docs/outlook-m365-admin-consent.md` as the packaged tenant/admin-consent guidance before attempting Magali's Microsoft 365 account.
 - Decide the next Outlook GUI exposure for drafting. Current GUI exposes `Organize Outlook`; targeted Outlook draft creation remains available through explicit CLI/smoke-test commands.
 - Continue product safety and trust hardening around explicit provider writes and ignored runtime artifacts.

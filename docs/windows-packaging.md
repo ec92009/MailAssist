@@ -39,9 +39,12 @@ When a Windows VM is available:
 4. Run `uv sync`.
 5. Confirm `./.venv/Scripts/mailassist.exe desktop-gui` launches.
 6. Install and validate Ollama for Windows.
-7. Configure `.env` for Outlook/Microsoft 365.
+7. Configure `.env` for Outlook/Microsoft 365 using
+   `docs/magali-outlook.env.example`.
 8. Run `mailassist outlook-setup-check --expected-email <mailbox-email>`.
-9. Only after choosing a thread id, run the controlled draft smoke:
+9. Run `mailassist ollama-setup-check --model qwen3:8b`, or the installed model
+   chosen for that machine.
+10. Only after choosing a thread id, run the controlled draft smoke:
 
 ```powershell
 mailassist review-bot --action outlook-smoke-test --thread-id <conversation-id> --create-draft

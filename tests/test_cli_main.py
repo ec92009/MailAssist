@@ -62,6 +62,24 @@ class AdminBlockedOutlookProvider(FakeOutlookProvider):
         )
 
 
+class FakeOllamaClient:
+    def __init__(self, base_url: str, model: str) -> None:
+        self.base_url = base_url
+        self.model = model
+
+    def list_models(self) -> list[str]:
+        return ["qwen3:8b"]
+
+    def compose_reply(self, prompt: str) -> str:
+        assert "MailAssist model check passed" in prompt
+        return "MailAssist model check passed."
+
+
+class MissingModelOllamaClient(FakeOllamaClient):
+    def list_models(self) -> list[str]:
+        return ["llama3.1:8b"]
+
+
 def test_outlook_setup_check_is_read_only_and_prints_mailbox_summary(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
@@ -138,3 +156,50 @@ def test_outlook_setup_check_reports_admin_consent_blocker(
     assert exit_code == 1
     assert "Outlook authorization failed" in output
     assert "tenant admin approval is required" in output
+
+
+def test_ollama_setup_check_uses_mailassist_client_and_reports_success(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_env_file(
+        tmp_path / ".env",
+        {
+            "MAILASSIST_OLLAMA_MODEL": "qwen3:8b",
+            "MAILASSIST_OLLAMA_URL": "http://localhost:11434",
+        },
+    )
+    monkeypatch.setattr(cli_main, "OllamaClient", FakeOllamaClient)
+
+    exit_code = cli_main.command_ollama_setup_check(
+        argparse.Namespace(model="", base_url="", prompt="")
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "think:false" in output
+    assert "Model: qwen3:8b" in output
+    assert "Response: MailAssist model check passed." in output
+    assert "Ollama setup check completed" in output
+
+
+def test_ollama_setup_check_stops_when_model_is_not_installed(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_env_file(
+        tmp_path / ".env",
+        {
+            "MAILASSIST_OLLAMA_MODEL": "qwen3:8b",
+        },
+    )
+    monkeypatch.setattr(cli_main, "OllamaClient", MissingModelOllamaClient)
+
+    exit_code = cli_main.command_ollama_setup_check(
+        argparse.Namespace(model="", base_url="", prompt="")
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 1
+    assert "Configured model is not installed: qwen3:8b" in output
+    assert "ollama pull qwen3:8b" in output

@@ -6,6 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox
 
 from mailassist.config import read_env_file, write_env_file
+from mailassist.gui import desktop as desktop_module
 from mailassist.gui.desktop import MailAssistDesktopWindow
 from mailassist.system_resources import memory_recommendation_message, recommended_model_names
 
@@ -454,6 +455,8 @@ def test_gmail_draft_test_runs_safe_dry_run_after_confirmation(monkeypatch) -> N
     window.run_gmail_draft_test()
 
     assert called == [("watch-once", "thread-008", "gmail", True, True)]
+    assert "Previewing a Gmail draft" in window.recent_activity.toPlainText()
+    assert "no Gmail draft will be created" in window.recent_activity.toPlainText()
     window.close()
 
 
@@ -509,6 +512,8 @@ def test_outlook_draft_preview_runs_safe_dry_run_after_confirmation(monkeypatch)
     assert confirmation_messages[0][0] == "Preview Outlook Draft"
     assert "without creating real Outlook drafts" in confirmation_messages[0][1]
     assert "Nothing will be sent" in confirmation_messages[0][1]
+    assert "Previewing an Outlook draft" in window.recent_activity.toPlainText()
+    assert "no Outlook draft will be created" in window.recent_activity.toPlainText()
     window.close()
 
 
@@ -593,6 +598,8 @@ def test_gmail_label_rescan_runs_with_limited_horizon(monkeypatch) -> None:
     assert confirmation_messages[0][0] == "Organize Gmail"
     assert "take a few minutes" in confirmation_messages[0][1]
     assert "keep working" in confirmation_messages[0][1]
+    assert "Organizing Gmail for the last 3 days" in window.recent_activity.toPlainText()
+    assert "can take a few minutes" in window.recent_activity.toPlainText()
     window.close()
 
 
@@ -653,19 +660,120 @@ def test_outlook_category_rescan_runs_with_day_horizon(monkeypatch) -> None:
     assert confirmation_messages[0][0] == "Organize Outlook"
     assert "last 12 days" in confirmation_messages[0][1]
     assert "keep working" in confirmation_messages[0][1]
+    assert "Organizing Outlook for the last 12 days" in window.recent_activity.toPlainText()
+    assert "can take a few minutes" in window.recent_activity.toPlainText()
     window.close()
 
 
-def test_bot_control_actions_use_user_centered_labels_and_compact_days_input() -> None:
+def test_start_auto_check_warns_in_recent_activity_before_running(monkeypatch) -> None:
+    window = MailAssistDesktopWindow()
+    called = []
+
+    monkeypatch.setattr(window, "run_bot_action", lambda action, **kwargs: called.append((action, kwargs)))
+
+    window.start_watch_loop()
+
+    assert called == [("watch-loop", {"provider": window._selected_provider()})]
+    assert "Starting auto-check" in window.recent_activity.toPlainText()
+    assert "drafting can take a minute" in window.recent_activity.toPlainText()
+    window.close()
+
+
+def test_stop_ollama_requires_confirmation(monkeypatch) -> None:
+    window = MailAssistDesktopWindow()
+    called = []
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.No,
+    )
+    monkeypatch.setattr(window, "_stop_ollama_process", lambda model: called.append(model))
+
+    window.stop_ollama_action()
+
+    assert called == []
+    assert window.banner.text() == "Stop Ollama canceled."
+    window.close()
+
+
+def test_stop_ollama_runs_force_stop_after_confirmation(monkeypatch) -> None:
+    window = MailAssistDesktopWindow()
+    called = []
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr(
+        window,
+        "_stop_ollama_process",
+        lambda model: called.append(model)
+        or (True, "Ollama stop requested. Restart Ollama before running more model actions."),
+    )
+
+    window.stop_ollama_action()
+
+    assert called == [window.settings.ollama_model]
+    assert "Stopping Ollama" in window.recent_activity.toPlainText()
+    assert "Ollama stop requested" in window.recent_activity.toPlainText()
+    assert "Ollama stop requested" in window.banner.text()
+    window.close()
+
+
+def test_stop_ollama_process_runs_model_stop_and_platform_kill(monkeypatch) -> None:
+    window = MailAssistDesktopWindow()
+    calls = []
+
+    class Result:
+        returncode = 0
+        stderr = ""
+
+    monkeypatch.setattr(desktop_module.shutil, "which", lambda name: "/usr/local/bin/ollama")
+    monkeypatch.setattr(desktop_module.sys, "platform", "darwin")
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return Result()
+
+    monkeypatch.setattr(desktop_module.subprocess, "run", fake_run)
+
+    ok, message = window._stop_ollama_process("qwen3:8b")
+
+    assert ok is True
+    assert "Restart Ollama" in message
+    assert calls[0] == ["/usr/local/bin/ollama", "stop", "qwen3:8b"]
+    assert ["pkill", "-x", "ollama"] in calls
+    assert ["pkill", "-x", "Ollama"] in calls
+    window.close()
+
+
+def test_ollama_force_quit_commands_are_platform_specific() -> None:
+    assert ["taskkill", "/IM", "ollama.exe", "/F"] in desktop_module._ollama_force_quit_commands(
+        "win32"
+    )
+    assert ["pkill", "-x", "Ollama"] in desktop_module._ollama_force_quit_commands("darwin")
+    assert desktop_module._ollama_force_quit_commands("linux") == [["pkill", "-x", "ollama"]]
+
+
+def test_bot_control_actions_use_user_centered_labels_tooltips_and_compact_days_input() -> None:
     window = MailAssistDesktopWindow()
 
-    assert window.demo_inbox_button.text() == "Try Demo Inbox"
     assert window.gmail_draft_preview_button.text() == "Preview Gmail Draft"
     assert window.outlook_draft_preview_button.text() == "Preview Outlook Draft"
-    assert window.controlled_gmail_draft_button.text() == "Create Test Draft"
     assert window.gmail_label_rescan_button.text() == "Organize Gmail"
     assert window.outlook_category_rescan_button.text() == "Organize Outlook"
     assert window.start_watch_loop_button.text() == "Start Auto-Check"
+    assert window.stop_ollama_button.text() == "Stop Ollama"
+    assert "dry run" in window.gmail_draft_preview_button.toolTip()
+    assert "will not create a Gmail draft" in window.gmail_draft_preview_button.toolTip()
+    assert "will not create an Outlook draft" in window.outlook_draft_preview_button.toolTip()
+    assert "This can take several minutes" in window.gmail_label_rescan_button.toolTip()
+    assert "This can take several minutes" in window.outlook_category_rescan_button.toolTip()
+    assert "never sends email" in window.start_watch_loop_button.toolTip()
+    assert "Stop the currently running" in window.stop_bot_button.toolTip()
+    assert "Force quit the local Ollama process" in window.stop_ollama_button.toolTip()
     assert window.gmail_label_days_input.maximumWidth() <= 104
     assert window.outlook_category_days_input.maximumWidth() <= 104
     assert window.gmail_label_days_input.height() == window.gmail_label_rescan_button.height()
