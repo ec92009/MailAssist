@@ -96,7 +96,20 @@ To update an existing app registration instead of creating a new one:
 ./tools/create-outlook-entra-app.sh --update <application-client-id>
 ```
 
+To verify an existing app registration before the Zoom call:
+
+```bash
+./tools/verify-outlook-entra-app.sh <application-client-id>
+```
+
 ## Values Needed For The Call
+
+Current verified values:
+
+```text
+MAILASSIST_OUTLOOK_CLIENT_ID=2b2639c3-605c-466d-ae89-63ef8ffff5c8
+MAILASSIST_OUTLOOK_TENANT_ID=organizations
+```
 
 Required:
 

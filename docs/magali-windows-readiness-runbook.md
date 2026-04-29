@@ -24,6 +24,13 @@ Use `docs/magali-zoom-operator-script.md` as the call-time talk track.
 
 ## Prepare `.env`
 
+Use the verified work/school client id:
+
+```text
+MAILASSIST_OUTLOOK_CLIENT_ID=2b2639c3-605c-466d-ae89-63ef8ffff5c8
+MAILASSIST_OUTLOOK_TENANT_ID=organizations
+```
+
 Start from:
 
 ```powershell
@@ -69,6 +76,12 @@ the helper so it updates `.env` for you:
 
 ```powershell
 .\tools\magali-readiness.ps1 -ClientId <application-client-id>
+```
+
+For the current app registration:
+
+```powershell
+.\tools\magali-readiness.ps1 -ClientId 2b2639c3-605c-466d-ae89-63ef8ffff5c8
 ```
 
 If PowerShell blocks scripts, run:

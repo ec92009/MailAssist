@@ -28,6 +28,7 @@ check_file docs/mailassist-outlook-graph-permissions.json
 check_file docs/mailassist-outlook-entra-portal-steps.md
 check_file tools/magali-readiness.ps1
 check_file tools/create-outlook-entra-app.sh
+check_file tools/verify-outlook-entra-app.sh
 
 echo
 if command -v jq >/dev/null 2>&1; then

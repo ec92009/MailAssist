@@ -39,6 +39,12 @@ Copy-Item docs\magali-outlook.env.example .env
 .\tools\magali-readiness.ps1 -ClientId <application-client-id>
 ```
 
+Current verified client id:
+
+```powershell
+.\tools\magali-readiness.ps1 -ClientId 2b2639c3-605c-466d-ae89-63ef8ffff5c8
+```
+
 If PowerShell blocks scripts, run:
 
 ```powershell

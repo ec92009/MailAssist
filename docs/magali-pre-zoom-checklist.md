@@ -3,6 +3,17 @@
 Use this before scheduling the next Magali setup call. Everything here can be
 done without access to her private mailbox.
 
+Current verified client id:
+
+```text
+MAILASSIST_OUTLOOK_CLIENT_ID=2b2639c3-605c-466d-ae89-63ef8ffff5c8
+MAILASSIST_OUTLOOK_TENANT_ID=organizations
+```
+
+The source app registration lives in local tenant
+`fff6075e-c052-4a48-b80b-fc2b03b9c4a0`, but Magali should use
+`organizations` until her Golden Years tenant id is known.
+
 ## Entra App Registration
 
 - Create or verify the MailAssist app registration in Microsoft Entra.
@@ -11,6 +22,8 @@ done without access to her private mailbox.
   cross-check.
 - Azure CLI is installed on the current Mac workspace; if using CLI, run
   `az login`, then `./tools/create-outlook-entra-app.sh`.
+- If a client id already exists, run
+  `./tools/verify-outlook-entra-app.sh <application-client-id>` before the call.
 - Supported account type:
   - Preferred: Accounts in any organizational directory.
   - Acceptable: Accounts in any organizational directory and personal Microsoft
