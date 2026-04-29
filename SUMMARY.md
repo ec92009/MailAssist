@@ -67,11 +67,19 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 - Added `tools/magali-bootstrap.ps1` for the next Zoom call so Magali does not need Git or a preinstalled Python. The paste-friendly command downloads the bootstrap from GitHub, downloads the repo zip into `Downloads\MailAssist-main`, installs `uv` if missing, installs Python 3.12 through `uv`, syncs the project, and runs the safe Outlook/Ollama readiness checks with the verified client id.
 - Moved `Stop Ollama` from the main bot action strip into the Settings local-model tab beside `Send small test prompt`, added `Restart Ollama`, added a two-minute countdown during the model test, and changed successful model-test output to say `Test successful after <duration>`. Bumped visible version to `v60.2`; full local test suite passed with 152 tests on April 29, 2026.
 - Renamed the model-tab recovery control to `Start Ollama`, kept the start path headless through `ollama serve` when the CLI is available, and made the delayed model-list refresh silent so it does not overwrite the model-test result panel. Bumped visible version to `v60.3`; full local test suite passed with 153 tests on April 29, 2026.
+- Added a compact `Clear` control to the Recent Activity panel. It resets the visible activity list back to `No bot activity yet.` without deleting the saved JSONL bot run logs, and now sits to the left of the scrolling text so the panel keeps its vertical space. Bumped visible version to `v60.4`; full local test suite passed with 155 tests on April 29, 2026.
+- Wrapped the longer GUI tooltips in constrained multiline rich text so they stay within the page instead of stretching too wide. Bumped visible version to `v60.5`; full local test suite passed with 156 tests on April 29, 2026.
+- Capped GUI Outlook draft preview to a small candidate set so it behaves like a quick dry-run smoke test instead of a broad Outlook sweep, and made preview completion lines name the provider (`Gmail preview completed`, `Outlook preview completed`) for consistent Recent Activity output. Bumped visible version to `v60.6`; full local test suite passed with 158 tests on April 29, 2026.
+- Added Recent Activity heartbeat updates for long-running preview/watch actions, including Outlook preview copy that warns local model checks can take a minute and heartbeat lines will appear while no email is sent. Bumped visible version to `v60.7`; full local test suite passed with 160 tests on April 29, 2026.
+- Made Gmail and Outlook preview UX symmetrical: both warn that heartbeat updates will appear, both emit an immediate `preview still running` line, both repeat heartbeat updates, and both auto-stop after 2 minutes if unfinished. Bumped visible version to `v60.8`; full local test suite passed with 162 tests on April 29, 2026.
+- Improved Outlook preview diagnostics: preview runs use a shorter Ollama timeout, Outlook preview is capped to one candidate, heartbeat lines also update the banner, auth failures appear in Recent Activity, and Microsoft `invalid_grant` now explains that Outlook sign-in must be refreshed. Bumped visible version to `v60.9`; full local test suite passed with 166 tests on April 29, 2026.
+- Removed confirmation modals from dry-run Gmail and Outlook draft previews, while keeping confirmations for provider-writing and organizing actions. Stopped preview heartbeats immediately on completed/error events so `completed` and `still running` messages cannot conflict. Bumped visible version to `v60.10`; full local test suite passed with 166 tests on April 29, 2026.
+- Added progress detail to Recent Activity heartbeat/final summaries: preview/watch actions report checked/drafts/draft previews/skipped/already/filtered counts, and Gmail/Outlook organizer runs report categorized totals plus applied category/message updates. Bumped visible version to `v60.11`; full local test suite passed with 169 tests on April 29, 2026.
 
 ## Current Verified State
 
-- Visible version: `v60.3`.
-- Full test suite: 153 passing tests on April 29, 2026.
+- Visible version: `v60.11`.
+- Full test suite: 169 passing tests on April 29, 2026.
 - Native desktop app is the active GUI surface; it has no localhost or LAN URL.
 - Latest synchronized commit before the handoff commit: `0d1ddb3`.
 - Latest pushed setup/bootstrap commit before this doc refresh: `2b9a130`.

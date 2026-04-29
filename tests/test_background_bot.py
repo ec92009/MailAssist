@@ -670,3 +670,39 @@ def test_watch_pass_records_filtered_out_threads(monkeypatch, tmp_path: Path) ->
     state = load_bot_state(tmp_path)
     assert state["providers"]["gmail"]["threads"]["thread-008"]["action"] == "filtered_out"
     assert state["recent_activity"][-1]["type"] == "filtered_out"
+
+
+def test_watch_pass_can_limit_candidate_count(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_env_file(tmp_path / ".env", {})
+    threads = [
+        next(item for item in build_mock_threads() if item.thread_id == "thread-008"),
+        next(item for item in build_mock_threads() if item.thread_id == "thread-010"),
+    ]
+
+    class ProviderWithThreads(MockProvider):
+        name = "outlook"
+
+        def list_candidate_threads(self):
+            return threads
+
+    monkeypatch.setattr(
+        "mailassist.background_bot.generate_candidate_for_tone",
+        lambda *args, **kwargs: ({"body": "Draft body", "generated_by": "mock-model"}, "mock-model", None, "reply_needed"),
+    )
+
+    settings = load_settings()
+    provider = ProviderWithThreads(settings.mock_provider_drafts_dir, account_email="magali@example.com")
+
+    events = run_watch_pass(
+        settings=settings,
+        provider=provider,
+        base_url="http://localhost:11434",
+        selected_model="mock-model",
+        force=True,
+        dry_run=True,
+        max_candidates=1,
+    )
+
+    event_thread_ids = {event["thread_id"] for event in events if "thread_id" in event}
+    assert event_thread_ids == {"thread-008"}

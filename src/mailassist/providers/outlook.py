@@ -278,6 +278,11 @@ class MicrosoftGraphClient:
             description = str(response.get("error_description", error))
             if error in {"authorization_pending", "slow_down"}:
                 raise OutlookGraphAuthError(error)
+            if error == "invalid_grant":
+                raise OutlookGraphAuthError(
+                    "Outlook sign-in expired or was revoked (invalid_grant). "
+                    "Run Outlook setup/auth again before previewing Outlook drafts."
+                )
             raise OutlookGraphAuthError(
                 description or error,
                 requires_admin_consent=_looks_like_admin_consent_error(description),

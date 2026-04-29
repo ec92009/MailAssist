@@ -42,6 +42,14 @@ The bot watches provider inboxes, uses a local Ollama model to classify new thre
 - The CLI has an `ollama-setup-check` path for Magali-style setup: list installed Ollama models, verify the configured or requested model exists, run a small prompt through MailAssist's own `think:false` Ollama client, and report response time without touching mail.
 - The desktop GUI has confirmation-gated `Stop Ollama` and headless `Start Ollama` controls in the Settings local-model tab beside the small test prompt.
 - `Start Ollama` quietly refreshes the installed model list after startup without overwriting the current model-test result text.
+- The desktop GUI can clear the visible Recent Activity window without deleting saved bot run logs; the clear control sits beside the scrolling text to preserve vertical log space.
+- Longer desktop GUI tooltips render as constrained multiline rich text instead of one wide line.
+- GUI draft previews now report provider-specific completion lines, and Outlook preview is capped to a small candidate set so it remains a quick dry-run check.
+- Long-running GUI preview/watch actions emit heartbeat lines in Recent Activity so the user can see MailAssist is still working and no email is being sent.
+- Gmail and Outlook preview actions now share the same warning/heartbeat behavior and auto-stop after 2 minutes if the preview has not finished.
+- Outlook preview diagnostics now distinguish auth failure from model work: preview errors are visible in Recent Activity, `invalid_grant` tells the user to refresh Outlook sign-in, and dry-run preview model calls use a shorter Ollama timeout.
+- Dry-run Gmail and Outlook draft previews run without confirmation modals; preview heartbeats stop immediately on completion or failure.
+- Recent Activity heartbeat/final summaries include progress counts for previews, watch passes, and Gmail/Outlook organizer runs.
 - The small local-model test shows a two-minute countdown while Ollama is running and reports `Test successful after <duration>` when the model responds.
 - The bot has an Outlook category-population path that classifies recent Outlook threads into MailAssist categories, dry-runs by default, and only writes Graph message categories with `--apply-categories`.
 - The bot has a Gmail category-labeling path that asks the selected local Ollama model to choose one configured MailAssist category, or `NA`, for each recent thread.
@@ -146,8 +154,8 @@ These were useful experiments, but the lighter product should not build on them 
 
 ## Latest Verified State
 
-- Latest visible version: `v60.3`.
-- Latest test run: 153 passing tests on April 29, 2026.
+- Latest visible version: `v60.11`.
+- Latest test run: 169 passing tests on April 29, 2026.
 - Current visible GUI surface is the compact bot control panel and setup wizard.
 - Gmail provider dependencies are installed by plain `uv sync`.
 - Local Gmail setup has been proven for draft creation and readonly inbox preview.

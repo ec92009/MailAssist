@@ -121,6 +121,7 @@ def run_watch_pass(
     force: bool = False,
     batch_size: int = 1,
     dry_run: bool = False,
+    max_candidates: int | None = None,
 ) -> list[dict[str, Any]]:
     state = load_bot_state(settings.root_dir)
     user_address = _resolve_account_email(state, provider)
@@ -132,6 +133,8 @@ def run_watch_pass(
     events = []
     pending_threads: list[tuple[EmailThread, str]] = []
     thread_candidates = _watch_thread_candidates_for_provider(provider, settings)
+    if max_candidates is not None:
+        thread_candidates = thread_candidates[: max(1, int(max_candidates))]
 
     for thread, filtered_reason in thread_candidates:
         if thread_id and thread.thread_id != thread_id:

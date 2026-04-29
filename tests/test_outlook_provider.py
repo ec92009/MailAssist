@@ -11,6 +11,7 @@ from mailassist.models import DraftRecord
 from mailassist.providers.outlook import (
     MicrosoftGraphClient,
     OUTLOOK_GRAPH_SCOPES,
+    OutlookGraphAuthError,
     OutlookGraphTokenStore,
     OutlookProvider,
 )
@@ -222,3 +223,33 @@ def test_real_graph_client_uses_refresh_token_for_me_request(tmp_path: Path) -> 
     )
 
     assert client.get_me()["mail"] == "magali@example-cpa.com"
+
+
+def test_real_graph_client_explains_invalid_grant_refresh_failure(tmp_path: Path) -> None:
+    token_file = tmp_path / "outlook-token.json"
+    token_file.write_text(
+        json.dumps({"refresh_token": "refresh-123", "expires_at": 1}),
+        encoding="utf-8",
+    )
+
+    def transport(method: str, url: str, headers: dict[str, str], data: bytes | None):
+        if url.endswith("/token"):
+            return {"error": "invalid_grant"}
+        raise AssertionError(url)
+
+    client = MicrosoftGraphClient(
+        client_id="client-123",
+        tenant_id="tenant-456",
+        token_file=token_file,
+        transport=transport,
+    )
+
+    try:
+        client.get_me()
+    except OutlookGraphAuthError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("Expected invalid_grant to require Outlook re-auth.")
+
+    assert "Outlook sign-in expired or was revoked" in message
+    assert "Run Outlook setup/auth again" in message

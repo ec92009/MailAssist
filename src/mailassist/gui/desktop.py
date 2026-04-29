@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import json
 import shutil
 import subprocess
@@ -10,7 +11,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QProcess, Qt, QTimer
+from PySide6.QtCore import QProcess, QProcessEnvironment, Qt, QTimer
 from PySide6.QtGui import QFont, QIcon, QKeySequence, QShortcut, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
@@ -76,6 +77,11 @@ def _wide_line_edit(value: str = "", *, min_width: int = 560) -> QLineEdit:
     field.setMinimumWidth(min_width)
     field.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
     return field
+
+
+def _wrapped_tooltip(text: str, *, width: int = 320) -> str:
+    escaped = html.escape(" ".join(text.split()))
+    return f'<qt><div style="white-space: normal; width: {width}px;">{escaped}</div></qt>'
 
 
 def _time_window_combo(current_value: str) -> QComboBox:
@@ -265,6 +271,16 @@ class MailAssistDesktopWindow(QMainWindow):
         self.settings_open = False
         self.settings_dialog: QDialog | None = None
         self.current_bot_action = ""
+        self.current_bot_provider = ""
+        self.current_bot_dry_run = False
+        self.bot_progress: dict[str, int] = {}
+        self.bot_action_started_at: float | None = None
+        self.bot_heartbeat_timer = QTimer(self)
+        self.bot_heartbeat_timer.setInterval(10000)
+        self.bot_heartbeat_timer.timeout.connect(self._append_bot_heartbeat)
+        self.bot_timeout_timer = QTimer(self)
+        self.bot_timeout_timer.setSingleShot(True)
+        self.bot_timeout_timer.timeout.connect(self._stop_bot_after_timeout)
         self.ollama_test_started_at: float | None = None
         self.ollama_test_deadline_at: float | None = None
         self.ollama_test_countdown_timer = QTimer(self)
@@ -445,53 +461,53 @@ class MailAssistDesktopWindow(QMainWindow):
         self.gmail_draft_preview_button = QPushButton("Preview Gmail Draft")
         gmail_draft_test_button = self.gmail_draft_preview_button
         gmail_draft_test_button.clicked.connect(self.run_gmail_draft_test)
-        gmail_draft_test_button.setToolTip(
+        gmail_draft_test_button.setToolTip(_wrapped_tooltip(
             "Read recent Gmail messages and ask the local model what it would draft. "
             "This is a dry run: MailAssist will not create a Gmail draft and will not send email. "
             "Use it to check whether Gmail access, filters, and the model are behaving before starting auto-check."
-        )
+        ))
         self.outlook_draft_preview_button = QPushButton("Preview Outlook Draft")
         outlook_draft_preview_button = self.outlook_draft_preview_button
         outlook_draft_preview_button.clicked.connect(self.run_outlook_draft_preview)
-        outlook_draft_preview_button.setToolTip(
+        outlook_draft_preview_button.setToolTip(_wrapped_tooltip(
             "Read recent Outlook messages and ask the local model what it would draft. "
             "This is a dry run: MailAssist will not create an Outlook draft and will not send email. "
             "Use it after Outlook setup to validate classification without writing to the mailbox."
-        )
+        ))
         self.gmail_label_rescan_button = QPushButton("Organize Gmail")
         gmail_label_rescan_button = self.gmail_label_rescan_button
         gmail_label_rescan_button.clicked.connect(self.run_gmail_label_rescan)
-        gmail_label_rescan_button.setToolTip(
+        gmail_label_rescan_button.setToolTip(_wrapped_tooltip(
             "Classify recent Gmail threads into your MailAssist categories and apply MailAssist labels. "
             "This can take several minutes because each thread may use the local model. "
             "It changes MailAssist labels only; it does not delete mail and does not send email."
-        )
+        ))
         self.outlook_category_rescan_button = QPushButton("Organize Outlook")
         outlook_category_rescan_button = self.outlook_category_rescan_button
         outlook_category_rescan_button.clicked.connect(self.run_outlook_category_rescan)
-        outlook_category_rescan_button.setToolTip(
+        outlook_category_rescan_button.setToolTip(_wrapped_tooltip(
             "Classify recent Outlook messages into your MailAssist categories and apply Outlook categories. "
             "This can take several minutes because each message may use the local model. "
             "It changes MailAssist categories only; it does not create drafts and does not send email."
-        )
+        ))
         self.gmail_label_days_input = QSpinBox()
         self.gmail_label_days_input.setRange(1, 30)
         self.gmail_label_days_input.setValue(7)
         self.gmail_label_days_input.setSuffix(" days")
         self.gmail_label_days_input.setMinimumWidth(92)
         self.gmail_label_days_input.setMaximumWidth(104)
-        self.gmail_label_days_input.setToolTip(
+        self.gmail_label_days_input.setToolTip(_wrapped_tooltip(
             "How far back Organize Gmail should look. Keep this small for quick checks; larger windows take longer."
-        )
+        ))
         self.outlook_category_days_input = QSpinBox()
         self.outlook_category_days_input.setRange(1, 30)
         self.outlook_category_days_input.setValue(7)
         self.outlook_category_days_input.setSuffix(" days")
         self.outlook_category_days_input.setMinimumWidth(92)
         self.outlook_category_days_input.setMaximumWidth(104)
-        self.outlook_category_days_input.setToolTip(
+        self.outlook_category_days_input.setToolTip(_wrapped_tooltip(
             "How far back Organize Outlook should look. Keep this small for quick checks; larger windows take longer."
-        )
+        ))
         action_height = max(
             gmail_label_rescan_button.sizeHint().height(),
             outlook_category_rescan_button.sizeHint().height(),
@@ -503,18 +519,18 @@ class MailAssistDesktopWindow(QMainWindow):
         self.start_watch_loop_button = QPushButton("Start Auto-Check")
         start_watch_loop_button = self.start_watch_loop_button
         start_watch_loop_button.clicked.connect(self.start_watch_loop)
-        start_watch_loop_button.setToolTip(
+        start_watch_loop_button.setToolTip(_wrapped_tooltip(
             "Start continuous background checking for the selected provider. "
             "MailAssist periodically reads matching threads, uses the local model, and creates provider drafts only when needed. "
             "It never sends email. Stop pauses the background process."
-        )
+        ))
         self.stop_bot_button = QPushButton("Stop")
         self.stop_bot_button.clicked.connect(self.stop_bot_action)
         self.stop_bot_button.setEnabled(False)
-        self.stop_bot_button.setToolTip(
+        self.stop_bot_button.setToolTip(_wrapped_tooltip(
             "Stop the currently running MailAssist action or auto-check loop. "
             "This does not delete provider drafts or undo labels/categories that were already written."
-        )
+        ))
         for button in (
             gmail_draft_test_button,
             outlook_draft_preview_button,
@@ -543,12 +559,23 @@ class MailAssistDesktopWindow(QMainWindow):
         self.activity_group = QGroupBox("Recent Activity")
         activity_layout = QVBoxLayout(self.activity_group)
         activity_layout.setContentsMargins(10, 10, 10, 10)
+        activity_body = QHBoxLayout()
+        activity_body.setSpacing(8)
+        self.clear_recent_activity_button = QPushButton("Clear")
+        self.clear_recent_activity_button.setMaximumWidth(96)
+        self.clear_recent_activity_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.clear_recent_activity_button.setToolTip(_wrapped_tooltip(
+            "Clear the visible Recent Activity list. Saved run logs are not deleted."
+        ))
+        self.clear_recent_activity_button.clicked.connect(self.clear_recent_activity)
+        activity_body.addWidget(self.clear_recent_activity_button, 0, Qt.AlignmentFlag.AlignTop)
         self.recent_activity = QPlainTextEdit()
         self.recent_activity.setReadOnly(True)
         self.recent_activity.setMinimumHeight(80)
         self.recent_activity.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.recent_activity.setPlainText("No bot activity yet.")
-        activity_layout.addWidget(self.recent_activity, 1)
+        activity_body.addWidget(self.recent_activity, 1)
+        activity_layout.addLayout(activity_body, 1)
         shell.addWidget(self.activity_group, 1)
 
         self._build_bot_logs_dialog()
@@ -1016,16 +1043,16 @@ class MailAssistDesktopWindow(QMainWindow):
         self.stop_ollama_button = QPushButton("Stop Ollama")
         self.stop_ollama_button.setMinimumWidth(130)
         self.stop_ollama_button.clicked.connect(self.stop_ollama_action)
-        self.stop_ollama_button.setToolTip(
+        self.stop_ollama_button.setToolTip(_wrapped_tooltip(
             "Force quit the local Ollama process if a model is stuck or still using memory. "
             "This interrupts any current model work."
-        )
+        ))
         self.restart_ollama_button = QPushButton("Start Ollama")
         self.restart_ollama_button.setMinimumWidth(150)
         self.restart_ollama_button.clicked.connect(self.restart_ollama_action)
-        self.restart_ollama_button.setToolTip(
+        self.restart_ollama_button.setToolTip(_wrapped_tooltip(
             "Start the local Ollama server headlessly, then quietly refresh the installed model list."
-        )
+        ))
         actions.addWidget(refresh_models_button)
         actions.addWidget(test_button)
         actions.addWidget(self.stop_ollama_button)
@@ -1713,9 +1740,99 @@ class MailAssistDesktopWindow(QMainWindow):
         self.last_activity_summary = message
         self.refresh_dashboard()
 
+    def clear_recent_activity(self) -> None:
+        self.recent_activity.setPlainText("No bot activity yet.")
+        self.last_activity_summary = "Idle"
+        self.refresh_dashboard()
+        self._set_banner("Recent Activity cleared.", level="info")
+
     def _announce_long_action(self, message: str) -> None:
         self._append_recent_activity(message)
         self._set_banner(message, level="info")
+
+    def _reset_bot_progress(self) -> None:
+        self.bot_progress = {
+            "total": 0,
+            "categorized": 0,
+            "checked": 0,
+            "drafts": 0,
+            "draft_previews": 0,
+            "skipped": 0,
+            "already_handled": 0,
+            "filtered": 0,
+            "updated_messages": 0,
+        }
+
+    def _bot_progress_summary(self) -> str:
+        total = self.bot_progress.get("total", 0)
+        categorized = self.bot_progress.get("categorized", 0)
+        checked = self.bot_progress.get("checked", 0)
+        drafts = self.bot_progress.get("drafts", 0)
+        draft_previews = self.bot_progress.get("draft_previews", 0)
+        skipped = self.bot_progress.get("skipped", 0)
+        already_handled = self.bot_progress.get("already_handled", 0)
+        filtered = self.bot_progress.get("filtered", 0)
+        if self.current_bot_action in {"gmail-populate-labels", "outlook-populate-categories"}:
+            if total:
+                return f"{categorized}/{total} emails categorized"
+            return f"{categorized} emails categorized"
+        parts = [f"{checked} checked", f"{drafts} drafts generated"]
+        if draft_previews:
+            parts.append(f"{draft_previews} draft previews")
+        if skipped:
+            parts.append(f"{skipped} skipped")
+        if already_handled:
+            parts.append(f"{already_handled} already handled")
+        if filtered:
+            parts.append(f"{filtered} filtered")
+        return " · ".join(parts)
+
+    def _start_bot_heartbeat(self, action: str, provider: str, *, dry_run: bool = False) -> None:
+        self.bot_action_started_at = time.monotonic()
+        self.current_bot_provider = provider
+        self.current_bot_dry_run = dry_run
+        self._reset_bot_progress()
+        if action in {"watch-once", "watch-loop", "gmail-populate-labels", "outlook-populate-categories"}:
+            self._append_bot_heartbeat()
+            self.bot_heartbeat_timer.start()
+            if action == "watch-once" and dry_run:
+                self.bot_timeout_timer.start(120000)
+
+    def _stop_bot_heartbeat(self) -> None:
+        self.bot_heartbeat_timer.stop()
+        self.bot_timeout_timer.stop()
+        self.bot_action_started_at = None
+
+    def _append_bot_heartbeat(self) -> None:
+        if self.bot_process is None or self.bot_action_started_at is None:
+            self._stop_bot_heartbeat()
+            return
+        elapsed = _short_duration_label(time.monotonic() - self.bot_action_started_at)
+        provider = self.current_bot_provider.title() if self.current_bot_provider else "MailAssist"
+        if self.current_bot_action == "watch-once":
+            message = (
+                f"{provider} preview still running after {elapsed}. "
+                f"{self._bot_progress_summary()}. "
+                "Local model checks can take a minute; no email will be sent. "
+                "MailAssist will stop this preview after 2 minutes if it has not finished."
+            )
+        elif self.current_bot_action == "watch-loop":
+            message = f"{provider} auto-check still running after {elapsed}. {self._bot_progress_summary()}."
+        else:
+            message = f"{provider} action still running after {elapsed}. {self._bot_progress_summary()}."
+        self._append_recent_activity(message)
+        self._set_banner(message, level="info")
+
+    def _stop_bot_after_timeout(self) -> None:
+        if self.bot_process is None:
+            self._stop_bot_heartbeat()
+            return
+        provider = self.current_bot_provider.title() if self.current_bot_provider else "MailAssist"
+        self._append_recent_activity(
+            f"{provider} preview stopped after 2 minutes. No email was sent."
+        )
+        self._set_banner(f"{provider} preview stopped after 2 minutes.", level="error")
+        self.stop_bot_action()
 
     def refresh_bot_logs(self) -> None:
         self.bot_log_selector.blockSignals(True)
@@ -2126,22 +2243,10 @@ class MailAssistDesktopWindow(QMainWindow):
         return False, "Could not stop Ollama automatically because no stop command was available."
 
     def run_gmail_draft_test(self) -> None:
-        confirmation = QMessageBox.question(
-            self,
-            "Run Gmail Draft Dry Run",
-            (
-                "MailAssist will read Gmail and prepare one draft result without creating a real Gmail draft. "
-                "Continue?"
-            ),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if confirmation != QMessageBox.StandardButton.Yes:
-            self._set_banner("Gmail draft dry run canceled.", level="info")
-            return
         self._announce_long_action(
             "Previewing a Gmail draft. MailAssist will read recent Gmail threads and ask the local model; "
-            "this may take a minute, and no Gmail draft will be created."
+            "this may take a minute, heartbeat updates will appear here, no Gmail draft will be created, "
+            "and the preview will stop after 2 minutes if it has not finished."
         )
         self.run_bot_action(
             "watch-once",
@@ -2171,29 +2276,18 @@ class MailAssistDesktopWindow(QMainWindow):
         self.run_bot_action("gmail-controlled-draft", provider="gmail", thread_id="thread-008")
 
     def run_outlook_draft_preview(self) -> None:
-        confirmation = QMessageBox.question(
-            self,
-            "Preview Outlook Draft",
-            (
-                "MailAssist will read recent Outlook threads and prepare draft results without "
-                "creating real Outlook drafts. Nothing will be sent. Continue?"
-            ),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if confirmation != QMessageBox.StandardButton.Yes:
-            self._set_banner("Outlook draft preview canceled.", level="info")
-            return
         self.save_settings(announce=False)
         self._announce_long_action(
             "Previewing an Outlook draft. MailAssist will read recent Outlook threads and ask the local model; "
-            "this may take a minute, and no Outlook draft will be created."
+            "this may take a minute, heartbeat updates will appear here, no Outlook draft will be created, "
+            "and the preview will stop after 2 minutes if it has not finished."
         )
         self.run_bot_action(
             "watch-once",
             provider="outlook",
             force=True,
             dry_run=True,
+            limit=1,
         )
 
     def run_gmail_label_rescan(self) -> None:
@@ -2282,9 +2376,16 @@ class MailAssistDesktopWindow(QMainWindow):
         base_url, selected_model = self._current_bot_ollama_settings()
         self.bot_stdout_buffer = ""
         self.current_bot_action = action
+        self.current_bot_provider = provider
+        self.current_bot_dry_run = dry_run
+        self._reset_bot_progress()
         self.bot_process = QProcess(self)
         self.bot_process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         self.bot_process.setWorkingDirectory(str(self.settings.root_dir))
+        process_env = QProcessEnvironment.systemEnvironment()
+        if action == "watch-once" and dry_run:
+            process_env.insert("MAILASSIST_OLLAMA_GENERATE_TIMEOUT_SECONDS", "110")
+        self.bot_process.setProcessEnvironment(process_env)
         self.bot_process.readyReadStandardOutput.connect(self._handle_bot_stdout)
         self.bot_process.finished.connect(self._handle_bot_finished)
 
@@ -2327,6 +2428,7 @@ class MailAssistDesktopWindow(QMainWindow):
         self._set_bot_state("running")
         if hasattr(self, "stop_bot_button"):
             self.stop_bot_button.setEnabled(True)
+        self._start_bot_heartbeat(action, provider, dry_run=dry_run)
         self.bot_process.start(sys.executable, args)
 
     def _handle_bot_stdout(self) -> None:
@@ -2363,24 +2465,48 @@ class MailAssistDesktopWindow(QMainWindow):
                 self._set_ollama_result_text(f"{success}\n\nResponse: {result}")
             self._set_banner(success, level="info")
         elif event_type == "draft_created":
+            self.bot_progress["checked"] = self.bot_progress.get("checked", 0) + 1
+            self.bot_progress["drafts"] = self.bot_progress.get("drafts", 0) + 1
             self._append_recent_activity(
                 f"Draft created: {event.get('subject', 'Unknown subject')} ({event.get('classification', 'unclassified')})"
             )
         elif event_type == "draft_ready":
+            self.bot_progress["checked"] = self.bot_progress.get("checked", 0) + 1
+            self.bot_progress["draft_previews"] = self.bot_progress.get("draft_previews", 0) + 1
             self._append_recent_activity(
                 f"Draft dry run ready: {event.get('subject', 'Unknown subject')} ({event.get('classification', 'unclassified')})"
             )
         elif event_type == "skipped_email":
+            self.bot_progress["checked"] = self.bot_progress.get("checked", 0) + 1
+            self.bot_progress["skipped"] = self.bot_progress.get("skipped", 0) + 1
             self._append_recent_activity(
                 f"Skipped: {event.get('subject', 'Unknown subject')} ({event.get('classification', 'unclassified')})"
             )
         elif event_type == "already_handled":
+            self.bot_progress["checked"] = self.bot_progress.get("checked", 0) + 1
+            self.bot_progress["already_handled"] = self.bot_progress.get("already_handled", 0) + 1
             self._append_recent_activity(
                 f"Already handled: {event.get('subject', 'Unknown subject')}"
             )
         elif event_type == "filtered_out":
+            self.bot_progress["checked"] = self.bot_progress.get("checked", 0) + 1
+            self.bot_progress["filtered"] = self.bot_progress.get("filtered", 0) + 1
             self._append_recent_activity(
                 f"Filtered out: {event.get('subject', 'Unknown subject')} ({event.get('reason', 'filter')})"
+            )
+        elif event_type in {
+            "gmail_thread_labeled",
+            "gmail_thread_label_preview",
+            "outlook_thread_categorized",
+            "outlook_thread_category_preview",
+        }:
+            self.bot_progress["categorized"] = self.bot_progress.get("categorized", 0) + 1
+            self.bot_progress["updated_messages"] = (
+                self.bot_progress.get("updated_messages", 0) + int(event.get("updated_message_count") or 0)
+            )
+            category = str(event.get("category") or "NA")
+            self._append_recent_activity(
+                f"Categorized: {event.get('subject', 'Unknown subject')} ({category})"
             )
         elif event_type == "watch_pass_started":
             self._append_recent_activity(f"Watch pass started for {event.get('provider', 'provider')}.")
@@ -2389,6 +2515,7 @@ class MailAssistDesktopWindow(QMainWindow):
         elif event_type == "failed_pass":
             self._append_recent_activity(f"Watch pass failed: {event.get('message', 'Unknown error')}")
         elif event_type == "completed":
+            self._stop_bot_heartbeat()
             if event.get("action") != "ollama-check":
                 self._set_banner(str(event.get("message", "Bot action completed.")), level="info")
             self.settings = load_settings()
@@ -2404,10 +2531,41 @@ class MailAssistDesktopWindow(QMainWindow):
                     f"{draft_count} drafts · {draft_ready_count} dry runs · {skipped_count} skipped · "
                     f"{already_count} already handled · {filtered_count} filtered"
                 )
-                self._append_recent_activity(f"Watch pass: {self.last_pass_summary}.")
+                provider = str(event.get("provider") or "").strip()
+                provider_label = provider.title() if provider else "Provider"
+                prefix = (
+                    f"{provider_label} preview completed"
+                    if event.get("dry_run")
+                    else f"{provider_label} watch pass completed"
+                )
+                self._append_recent_activity(f"{prefix}: {self.last_pass_summary}.")
+            elif "thread_count" in event:
+                provider = str(event.get("provider") or "").strip()
+                provider_label = provider.title() if provider else "Provider"
+                thread_count = int(event.get("thread_count") or 0)
+                applied_count = int(event.get("applied_count") or 0)
+                updated_messages = int(event.get("message_update_count") or 0)
+                if updated_messages:
+                    detail = (
+                        f"{provider_label} organize completed: {thread_count} emails categorized · "
+                        f"{applied_count} category writes · {updated_messages} messages updated."
+                    )
+                else:
+                    detail = (
+                        f"{provider_label} organize completed: {thread_count} emails categorized · "
+                        f"{applied_count} updates applied."
+                    )
+                self._append_recent_activity(detail)
             self.refresh_dashboard()
         elif event_type == "error":
+            self._stop_bot_heartbeat()
             failure = str(event.get("message", "Bot action failed."))
+            provider = str(event.get("provider") or self.current_bot_provider or "").strip()
+            provider_label = provider.title() if provider else "MailAssist"
+            if self.current_bot_action == "watch-once" and self.current_bot_dry_run:
+                self._append_recent_activity(f"{provider_label} preview failed: {failure}")
+            else:
+                self._append_recent_activity(f"{provider_label} action failed: {failure}")
             if event.get("action") == "ollama-check":
                 self._stop_ollama_test_countdown()
                 self.ollama_result_label.setText(
@@ -2417,12 +2575,15 @@ class MailAssistDesktopWindow(QMainWindow):
             self._set_banner(failure, level="error")
             self._set_bot_state("error")
         elif event_type == "info":
+            if "thread_count" in event:
+                self.bot_progress["total"] = int(event.get("thread_count") or 0)
             self._set_banner(str(event.get("message", "")), level="info")
 
     def _handle_bot_finished(self, exit_code: int, _exit_status) -> None:
         if self.bot_stdout_buffer.strip():
             self._append_bot_console(self.bot_stdout_buffer.strip())
             self.bot_stdout_buffer = ""
+        self._stop_bot_heartbeat()
         finished_action = self.current_bot_action
         self.bot_process = None
         if hasattr(self, "stop_bot_button"):
@@ -2442,6 +2603,8 @@ class MailAssistDesktopWindow(QMainWindow):
                 self._stop_ollama_test_countdown()
             self._set_bot_state("idle")
         self.current_bot_action = ""
+        self.current_bot_provider = ""
+        self.current_bot_dry_run = False
         self.refresh_dashboard()
         self.refresh_bot_logs()
 

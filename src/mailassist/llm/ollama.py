@@ -1,12 +1,23 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, Iterator, List
 from urllib import error, request
 
 
 GENERATE_TIMEOUT_SECONDS = 300
 LIST_MODELS_TIMEOUT_SECONDS = 30
+
+
+def _generate_timeout_seconds() -> int:
+    raw_value = os.environ.get("MAILASSIST_OLLAMA_GENERATE_TIMEOUT_SECONDS", "").strip()
+    if not raw_value:
+        return GENERATE_TIMEOUT_SECONDS
+    try:
+        return max(1, int(raw_value))
+    except ValueError:
+        return GENERATE_TIMEOUT_SECONDS
 
 
 class OllamaClient:
@@ -30,7 +41,7 @@ class OllamaClient:
             method="POST",
         )
         try:
-            with request.urlopen(req, timeout=GENERATE_TIMEOUT_SECONDS) as response:
+            with request.urlopen(req, timeout=_generate_timeout_seconds()) as response:
                 body = response.read().decode("utf-8")
         except error.URLError as exc:
             raise RuntimeError(
@@ -56,7 +67,7 @@ class OllamaClient:
             method="POST",
         )
         try:
-            with request.urlopen(req, timeout=GENERATE_TIMEOUT_SECONDS) as response:
+            with request.urlopen(req, timeout=_generate_timeout_seconds()) as response:
                 pending = b""
                 reader = getattr(response, "read1", None)
                 if reader is None and getattr(response, "fp", None) is not None:

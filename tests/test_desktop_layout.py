@@ -411,38 +411,44 @@ def test_bot_log_formatter_shows_summary_and_timeline() -> None:
     window.close()
 
 
-def test_gmail_draft_test_requires_confirmation(monkeypatch) -> None:
+def test_watch_preview_completion_names_provider() -> None:
     window = MailAssistDesktopWindow()
-    called: list[tuple[str, str, str, bool, bool]] = []
+    stopped = []
+    window.bot_heartbeat_timer.start()
+    window.bot_timeout_timer.start(120000)
+    window.bot_action_started_at = 1000.0
+    window._stop_bot_heartbeat = lambda: stopped.append(True)
 
-    monkeypatch.setattr(
-        QMessageBox,
-        "question",
-        lambda *args, **kwargs: QMessageBox.StandardButton.No,
+    window._handle_bot_event(
+        {
+            "type": "completed",
+            "action": "watch-once",
+            "provider": "outlook",
+            "draft_count": 0,
+            "draft_ready_count": 1,
+            "skipped_count": 2,
+            "already_handled_count": 3,
+            "filtered_out_count": 4,
+            "dry_run": True,
+        }
     )
-    monkeypatch.setattr(
-        window,
-        "run_bot_action",
-        lambda action, *, thread_id="", prompt="", provider="", force=False, dry_run=False: called.append(
-            (action, thread_id, provider, force, dry_run)
-        ),
-    )
 
-    window.run_gmail_draft_test()
-
-    assert called == []
-    assert window.banner.text() == "Gmail draft dry run canceled."
+    activity = window.recent_activity.toPlainText()
+    assert "Outlook preview completed: 0 drafts" in activity
+    assert "1 dry runs" in activity
+    assert "3 already handled" in activity
+    assert stopped == [True]
     window.close()
 
 
-def test_gmail_draft_test_runs_safe_dry_run_after_confirmation(monkeypatch) -> None:
+def test_gmail_draft_test_runs_without_confirmation(monkeypatch) -> None:
     window = MailAssistDesktopWindow()
     called: list[tuple[str, str, str, bool, bool]] = []
 
     monkeypatch.setattr(
         QMessageBox,
         "question",
-        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("preview should not confirm")),
     )
     monkeypatch.setattr(
         window,
@@ -456,39 +462,63 @@ def test_gmail_draft_test_runs_safe_dry_run_after_confirmation(monkeypatch) -> N
 
     assert called == [("watch-once", "thread-008", "gmail", True, True)]
     assert "Previewing a Gmail draft" in window.recent_activity.toPlainText()
-    assert "no Gmail draft will be created" in window.recent_activity.toPlainText()
     window.close()
 
 
-def test_outlook_draft_preview_requires_confirmation(monkeypatch) -> None:
+def test_gmail_draft_test_runs_safe_dry_run(monkeypatch) -> None:
+    window = MailAssistDesktopWindow()
+    called: list[tuple[str, str, str, bool, bool]] = []
+
+    monkeypatch.setattr(
+        window,
+        "run_bot_action",
+        lambda action, *, thread_id="", prompt="", provider="", force=False, dry_run=False: called.append(
+            (action, thread_id, provider, force, dry_run)
+        ),
+    )
+
+    window.run_gmail_draft_test()
+
+    assert called == [("watch-once", "thread-008", "gmail", True, True)]
+    assert "Previewing a Gmail draft" in window.recent_activity.toPlainText()
+    assert "heartbeat updates will appear here" in window.recent_activity.toPlainText()
+    assert "no Gmail draft will be created" in window.recent_activity.toPlainText()
+    assert "stop after 2 minutes" in window.recent_activity.toPlainText()
+    window.close()
+
+
+def test_outlook_draft_preview_runs_without_confirmation(monkeypatch) -> None:
     window = MailAssistDesktopWindow()
     called = []
 
     monkeypatch.setattr(
         QMessageBox,
         "question",
-        lambda *args, **kwargs: QMessageBox.StandardButton.No,
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("preview should not confirm")),
     )
-    monkeypatch.setattr(window, "save_settings", lambda *args, **kwargs: called.append(("save",)))
-    monkeypatch.setattr(window, "run_bot_action", lambda *args, **kwargs: called.append(("run",)))
+    monkeypatch.setattr(window, "save_settings", lambda *args, **kwargs: called.append(("save", kwargs)))
+    monkeypatch.setattr(window, "run_bot_action", lambda action, **kwargs: called.append((action, kwargs)))
 
     window.run_outlook_draft_preview()
 
-    assert called == []
-    assert window.banner.text() == "Outlook draft preview canceled."
+    assert called == [
+        ("save", {"announce": False}),
+        (
+            "watch-once",
+            {
+                "provider": "outlook",
+                "force": True,
+                "dry_run": True,
+                "limit": 1,
+            },
+        ),
+    ]
     window.close()
 
 
-def test_outlook_draft_preview_runs_safe_dry_run_after_confirmation(monkeypatch) -> None:
+def test_outlook_draft_preview_runs_safe_dry_run(monkeypatch) -> None:
     window = MailAssistDesktopWindow()
     called = []
-    confirmation_messages = []
-
-    def fake_question(_parent, title, message, *args, **kwargs):
-        confirmation_messages.append((title, message))
-        return QMessageBox.StandardButton.Yes
-
-    monkeypatch.setattr(QMessageBox, "question", fake_question)
     monkeypatch.setattr(window, "save_settings", lambda *args, **kwargs: called.append(("save", kwargs)))
     monkeypatch.setattr(
         window,
@@ -506,14 +536,195 @@ def test_outlook_draft_preview_runs_safe_dry_run_after_confirmation(monkeypatch)
                 "provider": "outlook",
                 "force": True,
                 "dry_run": True,
+                "limit": 1,
             },
         ),
     ]
-    assert confirmation_messages[0][0] == "Preview Outlook Draft"
-    assert "without creating real Outlook drafts" in confirmation_messages[0][1]
-    assert "Nothing will be sent" in confirmation_messages[0][1]
     assert "Previewing an Outlook draft" in window.recent_activity.toPlainText()
+    assert "heartbeat updates will appear here" in window.recent_activity.toPlainText()
     assert "no Outlook draft will be created" in window.recent_activity.toPlainText()
+    assert "stop after 2 minutes" in window.recent_activity.toPlainText()
+    window.close()
+
+
+def test_watch_preview_heartbeat_reports_still_running(monkeypatch) -> None:
+    window = MailAssistDesktopWindow()
+    now = [1000.0]
+
+    monkeypatch.setattr(desktop_module.time, "monotonic", lambda: now[0])
+    window.current_bot_action = "watch-once"
+    window.current_bot_provider = "outlook"
+    window.bot_action_started_at = now[0] - 45
+    window.bot_process = object()
+    window.bot_progress = {
+        "checked": 4,
+        "drafts": 1,
+        "draft_previews": 2,
+        "skipped": 1,
+        "already_handled": 0,
+        "filtered": 0,
+    }
+
+    window._append_bot_heartbeat()
+
+    assert "Outlook preview still running after 45 seconds" in window.recent_activity.toPlainText()
+    assert "4 checked" in window.recent_activity.toPlainText()
+    assert "1 drafts generated" in window.recent_activity.toPlainText()
+    assert "2 draft previews" in window.recent_activity.toPlainText()
+    assert "no email will be sent" in window.recent_activity.toPlainText()
+    assert "stop this preview after 2 minutes" in window.recent_activity.toPlainText()
+    assert "Outlook preview still running after 45 seconds" in window.banner.text()
+    window.bot_process = None
+    window.close()
+
+
+def test_organizer_heartbeat_reports_categorized_progress(monkeypatch) -> None:
+    window = MailAssistDesktopWindow()
+    now = [1000.0]
+
+    monkeypatch.setattr(desktop_module.time, "monotonic", lambda: now[0])
+    window.current_bot_action = "gmail-populate-labels"
+    window.current_bot_provider = "gmail"
+    window.bot_action_started_at = now[0] - 70
+    window.bot_process = object()
+    window.bot_progress = {"categorized": 12, "total": 40}
+
+    window._append_bot_heartbeat()
+
+    assert "Gmail action still running after 1 min 10 sec" in window.recent_activity.toPlainText()
+    assert "12/40 emails categorized" in window.recent_activity.toPlainText()
+    window.bot_process = None
+    window.close()
+
+
+def test_thread_category_events_update_progress_and_activity() -> None:
+    window = MailAssistDesktopWindow()
+    window._reset_bot_progress()
+
+    window._handle_bot_event(
+        {
+            "type": "outlook_thread_categorized",
+            "subject": "Quarterly tax packet",
+            "category": "Needs Reply",
+            "updated_message_count": 2,
+        }
+    )
+
+    assert window.bot_progress["categorized"] == 1
+    assert window.bot_progress["updated_messages"] == 2
+    assert "Categorized: Quarterly tax packet (Needs Reply)" in window.recent_activity.toPlainText()
+    window.close()
+
+
+def test_organizer_completion_reports_categorized_totals() -> None:
+    window = MailAssistDesktopWindow()
+
+    window._handle_bot_event(
+        {
+            "type": "completed",
+            "action": "outlook-populate-categories",
+            "provider": "outlook",
+            "thread_count": 30,
+            "applied_count": 30,
+            "message_update_count": 42,
+        }
+    )
+
+    activity = window.recent_activity.toPlainText()
+    assert "Outlook organize completed: 30 emails categorized" in activity
+    assert "30 category writes" in activity
+    assert "42 messages updated" in activity
+    window.close()
+
+
+def test_watch_preview_heartbeat_starts_immediately_and_sets_timeout(monkeypatch) -> None:
+    window = MailAssistDesktopWindow()
+    now = [1000.0]
+    timer_started = []
+    timeout_started = []
+
+    monkeypatch.setattr(desktop_module.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(window.bot_heartbeat_timer, "start", lambda: timer_started.append(True))
+    monkeypatch.setattr(window.bot_timeout_timer, "start", lambda ms: timeout_started.append(ms))
+    window.bot_process = object()
+    window.current_bot_action = "watch-once"
+
+    window._start_bot_heartbeat("watch-once", "gmail", dry_run=True)
+
+    assert "Gmail preview still running after 0 seconds" in window.recent_activity.toPlainText()
+    assert timer_started == [True]
+    assert timeout_started == [120000]
+    window.bot_process = None
+    window.close()
+
+
+def test_preview_bot_action_sets_shorter_ollama_timeout(monkeypatch) -> None:
+    window = MailAssistDesktopWindow()
+    monkeypatch.setattr(window, "_start_bot_heartbeat", lambda *args, **kwargs: None)
+    monkeypatch.setattr(desktop_module.QProcess, "start", lambda self, *args: None)
+
+    window.run_bot_action("watch-once", provider="outlook", dry_run=True)
+
+    assert window.bot_process.processEnvironment().value("MAILASSIST_OLLAMA_GENERATE_TIMEOUT_SECONDS") == "110"
+    window.bot_process = None
+    window.close()
+
+
+def test_watch_preview_timeout_stops_bot(monkeypatch) -> None:
+    window = MailAssistDesktopWindow()
+    stopped = []
+
+    monkeypatch.setattr(window, "stop_bot_action", lambda: stopped.append(True))
+    window.bot_process = object()
+    window.current_bot_provider = "outlook"
+
+    window._stop_bot_after_timeout()
+
+    assert stopped == [True]
+    assert "Outlook preview stopped after 2 minutes" in window.recent_activity.toPlainText()
+    assert "Outlook preview stopped after 2 minutes" in window.banner.text()
+    window.bot_process = None
+    window.close()
+
+
+def test_watch_preview_error_is_visible_in_recent_activity() -> None:
+    window = MailAssistDesktopWindow()
+    stopped = []
+    window.current_bot_action = "watch-once"
+    window.current_bot_provider = "outlook"
+    window.current_bot_dry_run = True
+    window._stop_bot_heartbeat = lambda: stopped.append(True)
+
+    window._handle_bot_event(
+        {
+            "type": "error",
+            "action": "watch-once",
+            "message": "Outlook sign-in expired or was revoked (invalid_grant).",
+        }
+    )
+
+    assert "Outlook preview failed" in window.recent_activity.toPlainText()
+    assert "invalid_grant" in window.recent_activity.toPlainText()
+    assert "invalid_grant" in window.banner.text()
+    assert stopped == [True]
+    window.close()
+
+
+def test_bot_finish_stops_heartbeat_timer(monkeypatch) -> None:
+    window = MailAssistDesktopWindow()
+    stopped = []
+
+    monkeypatch.setattr(window, "_stop_bot_heartbeat", lambda: stopped.append(True))
+    monkeypatch.setattr(window, "refresh_bot_logs", lambda: None)
+    window.current_bot_action = "watch-once"
+    window.current_bot_provider = "gmail"
+
+    window._handle_bot_finished(0, None)
+
+    assert stopped == [True]
+    assert window.current_bot_action == ""
+    assert window.current_bot_provider == ""
+    assert window.current_bot_dry_run is False
     window.close()
 
 
@@ -679,6 +890,41 @@ def test_start_auto_check_warns_in_recent_activity_before_running(monkeypatch) -
     window.close()
 
 
+def test_clear_recent_activity_resets_visible_activity_only() -> None:
+    window = MailAssistDesktopWindow()
+
+    window._append_recent_activity("Already handled: noisy thread.")
+    window.clear_recent_activity()
+
+    assert window.clear_recent_activity_button.text() == "Clear"
+    assert "Saved run logs are not deleted" in window.clear_recent_activity_button.toolTip()
+    assert window.recent_activity.toPlainText() == "No bot activity yet."
+    assert window.last_activity_summary == "Idle"
+    assert window.last_activity_label.text() == "Idle"
+    assert window.banner.text() == "Recent Activity cleared."
+    window.close()
+
+
+def test_clear_recent_activity_button_sits_left_of_activity_text() -> None:
+    app = _app()
+    window = MailAssistDesktopWindow()
+    window.resize(1120, 760)
+    app.processEvents()
+
+    button_left = window.clear_recent_activity_button.mapTo(
+        window.activity_group,
+        window.clear_recent_activity_button.rect().topLeft(),
+    )
+    text_left = window.recent_activity.mapTo(
+        window.activity_group,
+        window.recent_activity.rect().topLeft(),
+    )
+
+    assert button_left.x() < text_left.x()
+    assert abs(button_left.y() - text_left.y()) < 8
+    window.close()
+
+
 def test_stop_ollama_requires_confirmation(monkeypatch) -> None:
     window = MailAssistDesktopWindow()
     called = []
@@ -829,6 +1075,26 @@ def test_model_tab_has_stop_and_restart_ollama_controls() -> None:
     assert window.restart_ollama_button.text() == "Start Ollama"
     assert "Force quit the local Ollama process" in window.stop_ollama_button.toolTip()
     assert "headlessly" in window.restart_ollama_button.toolTip()
+
+    window.close()
+
+
+def test_long_control_tooltips_are_wrapped_rich_text() -> None:
+    window = MailAssistDesktopWindow()
+
+    for tooltip in (
+        window.gmail_draft_preview_button.toolTip(),
+        window.outlook_draft_preview_button.toolTip(),
+        window.gmail_label_rescan_button.toolTip(),
+        window.outlook_category_rescan_button.toolTip(),
+        window.start_watch_loop_button.toolTip(),
+        window.stop_ollama_button.toolTip(),
+        window.restart_ollama_button.toolTip(),
+        window.clear_recent_activity_button.toolTip(),
+    ):
+        assert tooltip.startswith("<qt>")
+        assert "white-space: normal" in tooltip
+        assert "width: 320px" in tooltip
 
     window.close()
 

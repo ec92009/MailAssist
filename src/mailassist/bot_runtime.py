@@ -693,6 +693,7 @@ def command_review_bot(args: argparse.Namespace) -> int:
                 force=bool(getattr(args, "force", False)),
                 batch_size=max(1, int(getattr(args, "batch_size", 1) or 1)),
                 dry_run=bool(getattr(args, "dry_run", False)),
+                max_candidates=max(1, int(getattr(args, "limit", 10) or 10)),
             )
             draft_count = 0
             draft_ready_count = 0

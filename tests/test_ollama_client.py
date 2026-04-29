@@ -37,6 +37,22 @@ def test_compose_reply_disables_thinking_and_uses_slow_model_timeout(monkeypatch
     assert payload["think"] is False
 
 
+def test_compose_reply_can_use_preview_timeout_from_environment(monkeypatch) -> None:
+    calls = []
+
+    def fake_urlopen(req, timeout):
+        calls.append((req, timeout))
+        return FakeResponse(json.dumps({"response": "ready"}).encode("utf-8"))
+
+    monkeypatch.setenv("MAILASSIST_OLLAMA_GENERATE_TIMEOUT_SECONDS", "110")
+    monkeypatch.setattr("mailassist.llm.ollama.request.urlopen", fake_urlopen)
+
+    result = OllamaClient("http://localhost:11434", "gemma4:31b").compose_reply("hello")
+
+    assert result == "ready"
+    assert calls[0][1] == 110
+
+
 def test_compose_reply_stream_disables_thinking(monkeypatch) -> None:
     body = b'{"response":"re","done":false}\n{"response":"ady","done":true}\n'
     calls = []

@@ -447,7 +447,7 @@ wheels = [
 
 [[package]]
 name = "mailassist"
-version = "60.1.0"
+version = "60.11.0"
 source = { editable = "." }
 dependencies = [
     { name = "google-api-python-client" },
