@@ -65,11 +65,13 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 - Added a confirmation-gated desktop `Stop Ollama` control for stuck model runs. It stops any active MailAssist bot process, tries `ollama stop <model>`, and force-quits the local Ollama process with the platform command. Bumped visible version to `v60.1`; full local test suite passed with 147 tests on April 29, 2026.
 - Prepared and completed the pre-Zoom Magali setup path: added `docs/magali-pre-zoom-checklist.md`, `docs/magali-zoom-operator-script.md`, `docs/magali-windows-readiness-runbook.md`, `docs/mailassist-outlook-entra-portal-steps.md`, `docs/mailassist-outlook-entra-app-manifest.json`, `docs/mailassist-outlook-graph-permissions.json`, `tools/create-outlook-entra-app.sh`, `tools/verify-outlook-entra-app.sh`, `tools/prezoom-check.sh`, and `tools/magali-readiness.ps1`. Azure CLI 2.85.0 is installed locally. The work/school multitenant `MailAssist Outlook` app registration was created with client id `2b2639c3-605c-466d-ae89-63ef8ffff5c8`, tenant id `fff6075e-c052-4a48-b80b-fc2b03b9c4a0`, public client flows enabled, delegated `offline_access`, `User.Read`, and `Mail.ReadWrite` only, no `Mail.Send`, and no Graph application permissions. Azure CLI verification passed. Ignored local `.env` was updated to use that client id and `MAILASSIST_OUTLOOK_TENANT_ID=organizations`. Full local test suite passed with 147 tests on April 29, 2026.
 - Added `tools/magali-bootstrap.ps1` for the next Zoom call so Magali does not need Git or a preinstalled Python. The paste-friendly command downloads the bootstrap from GitHub, downloads the repo zip into `Downloads\MailAssist-main`, installs `uv` if missing, installs Python 3.12 through `uv`, syncs the project, and runs the safe Outlook/Ollama readiness checks with the verified client id.
+- Moved `Stop Ollama` from the main bot action strip into the Settings local-model tab beside `Send small test prompt`, added `Restart Ollama`, added a two-minute countdown during the model test, and changed successful model-test output to say `Test successful after <duration>`. Bumped visible version to `v60.2`; full local test suite passed with 152 tests on April 29, 2026.
+- Renamed the model-tab recovery control to `Start Ollama`, kept the start path headless through `ollama serve` when the CLI is available, and made the delayed model-list refresh silent so it does not overwrite the model-test result panel. Bumped visible version to `v60.3`; full local test suite passed with 153 tests on April 29, 2026.
 
 ## Current Verified State
 
-- Visible version: `v60.1`.
-- Full test suite: 147 passing tests on April 29, 2026.
+- Visible version: `v60.3`.
+- Full test suite: 153 passing tests on April 29, 2026.
 - Native desktop app is the active GUI surface; it has no localhost or LAN URL.
 - Latest synchronized commit before the handoff commit: `0d1ddb3`.
 - Latest pushed setup/bootstrap commit before this doc refresh: `2b9a130`.

@@ -24,7 +24,7 @@ Mac/Gmail remains the proving ground because it is already working locally and e
 - Current baseline at handoff:
   - Last synchronized commit before this handoff commit: `2b9a130`
   - Handoff commit: reported in the final assistant response after commit/push
-  - Current visible version: `v60.1`
+  - Current visible version: `v60.3`
   - Local app/dev entrypoint: `./.venv/bin/mailassist desktop-gui`
   - Packaged app path: `/Applications/MailAssist.app`
 - Known open issue to continue:
@@ -101,6 +101,8 @@ Mac/Gmail remains the proving ground because it is already working locally and e
 - Added a desktop `Stop Ollama` control that confirms first, stops any active MailAssist bot action, tries `ollama stop <model>`, and force-quits the local Ollama process when needed so stuck local model work can be interrupted. Bumped visible version to `v60.1`; full local test suite passed with 147 tests on April 29, 2026. (Managed by Codex)
 - Added a Magali pre-Zoom checklist, Zoom operator script, Windows readiness runbook, Entra app portal steps, Entra manifest/permissions JSON, Azure CLI create/verify helpers, and `tools/magali-readiness.ps1` so the next call can pass the work/school Entra client id directly to the helper, run the read-only Outlook setup check, and run the MailAssist-path `qwen3:8b` Ollama check without improvising. Installed Azure CLI locally, created the work/school multitenant `MailAssist Outlook` app registration, enabled public client flows, added delegated `offline_access`, `User.Read`, and `Mail.ReadWrite` only, verified it with Azure CLI, and updated ignored local `.env` to use `MAILASSIST_OUTLOOK_CLIENT_ID=2b2639c3-605c-466d-ae89-63ef8ffff5c8` plus `MAILASSIST_OUTLOOK_TENANT_ID=organizations`. (Managed by Codex)
 - Added `tools/magali-bootstrap.ps1` so the next Zoom call can start from a Windows machine without Git or a known-good Python; the bootstrap downloads MailAssist from GitHub, installs `uv`, installs Python 3.12 through `uv`, syncs, then runs the safe readiness script. (Managed by Codex)
+- Moved `Stop Ollama` into the Settings local-model tab beside the small test prompt, added a `Restart Ollama` control, showed a two-minute countdown while the model test is running, and reported `Test successful after <duration>` when Ollama returns. Bumped visible version to `v60.2`; full local test suite passed with 152 tests on April 29, 2026. (Managed by Codex)
+- Renamed the model-tab recovery control to `Start Ollama`, made its headless `ollama serve` behavior explicit, and made the delayed model-list refresh silent so it updates status without overwriting the model-test result panel. Bumped visible version to `v60.3`; full local test suite passed with 153 tests on April 29, 2026. (Managed by Codex)
 
 ## Remaining Backlog
 

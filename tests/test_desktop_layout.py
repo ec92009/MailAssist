@@ -722,6 +722,49 @@ def test_stop_ollama_runs_force_stop_after_confirmation(monkeypatch) -> None:
     window.close()
 
 
+def test_restart_ollama_starts_server(monkeypatch) -> None:
+    window = MailAssistDesktopWindow()
+    called = []
+    refreshed = []
+
+    monkeypatch.setattr(
+        window,
+        "_start_ollama_process",
+        lambda: called.append(("start",))
+        or (True, "Ollama headless start requested. Try the model test again in a few seconds."),
+    )
+    monkeypatch.setattr(window, "refresh_models", lambda *args, **kwargs: refreshed.append(kwargs))
+    monkeypatch.setattr(desktop_module.QTimer, "singleShot", lambda _delay, callback: callback())
+
+    window.restart_ollama_action()
+
+    assert called == [("start",)]
+    assert refreshed == [{"silent": True}]
+    assert "Starting Ollama server headlessly" in window.recent_activity.toPlainText()
+    assert "Ollama headless start requested" in window.recent_activity.toPlainText()
+    assert "Ollama headless start requested" in window.banner.text()
+    window.close()
+
+
+def test_restart_ollama_process_runs_ollama_serve(monkeypatch) -> None:
+    window = MailAssistDesktopWindow()
+    calls = []
+
+    monkeypatch.setattr(desktop_module.shutil, "which", lambda name: "/usr/local/bin/ollama")
+
+    def fake_popen(command, **kwargs):
+        calls.append((command, kwargs))
+
+    monkeypatch.setattr(desktop_module.subprocess, "Popen", fake_popen)
+
+    ok, message = window._start_ollama_process()
+
+    assert ok is True
+    assert "headless start requested" in message
+    assert calls[0][0] == ["/usr/local/bin/ollama", "serve"]
+    window.close()
+
+
 def test_stop_ollama_process_runs_model_stop_and_platform_kill(monkeypatch) -> None:
     window = MailAssistDesktopWindow()
     calls = []
@@ -765,7 +808,6 @@ def test_bot_control_actions_use_user_centered_labels_tooltips_and_compact_days_
     assert window.gmail_label_rescan_button.text() == "Organize Gmail"
     assert window.outlook_category_rescan_button.text() == "Organize Outlook"
     assert window.start_watch_loop_button.text() == "Start Auto-Check"
-    assert window.stop_ollama_button.text() == "Stop Ollama"
     assert "dry run" in window.gmail_draft_preview_button.toolTip()
     assert "will not create a Gmail draft" in window.gmail_draft_preview_button.toolTip()
     assert "will not create an Outlook draft" in window.outlook_draft_preview_button.toolTip()
@@ -773,11 +815,80 @@ def test_bot_control_actions_use_user_centered_labels_tooltips_and_compact_days_
     assert "This can take several minutes" in window.outlook_category_rescan_button.toolTip()
     assert "never sends email" in window.start_watch_loop_button.toolTip()
     assert "Stop the currently running" in window.stop_bot_button.toolTip()
-    assert "Force quit the local Ollama process" in window.stop_ollama_button.toolTip()
     assert window.gmail_label_days_input.maximumWidth() <= 104
     assert window.outlook_category_days_input.maximumWidth() <= 104
     assert window.gmail_label_days_input.height() == window.gmail_label_rescan_button.height()
     assert window.outlook_category_days_input.height() == window.outlook_category_rescan_button.height()
+    window.close()
+
+
+def test_model_tab_has_stop_and_restart_ollama_controls() -> None:
+    window = MailAssistDesktopWindow()
+
+    assert window.stop_ollama_button.text() == "Stop Ollama"
+    assert window.restart_ollama_button.text() == "Start Ollama"
+    assert "Force quit the local Ollama process" in window.stop_ollama_button.toolTip()
+    assert "headlessly" in window.restart_ollama_button.toolTip()
+
+    window.close()
+
+
+def test_silent_model_refresh_does_not_overwrite_test_result(monkeypatch) -> None:
+    window = MailAssistDesktopWindow()
+
+    monkeypatch.setattr(
+        window,
+        "_list_available_model_state",
+        lambda: ([], [], "Unable to reach Ollama."),
+    )
+    window._set_ollama_result_text("Keep this result visible.")
+
+    window.refresh_models(silent=True)
+
+    assert window.ollama_connection_status.text() == "Not reachable"
+    assert window.ollama_result.toPlainText() == "Keep this result visible."
+    window.close()
+
+
+def test_ollama_test_shows_two_minute_countdown(monkeypatch) -> None:
+    window = MailAssistDesktopWindow()
+    now = [1000.0]
+
+    monkeypatch.setattr(desktop_module.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(window, "run_bot_action", lambda *args, **kwargs: None)
+
+    window.test_ollama()
+    assert "2:00 remaining" in window.ollama_result_label.text()
+
+    now[0] += 31
+    window._refresh_ollama_test_countdown()
+    assert "1:29 remaining" in window.ollama_result_label.text()
+
+    window.close()
+
+
+def test_ollama_result_mentions_success_elapsed_seconds(monkeypatch) -> None:
+    window = MailAssistDesktopWindow()
+    now = [1000.0]
+
+    monkeypatch.setattr(desktop_module.time, "monotonic", lambda: now[0])
+    window._start_ollama_test_countdown()
+    now[0] += 17
+
+    window._handle_bot_event(
+        {
+            "type": "ollama_result",
+            "action": "ollama-check",
+            "prompt": "Say hi.",
+            "result": "Hi.",
+        }
+    )
+
+    assert "Test successful after 17 seconds." in window.ollama_result_label.text()
+    assert "Test successful after 17 seconds." in window.ollama_result.toPlainText()
+    assert "Test successful after 17 seconds." in window.banner.text()
+    assert not window.ollama_test_countdown_timer.isActive()
+
     window.close()
 
 

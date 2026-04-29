@@ -4,6 +4,7 @@ import json
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
@@ -154,6 +155,18 @@ def _ollama_force_quit_commands(platform: str) -> list[list[str]]:
     return [["pkill", "-x", "ollama"]]
 
 
+def _detached_process_kwargs() -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+    }
+    if sys.platform == "win32":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    else:
+        kwargs["start_new_session"] = True
+    return kwargs
+
+
 def _model_display_label(model_detail: dict[str, Any]) -> str:
     name = str(model_detail.get("name", "")).strip()
     age = _format_model_age(model_detail.get("modified_at"))
@@ -204,6 +217,16 @@ def _event_day_time_label(value: object) -> str:
     return f"{prefix} {parsed.strftime('%H:%M')}"
 
 
+def _short_duration_label(seconds: float) -> str:
+    whole_seconds = max(0, int(round(seconds)))
+    if whole_seconds < 60:
+        return f"{whole_seconds} second{'s' if whole_seconds != 1 else ''}"
+    minutes, remainder = divmod(whole_seconds, 60)
+    if remainder:
+        return f"{minutes} min {remainder} sec"
+    return f"{minutes} min"
+
+
 def _log_action_label(action: str) -> str:
     labels = {
         "gmail-controlled-draft": "Controlled Gmail draft",
@@ -241,6 +264,12 @@ class MailAssistDesktopWindow(QMainWindow):
         self.setup_finished = setup_value.strip().lower() == "true"
         self.settings_open = False
         self.settings_dialog: QDialog | None = None
+        self.current_bot_action = ""
+        self.ollama_test_started_at: float | None = None
+        self.ollama_test_deadline_at: float | None = None
+        self.ollama_test_countdown_timer = QTimer(self)
+        self.ollama_test_countdown_timer.setInterval(1000)
+        self.ollama_test_countdown_timer.timeout.connect(self._refresh_ollama_test_countdown)
 
         self.setWindowTitle(f"MailAssist v{load_visible_version(self.settings.root_dir)}")
         icon_path = self.settings.root_dir / "assets" / "brand" / "mailassist_icon.svg"
@@ -486,12 +515,6 @@ class MailAssistDesktopWindow(QMainWindow):
             "Stop the currently running MailAssist action or auto-check loop. "
             "This does not delete provider drafts or undo labels/categories that were already written."
         )
-        self.stop_ollama_button = QPushButton("Stop Ollama")
-        self.stop_ollama_button.clicked.connect(self.stop_ollama_action)
-        self.stop_ollama_button.setToolTip(
-            "Force quit the local Ollama process if a model is stuck or still using memory after MailAssist stops. "
-            "This interrupts any current model work. Start Ollama again before running more draft previews or auto-checks."
-        )
         for button in (
             gmail_draft_test_button,
             outlook_draft_preview_button,
@@ -499,7 +522,6 @@ class MailAssistDesktopWindow(QMainWindow):
             outlook_category_rescan_button,
             start_watch_loop_button,
             self.stop_bot_button,
-            self.stop_ollama_button,
         ):
             button.setFixedHeight(action_height)
         label_scan_actions = QHBoxLayout()
@@ -514,7 +536,6 @@ class MailAssistDesktopWindow(QMainWindow):
         bot_actions.addLayout(label_scan_actions)
         bot_actions.addWidget(start_watch_loop_button)
         bot_actions.addWidget(self.stop_bot_button)
-        bot_actions.addWidget(self.stop_ollama_button)
         bot_actions.addStretch(1)
         control_layout.addLayout(bot_actions)
         shell.addWidget(self.control_group)
@@ -992,8 +1013,23 @@ class MailAssistDesktopWindow(QMainWindow):
         test_button = QPushButton("Send small test prompt")
         test_button.setMinimumWidth(230)
         test_button.clicked.connect(self.test_ollama)
+        self.stop_ollama_button = QPushButton("Stop Ollama")
+        self.stop_ollama_button.setMinimumWidth(130)
+        self.stop_ollama_button.clicked.connect(self.stop_ollama_action)
+        self.stop_ollama_button.setToolTip(
+            "Force quit the local Ollama process if a model is stuck or still using memory. "
+            "This interrupts any current model work."
+        )
+        self.restart_ollama_button = QPushButton("Start Ollama")
+        self.restart_ollama_button.setMinimumWidth(150)
+        self.restart_ollama_button.clicked.connect(self.restart_ollama_action)
+        self.restart_ollama_button.setToolTip(
+            "Start the local Ollama server headlessly, then quietly refresh the installed model list."
+        )
         actions.addWidget(refresh_models_button)
         actions.addWidget(test_button)
+        actions.addWidget(self.stop_ollama_button)
+        actions.addWidget(self.restart_ollama_button)
         actions.addStretch(1)
         model_layout.addLayout(actions)
         self.ollama_result_label = QLabel("Model test result")
@@ -1773,7 +1809,7 @@ class MailAssistDesktopWindow(QMainWindow):
             pieces.append("error")
         return " - ".join(pieces)
 
-    def refresh_models(self) -> None:
+    def refresh_models(self, _checked: bool = False, *, silent: bool = False) -> None:
         previous_selection = ""
         if hasattr(self, "ollama_model_picker"):
             previous_selection = str(self.ollama_model_picker.currentData() or "").strip()
@@ -1822,9 +1858,12 @@ class MailAssistDesktopWindow(QMainWindow):
             self.ollama_connection_status.setText("Not reachable")
             self.ollama_connection_status.setStyleSheet("color: #8c4029; font-size: 13px;")
             self.ollama_health = ("not reachable", "error")
-            if not self.ollama_result.toPlainText().startswith("Sending a tiny test prompt"):
+            if (
+                not silent
+                and not self.ollama_result.toPlainText().startswith("Sending a tiny test prompt")
+            ):
                 self._set_ollama_result_text(model_error)
-        elif not models and not self.ollama_result.toPlainText().strip():
+        elif not silent and not models and not self.ollama_result.toPlainText().strip():
             self.ollama_result.clear()
         self._refresh_ollama_model_hint()
         if hasattr(self, "provider_status_label"):
@@ -1851,6 +1890,34 @@ class MailAssistDesktopWindow(QMainWindow):
         self.ollama_result.setPlainText(text)
         self.ollama_result_label.show()
         self.ollama_result.show()
+
+    def _start_ollama_test_countdown(self) -> None:
+        now = time.monotonic()
+        self.ollama_test_started_at = now
+        self.ollama_test_deadline_at = now + 120
+        self.ollama_test_countdown_timer.start()
+        self._refresh_ollama_test_countdown()
+
+    def _stop_ollama_test_countdown(self) -> None:
+        self.ollama_test_countdown_timer.stop()
+        self.ollama_test_deadline_at = None
+
+    def _refresh_ollama_test_countdown(self) -> None:
+        if self.ollama_test_deadline_at is None:
+            return
+        remaining = max(0, int(round(self.ollama_test_deadline_at - time.monotonic())))
+        minutes, seconds = divmod(remaining, 60)
+        if remaining:
+            self.ollama_result_label.setText(
+                f"Model test result - waiting, {minutes}:{seconds:02d} remaining"
+            )
+        else:
+            self.ollama_result_label.setText("Model test result - still waiting after 2:00")
+
+    def _ollama_test_elapsed_label(self) -> str:
+        if self.ollama_test_started_at is None:
+            return "0 seconds"
+        return _short_duration_label(time.monotonic() - self.ollama_test_started_at)
 
     def save_settings(
         self,
@@ -1924,8 +1991,12 @@ class MailAssistDesktopWindow(QMainWindow):
         self._set_banner("Settings saved. Bot controls are available.", level="info")
 
     def test_ollama(self) -> None:
+        if self.bot_process is not None:
+            self._set_banner("A bot action is already running.", level="error")
+            return
         prompt = "Reply with one short sentence confirming MailAssist can use this model."
         model = str(self.ollama_model_picker.currentData() or self.settings.ollama_model)
+        self._start_ollama_test_countdown()
         self._set_ollama_result_text(
             f"Sending a tiny test prompt to {model}...\n\nPrompt: {prompt}\n\nResponse: waiting..."
         )
@@ -1977,6 +2048,32 @@ class MailAssistDesktopWindow(QMainWindow):
         self.ollama_health = ("stopped" if ok else "stop failed", "warn" if ok else "error")
         self.refresh_dashboard()
         self._set_banner(message, level="info" if ok else "error")
+
+    def restart_ollama_action(self) -> None:
+        self._append_recent_activity("Starting Ollama server headlessly.")
+        ok, message = self._start_ollama_process()
+        self._append_recent_activity(message)
+        self.ollama_health = ("starting" if ok else "restart failed", "warn" if ok else "error")
+        self.refresh_dashboard()
+        self._set_banner(message, level="info" if ok else "error")
+        if ok:
+            QTimer.singleShot(2500, lambda: self.refresh_models(silent=True))
+
+    def _start_ollama_process(self) -> tuple[bool, str]:
+        ollama_bin = shutil.which("ollama")
+        if ollama_bin:
+            try:
+                subprocess.Popen([ollama_bin, "serve"], **_detached_process_kwargs())
+                return True, "Ollama headless start requested. Try the model test again in a few seconds."
+            except Exception as exc:
+                return False, f"Could not restart Ollama automatically: {exc}"
+        if sys.platform == "darwin":
+            try:
+                subprocess.Popen(["open", "-a", "Ollama"], **_detached_process_kwargs())
+                return True, "Ollama app restart requested. Try the model test again in a few seconds."
+            except Exception as exc:
+                return False, f"Could not open the Ollama app automatically: {exc}"
+        return False, "Could not restart Ollama automatically because the ollama command was not found."
 
     def _stop_ollama_process(self, model: str) -> tuple[bool, str]:
         commands_run: list[str] = []
@@ -2184,6 +2281,7 @@ class MailAssistDesktopWindow(QMainWindow):
 
         base_url, selected_model = self._current_bot_ollama_settings()
         self.bot_stdout_buffer = ""
+        self.current_bot_action = action
         self.bot_process = QProcess(self)
         self.bot_process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         self.bot_process.setWorkingDirectory(str(self.settings.root_dir))
@@ -2256,10 +2354,14 @@ class MailAssistDesktopWindow(QMainWindow):
         elif event_type == "ollama_result":
             prompt = str(event.get("prompt", "")).strip()
             result = str(event.get("result", "")).strip()
+            success = f"Test successful after {self._ollama_test_elapsed_label()}."
+            self._stop_ollama_test_countdown()
+            self.ollama_result_label.setText(success)
             if prompt:
-                self._set_ollama_result_text(f"Prompt: {prompt}\n\nResponse: {result}")
+                self._set_ollama_result_text(f"{success}\n\nPrompt: {prompt}\n\nResponse: {result}")
             else:
-                self._set_ollama_result_text(f"Response: {result}")
+                self._set_ollama_result_text(f"{success}\n\nResponse: {result}")
+            self._set_banner(success, level="info")
         elif event_type == "draft_created":
             self._append_recent_activity(
                 f"Draft created: {event.get('subject', 'Unknown subject')} ({event.get('classification', 'unclassified')})"
@@ -2287,7 +2389,8 @@ class MailAssistDesktopWindow(QMainWindow):
         elif event_type == "failed_pass":
             self._append_recent_activity(f"Watch pass failed: {event.get('message', 'Unknown error')}")
         elif event_type == "completed":
-            self._set_banner(str(event.get("message", "Bot action completed.")), level="info")
+            if event.get("action") != "ollama-check":
+                self._set_banner(str(event.get("message", "Bot action completed.")), level="info")
             self.settings = load_settings()
             self.refresh_models()
             self.refresh_bot_logs()
@@ -2305,6 +2408,11 @@ class MailAssistDesktopWindow(QMainWindow):
             self.refresh_dashboard()
         elif event_type == "error":
             failure = str(event.get("message", "Bot action failed."))
+            if event.get("action") == "ollama-check":
+                self._stop_ollama_test_countdown()
+                self.ollama_result_label.setText(
+                    f"Model test failed after {self._ollama_test_elapsed_label()}."
+                )
             self.last_failure_summary = failure
             self._set_banner(failure, level="error")
             self._set_bot_state("error")
@@ -2315,16 +2423,25 @@ class MailAssistDesktopWindow(QMainWindow):
         if self.bot_stdout_buffer.strip():
             self._append_bot_console(self.bot_stdout_buffer.strip())
             self.bot_stdout_buffer = ""
+        finished_action = self.current_bot_action
         self.bot_process = None
         if hasattr(self, "stop_bot_button"):
             self.stop_bot_button.setEnabled(False)
         if exit_code != 0:
+            if finished_action == "ollama-check":
+                self._stop_ollama_test_countdown()
+                self.ollama_result_label.setText(
+                    f"Model test failed after {self._ollama_test_elapsed_label()}."
+                )
             failure = f"Bot exited with code {exit_code}."
             self.last_failure_summary = failure
             self._set_banner(failure, level="error")
             self._set_bot_state("error")
         elif self.last_bot_state != "error":
+            if finished_action == "ollama-check":
+                self._stop_ollama_test_countdown()
             self._set_bot_state("idle")
+        self.current_bot_action = ""
         self.refresh_dashboard()
         self.refresh_bot_logs()
 
