@@ -26,6 +26,7 @@ check_file docs/outlook-m365-admin-consent.md
 check_file docs/mailassist-outlook-entra-app-manifest.json
 check_file docs/mailassist-outlook-graph-permissions.json
 check_file docs/mailassist-outlook-entra-portal-steps.md
+check_file tools/magali-bootstrap.ps1
 check_file tools/magali-readiness.ps1
 check_file tools/create-outlook-entra-app.sh
 check_file tools/verify-outlook-entra-app.sh

@@ -281,6 +281,7 @@ Create one controlled Outlook reply draft only after selecting an explicit conve
 
 See `docs/outlook-m365-admin-consent.md` for Microsoft 365 app registration and tenant/admin-consent notes.
 See `docs/magali-windows-readiness-runbook.md` and `tools/magali-readiness.ps1` for the Magali Windows setup check.
+For a Windows machine without Git or Python, use `tools/magali-bootstrap.ps1`.
 See `docs/windows-packaging.md` for the Windows packaging path and Parallels/VM checklist.
 
 Preview old Gmail messages that still carry user-created labels:

@@ -26,6 +26,19 @@ possible.
 
 ## Setup Sequence
 
+1. Open PowerShell.
+2. Paste the bootstrap command:
+
+```powershell
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ec92009/MailAssist/main/tools/magali-bootstrap.ps1" -OutFile "$env:USERPROFILE\Downloads\magali-bootstrap.ps1"; PowerShell -ExecutionPolicy Bypass -File "$env:USERPROFILE\Downloads\magali-bootstrap.ps1"
+```
+
+This downloads MailAssist into `Downloads\MailAssist-main`, installs `uv` if
+missing, installs Python 3.12 through `uv`, syncs the project, and runs the safe
+Outlook/Ollama readiness checks. It does not create drafts or send email.
+
+Manual fallback:
+
 1. Open the MailAssist folder on the Windows machine.
 2. Copy the template:
 

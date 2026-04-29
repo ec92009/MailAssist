@@ -63,6 +63,12 @@ uv sync
 
 ## Windows Command To Have Ready
 
+Preferred one-command bootstrap for Zoom chat:
+
+```powershell
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ec92009/MailAssist/main/tools/magali-bootstrap.ps1" -OutFile "$env:USERPROFILE\Downloads\magali-bootstrap.ps1"; PowerShell -ExecutionPolicy Bypass -File "$env:USERPROFILE\Downloads\magali-bootstrap.ps1"
+```
+
 If only the client ID is known:
 
 ```powershell

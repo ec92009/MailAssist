@@ -55,6 +55,22 @@ Do not commit `.env` or anything under `secrets/`.
 
 ## Sync And Install
 
+For the Zoom call, prefer the bootstrap command because it does not assume Git
+or Python is already installed:
+
+```powershell
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ec92009/MailAssist/main/tools/magali-bootstrap.ps1" -OutFile "$env:USERPROFILE\Downloads\magali-bootstrap.ps1"; PowerShell -ExecutionPolicy Bypass -File "$env:USERPROFILE\Downloads\magali-bootstrap.ps1"
+```
+
+The bootstrap downloads the repo to:
+
+```text
+%USERPROFILE%\Downloads\MailAssist-main
+```
+
+It installs `uv` if missing, installs Python 3.12 through `uv`, syncs
+MailAssist, and then runs the safe readiness checks with the verified client id.
+
 From the MailAssist checkout on Windows:
 
 ```powershell
