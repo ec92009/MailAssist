@@ -22,7 +22,7 @@ Mac/Gmail remains the proving ground because it is already working locally and e
     - `sed -n '1,220p' TODO.md`
     - `sed -n '1,180p' SUMMARY.md`
 - Current baseline at handoff:
-  - Last synchronized commit before this handoff commit: `0d1ddb3`
+  - Last synchronized commit before this handoff commit: `2b9a130`
   - Handoff commit: reported in the final assistant response after commit/push
   - Current visible version: `v60.1`
   - Local app/dev entrypoint: `./.venv/bin/mailassist desktop-gui`
@@ -31,7 +31,8 @@ Mac/Gmail remains the proving ground because it is already working locally and e
   - Personal Outlook.com Microsoft Graph is now proven end to end: auth, inbox reads, category writes, controlled draft creation, and live watcher-created model draft creation all succeeded without sending email.
   - Magali's Windows laptop is fairly recent with plenty of SSD storage and 32 GB RAM. Ollama is already installed with `qwen3:8b` (5.2 GB). Raw `ollama run` was slow/thinking; use MailAssist's own `think: false` model check during setup.
   - Magali's Microsoft 365 state is now confirmed: home organization Golden Years Tax Strategy, admin center access works, mailbox license is Microsoft 365 Business Standard (no Teams), Outlook web opens the mailbox, and Classic Outlook Desktop account type is Microsoft Exchange.
-  - Immediate next implementation step: create the MailAssist Microsoft Entra app registration that supports work/school accounts, paste its client id into the Magali `.env` template, then stage a Magali-ready Windows run that can execute `mailassist outlook-setup-check --expected-email MagaliDomingue@goldenyearstaxstrategy.com` and `mailassist ollama-setup-check --model qwen3:8b` before any controlled draft write.
+  - The work/school multitenant `MailAssist Outlook` Entra app is verified. Current client id is `2b2639c3-605c-466d-ae89-63ef8ffff5c8`; use tenant `organizations` until Golden Years tenant id is known.
+  - Immediate next implementation step: on the Zoom call, paste the one-command Windows bootstrap from `docs/magali-zoom-operator-script.md`. It downloads `tools/magali-bootstrap.ps1`, installs `uv` and Python 3.12 if needed, syncs MailAssist, and runs read-only Outlook setup plus the MailAssist-path `qwen3:8b` Ollama check before any controlled draft write.
   - Keep Outlook provider writes explicit. Current safe commands are `review-bot --action outlook-smoke-test --thread-id <id> --create-draft`, `review-bot --action watch-once --provider outlook --thread-id <id> --force`, and `review-bot --action outlook-populate-categories --days <n> --apply-categories`.
 - Handoff protocol for this repo:
   - Run `prepare for handoff` before switching machines or ending a work block that should resume elsewhere.

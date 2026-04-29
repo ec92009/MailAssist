@@ -72,6 +72,7 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 - Full test suite: 147 passing tests on April 29, 2026.
 - Native desktop app is the active GUI surface; it has no localhost or LAN URL.
 - Latest synchronized commit before the handoff commit: `0d1ddb3`.
+- Latest pushed setup/bootstrap commit before this doc refresh: `2b9a130`.
 - Installed app path: `/Applications/MailAssist.app`.
 - Gmail provider dependencies are default dependencies and are installed by plain `uv sync`.
 - Gmail read-only probing, Gmail dry-run watching, controlled Gmail provider-write draft creation, and Gmail multipart draft validation have all been exercised locally.
@@ -89,7 +90,7 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 
 ## Remaining Backlog
 
-- Pass the verified work/school client id `2b2639c3-605c-466d-ae89-63ef8ffff5c8` into the Magali Windows `.env` through the staged `tools/magali-readiness.ps1` path; run any controlled draft write only after read-only readiness succeeds.
+- On the Zoom call, paste the bootstrap command from `docs/magali-zoom-operator-script.md`; it downloads `tools/magali-bootstrap.ps1`, installs `uv` and Python 3.12 if needed, syncs MailAssist, and runs read-only Outlook setup plus the MailAssist-path `qwen3:8b` Ollama check with verified client id `2b2639c3-605c-466d-ae89-63ef8ffff5c8`. Run any controlled draft write only after read-only readiness succeeds.
 - Run `mailassist ollama-setup-check --model qwen3:8b` on her setup; hardware RAM is likely sufficient, but raw terminal Ollama thinking was slow.
 - Use `docs/outlook-m365-admin-consent.md` as the packaged tenant/admin-consent guidance before attempting Magali's Microsoft 365 account.
 - Decide the next Outlook GUI exposure for drafting. Current GUI exposes `Organize Outlook`; targeted Outlook draft creation remains available through explicit CLI/smoke-test commands.
