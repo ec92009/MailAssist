@@ -341,9 +341,27 @@ def command_review_bot(args: argparse.Namespace) -> int:
             days = max(1, int(getattr(args, "days", 7) or 7))
             apply_labels = bool(getattr(args, "apply_labels", False))
             categories = settings.mailassist_categories
+            reporter.emit(
+                "organize_phase",
+                message="Preparing Gmail MailAssist labels.",
+                provider="gmail",
+                phase="preparing_labels",
+                days=days,
+                apply_labels=apply_labels,
+                categories=list(categories),
+            )
             label_ids = ensure_labels(_mailassist_gmail_label_names(categories))
             category_label_names = [_gmail_label_for_category(category) for category in categories]
-            threads = list_threads(f"newer_than:{days}d", max_threads=max(1, int(getattr(args, "limit", 100) or 100)))
+            limit = max(1, int(getattr(args, "limit", 100) or 100))
+            reporter.emit(
+                "organize_phase",
+                message=f"Reading Gmail threads from the last {days} days.",
+                provider="gmail",
+                phase="reading_threads",
+                days=days,
+                limit=limit,
+            )
+            threads = list_threads(f"newer_than:{days}d", max_threads=limit)
             classifier = OllamaClient(base_url, selected_model)
             applied_count = 0
             reporter.emit(
@@ -355,7 +373,16 @@ def command_review_bot(args: argparse.Namespace) -> int:
                 apply_labels=apply_labels,
                 categories=list(categories),
             )
-            for thread in threads:
+            for index, thread in enumerate(threads, start=1):
+                reporter.emit(
+                    "gmail_thread_classification_started",
+                    provider="gmail",
+                    thread_id=thread.thread_id,
+                    subject=thread.subject,
+                    current_index=index,
+                    thread_count=len(threads),
+                    message_count=len(thread.messages),
+                )
                 category, classification_source, classification_error = _mailassist_category_for_thread(
                     thread,
                     categories,
@@ -535,6 +562,16 @@ def command_review_bot(args: argparse.Namespace) -> int:
             outlook_category_names = [_outlook_category_for_category(category) for category in categories]
             days = max(1, int(getattr(args, "days", 7) or 7))
             limit = max(1, int(getattr(args, "limit", 100) or 100))
+            reporter.emit(
+                "organize_phase",
+                message=f"Reading Outlook threads from the last {days} days.",
+                provider="outlook",
+                phase="reading_threads",
+                days=days,
+                limit=limit,
+                apply_categories=apply_categories,
+                categories=list(categories),
+            )
             threads = [
                 thread
                 for thread in list_threads(limit=limit)
@@ -552,7 +589,16 @@ def command_review_bot(args: argparse.Namespace) -> int:
                 apply_categories=apply_categories,
                 categories=list(categories),
             )
-            for thread in threads:
+            for index, thread in enumerate(threads, start=1):
+                reporter.emit(
+                    "outlook_thread_classification_started",
+                    provider="outlook",
+                    thread_id=thread.thread_id,
+                    subject=thread.subject,
+                    current_index=index,
+                    thread_count=len(threads),
+                    message_count=len(thread.messages),
+                )
                 category, classification_source, classification_error = _mailassist_category_for_thread(
                     thread,
                     categories,

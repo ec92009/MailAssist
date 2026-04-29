@@ -50,6 +50,14 @@ The bot watches provider inboxes, uses a local Ollama model to classify new thre
 - Outlook preview diagnostics now distinguish auth failure from model work: preview errors are visible in Recent Activity, `invalid_grant` tells the user to refresh Outlook sign-in, and dry-run preview model calls use a shorter Ollama timeout.
 - Dry-run Gmail and Outlook draft previews run without confirmation modals; preview heartbeats stop immediately on completion or failure.
 - Recent Activity heartbeat/final summaries include progress counts for previews, watch passes, and Gmail/Outlook organizer runs.
+- Recent Activity now has a local `Report` button that opens the detailed run report/log window, wraps long lines inside the visible panel, and expands terse Outlook `invalid_grant` failures into re-auth guidance.
+- Recent Activity is now horizontally shrinkable and uses shorter preview/heartbeat copy so long status text cannot push the desktop window beyond the screen edge.
+- Gmail and Outlook organizer runs now emit setup and per-thread classification-start progress, so the UI can explain the first minute before any category result has finished.
+- Outlook organizer readiness failures now show as connection failures and explain that organization stopped before mailbox reads, rather than reporting a misleading quick zero-email completion.
+- Organizer failure messages now use the same structure across Gmail and Outlook, including pre-first-category and partial-progress failure cases.
+- Recent Activity progress now avoids subject-level detail: previews/watch passes show scanned/draft counts, and organizer runs show scanned/category counts, with full subject detail left to reports/logs.
+- Recent Activity no longer appends per-item `Progress:` rows; heartbeat lines are the single live progress signal while counters update silently between heartbeats.
+- Auto-check loop activity now distinguishes active checking from waiting between polling passes.
 - The small local-model test shows a two-minute countdown while Ollama is running and reports `Test successful after <duration>` when the model responds.
 - The bot has an Outlook category-population path that classifies recent Outlook threads into MailAssist categories, dry-runs by default, and only writes Graph message categories with `--apply-categories`.
 - The bot has a Gmail category-labeling path that asks the selected local Ollama model to choose one configured MailAssist category, or `NA`, for each recent thread.
@@ -154,13 +162,13 @@ These were useful experiments, but the lighter product should not build on them 
 
 ## Latest Verified State
 
-- Latest visible version: `v60.11`.
-- Latest test run: 169 passing tests on April 29, 2026.
+- Latest visible version: `v60.19`.
+- Latest test run: 178 passing tests on April 29, 2026.
 - Current visible GUI surface is the compact bot control panel and setup wizard.
 - Gmail provider dependencies are installed by plain `uv sync`.
 - Local Gmail setup has been proven for draft creation and readonly inbox preview.
 - Mac/Gmail DMG artifact was published as a GitHub release asset.
-- The next implementation phase should create the work/school-compatible MailAssist Entra app registration, package or stage a safe Magali-ready Windows run, then validate read-only Outlook Graph readiness with `outlook-setup-check` and model readiness with `ollama-setup-check` before any controlled draft write.
+- The next implementation phase should run the Magali-ready Windows bootstrap during the Zoom call, validate read-only Outlook Graph readiness with `outlook-setup-check`, validate model readiness with `ollama-setup-check`, and only then consider an explicit controlled draft write.
 - The latest cleanup slices moved old review/runtime artifacts into a legacy subtree, removed the unused queue-phase lifecycle, deleted the old web review GUI path, removed the dead legacy local draft pipeline, and introduced a dedicated live-state store for watcher runtime data.
 - The latest live-watcher slice added watcher filters, provider thread-listing hooks, Gmail thread polling helpers, and background-bot integration for real provider thread sources.
 - Gmail actionable-thread listing now passes unread/time-window filters into Gmail search where available, while the watcher still uses broad candidate listing so it can emit `filtered_out` activity events.

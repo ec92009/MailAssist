@@ -3,7 +3,8 @@ import json
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QLabel, QMessageBox
+from PySide6.QtGui import QTextOption
+from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QPlainTextEdit, QSizePolicy
 
 from mailassist.config import read_env_file, write_env_file
 from mailassist.gui import desktop as desktop_module
@@ -461,7 +462,7 @@ def test_gmail_draft_test_runs_without_confirmation(monkeypatch) -> None:
     window.run_gmail_draft_test()
 
     assert called == [("watch-once", "thread-008", "gmail", True, True)]
-    assert "Previewing a Gmail draft" in window.recent_activity.toPlainText()
+    assert "Previewing Gmail draft" in window.recent_activity.toPlainText()
     window.close()
 
 
@@ -480,10 +481,10 @@ def test_gmail_draft_test_runs_safe_dry_run(monkeypatch) -> None:
     window.run_gmail_draft_test()
 
     assert called == [("watch-once", "thread-008", "gmail", True, True)]
-    assert "Previewing a Gmail draft" in window.recent_activity.toPlainText()
-    assert "heartbeat updates will appear here" in window.recent_activity.toPlainText()
+    assert "Previewing Gmail draft" in window.recent_activity.toPlainText()
+    assert "Heartbeat updates will appear here" in window.recent_activity.toPlainText()
     assert "no Gmail draft will be created" in window.recent_activity.toPlainText()
-    assert "stop after 2 minutes" in window.recent_activity.toPlainText()
+    assert "auto-stops after 2 minutes" in window.recent_activity.toPlainText()
     window.close()
 
 
@@ -540,10 +541,10 @@ def test_outlook_draft_preview_runs_safe_dry_run(monkeypatch) -> None:
             },
         ),
     ]
-    assert "Previewing an Outlook draft" in window.recent_activity.toPlainText()
-    assert "heartbeat updates will appear here" in window.recent_activity.toPlainText()
+    assert "Previewing Outlook draft" in window.recent_activity.toPlainText()
+    assert "Heartbeat updates will appear here" in window.recent_activity.toPlainText()
     assert "no Outlook draft will be created" in window.recent_activity.toPlainText()
-    assert "stop after 2 minutes" in window.recent_activity.toPlainText()
+    assert "auto-stops after 2 minutes" in window.recent_activity.toPlainText()
     window.close()
 
 
@@ -568,12 +569,33 @@ def test_watch_preview_heartbeat_reports_still_running(monkeypatch) -> None:
     window._append_bot_heartbeat()
 
     assert "Outlook preview still running after 45 seconds" in window.recent_activity.toPlainText()
-    assert "4 checked" in window.recent_activity.toPlainText()
-    assert "1 drafts generated" in window.recent_activity.toPlainText()
-    assert "2 draft previews" in window.recent_activity.toPlainText()
-    assert "no email will be sent" in window.recent_activity.toPlainText()
-    assert "stop this preview after 2 minutes" in window.recent_activity.toPlainText()
+    assert "4 scanned / 3 drafts" in window.recent_activity.toPlainText()
+    assert "No email will be sent" in window.recent_activity.toPlainText()
+    assert "auto-stops after 2 minutes" in window.recent_activity.toPlainText()
     assert "Outlook preview still running after 45 seconds" in window.banner.text()
+    window.bot_process = None
+    window.close()
+
+
+def test_watch_loop_heartbeat_reports_waiting_after_completed_pass(monkeypatch) -> None:
+    window = MailAssistDesktopWindow()
+    now = [1000.0]
+
+    monkeypatch.setattr(desktop_module.time, "monotonic", lambda: now[0])
+    window.current_bot_action = "watch-loop"
+    window.current_bot_provider = "gmail"
+    window.bot_action_started_at = now[0] - 20
+    window.bot_process = object()
+    window._reset_bot_progress()
+    window.bot_progress["checked"] = 25
+
+    window._handle_bot_event({"type": "watch_pass_completed", "provider": "gmail"})
+    window._append_bot_heartbeat()
+
+    activity = window.recent_activity.toPlainText()
+    assert "Gmail auto-check pass completed: 25 scanned / 0 drafts. Waiting for next check." in activity
+    assert "Gmail auto-check waiting for the next check after 20 seconds. Last pass: 25 scanned / 0 drafts." in activity
+    assert "auto-check still running" not in activity
     window.bot_process = None
     window.close()
 
@@ -592,13 +614,64 @@ def test_organizer_heartbeat_reports_categorized_progress(monkeypatch) -> None:
     window._append_bot_heartbeat()
 
     assert "Gmail action still running after 1 min 10 sec" in window.recent_activity.toPlainText()
-    assert "12/40 emails categorized" in window.recent_activity.toPlainText()
+    assert "12/40 scanned · 12 categorized" in window.recent_activity.toPlainText()
     window.bot_process = None
+    window.close()
+
+
+def test_organizer_heartbeat_reports_current_setup_phase(monkeypatch) -> None:
+    window = MailAssistDesktopWindow()
+    now = [1000.0]
+
+    monkeypatch.setattr(desktop_module.time, "monotonic", lambda: now[0])
+    window.current_bot_action = "gmail-populate-labels"
+    window.current_bot_provider = "gmail"
+    window.bot_action_started_at = now[0] - 30
+    window.bot_process = object()
+    window._reset_bot_progress()
+
+    window._handle_bot_event(
+        {
+            "type": "organize_phase",
+            "provider": "gmail",
+            "phase": "reading_threads",
+            "message": "Reading Gmail threads from the last 7 days.",
+        }
+    )
+    window._append_bot_heartbeat()
+
+    activity = window.recent_activity.toPlainText()
+    assert "Reading Gmail threads from the last 7 days." in activity
+    assert "0 scanned · 0 categorized" in activity
+    window.bot_process = None
+    window.close()
+
+
+def test_thread_classification_started_updates_current_progress() -> None:
+    window = MailAssistDesktopWindow()
+    window.current_bot_action = "gmail-populate-labels"
+    window._reset_bot_progress()
+
+    window._handle_bot_event(
+        {
+            "type": "gmail_thread_classification_started",
+            "provider": "gmail",
+            "subject": "Security alert",
+            "current_index": 1,
+            "thread_count": 365,
+        }
+    )
+
+    assert window.bot_progress["total"] == 365
+    assert window.bot_progress["current_index"] == 1
+    assert "Security alert" not in window.recent_activity.toPlainText()
+    assert window._bot_progress_summary() == "1/365 scanned · 0 categorized"
     window.close()
 
 
 def test_thread_category_events_update_progress_and_activity() -> None:
     window = MailAssistDesktopWindow()
+    window.current_bot_action = "outlook-populate-categories"
     window._reset_bot_progress()
 
     window._handle_bot_event(
@@ -612,7 +685,8 @@ def test_thread_category_events_update_progress_and_activity() -> None:
 
     assert window.bot_progress["categorized"] == 1
     assert window.bot_progress["updated_messages"] == 2
-    assert "Categorized: Quarterly tax packet (Needs Reply)" in window.recent_activity.toPlainText()
+    assert window.recent_activity.toPlainText() == "No bot activity yet."
+    assert "Quarterly tax packet" not in window.recent_activity.toPlainText()
     window.close()
 
 
@@ -634,6 +708,79 @@ def test_organizer_completion_reports_categorized_totals() -> None:
     assert "Outlook organize completed: 30 emails categorized" in activity
     assert "30 category writes" in activity
     assert "42 messages updated" in activity
+    window.close()
+
+
+def test_outlook_organizer_connection_failure_is_explained() -> None:
+    window = MailAssistDesktopWindow()
+
+    window._handle_bot_event(
+        {
+            "type": "outlook_readiness",
+            "provider": "outlook",
+            "ready": False,
+            "message": "Outlook sign-in expired or was revoked.",
+        }
+    )
+    window._handle_bot_event(
+        {
+            "type": "completed",
+            "action": "outlook-populate-categories",
+            "provider": "outlook",
+            "ready": False,
+            "thread_count": 0,
+            "applied_count": 0,
+            "message": "Outlook category population stopped because provider is not ready.",
+        }
+    )
+
+    activity = window.recent_activity.toPlainText()
+    assert "Outlook connection failed: Outlook sign-in expired or was revoked." in activity
+    assert "Outlook organize stopped before reading mail" in activity
+    assert "Outlook sign-in expired or was revoked." in activity
+    assert window.last_failure_summary == "Outlook sign-in expired or was revoked."
+    window.close()
+
+
+def test_gmail_organizer_connection_failure_is_explained() -> None:
+    window = MailAssistDesktopWindow()
+    window.current_bot_action = "gmail-populate-labels"
+    window.current_bot_provider = "gmail"
+    window._reset_bot_progress()
+
+    window._handle_bot_event(
+        {
+            "type": "error",
+            "action": "gmail-populate-labels",
+            "message": "Gmail sign-in expired. Run Gmail setup again.",
+        }
+    )
+
+    activity = window.recent_activity.toPlainText()
+    assert "Gmail organize stopped before the first category" in activity
+    assert "Gmail sign-in expired" in activity
+    assert window.last_failure_summary == "Gmail sign-in expired. Run Gmail setup again."
+    window.close()
+
+
+def test_gmail_organizer_mid_run_failure_reports_partial_progress() -> None:
+    window = MailAssistDesktopWindow()
+    window.current_bot_action = "gmail-populate-labels"
+    window.current_bot_provider = "gmail"
+    window._reset_bot_progress()
+    window.bot_progress["categorized"] = 7
+
+    window._handle_bot_event(
+        {
+            "type": "error",
+            "action": "gmail-populate-labels",
+            "message": "Gmail quota exceeded.",
+        }
+    )
+
+    activity = window.recent_activity.toPlainText()
+    assert "Gmail organize stopped after 7 emails categorized" in activity
+    assert "Gmail quota exceeded" in activity
     window.close()
 
 
@@ -707,6 +854,27 @@ def test_watch_preview_error_is_visible_in_recent_activity() -> None:
     assert "invalid_grant" in window.recent_activity.toPlainText()
     assert "invalid_grant" in window.banner.text()
     assert stopped == [True]
+    window.close()
+
+
+def test_invalid_grant_error_is_expanded_in_recent_activity() -> None:
+    window = MailAssistDesktopWindow()
+    window.current_bot_action = "watch-once"
+    window.current_bot_provider = "outlook"
+    window.current_bot_dry_run = True
+    window._stop_bot_heartbeat = lambda: None
+
+    window._handle_bot_event(
+        {
+            "type": "error",
+            "action": "watch-once",
+            "message": "invalid_grant",
+        }
+    )
+
+    activity = window.recent_activity.toPlainText()
+    assert "Outlook sign-in expired or was revoked (invalid_grant)" in activity
+    assert "Run Outlook setup/auth again" in window.last_failure_summary
     window.close()
 
 
@@ -911,9 +1079,9 @@ def test_clear_recent_activity_button_sits_left_of_activity_text() -> None:
     window.resize(1120, 760)
     app.processEvents()
 
-    button_left = window.clear_recent_activity_button.mapTo(
+    button_left = window.activity_report_button.mapTo(
         window.activity_group,
-        window.clear_recent_activity_button.rect().topLeft(),
+        window.activity_report_button.rect().topLeft(),
     )
     text_left = window.recent_activity.mapTo(
         window.activity_group,
@@ -922,6 +1090,43 @@ def test_clear_recent_activity_button_sits_left_of_activity_text() -> None:
 
     assert button_left.x() < text_left.x()
     assert abs(button_left.y() - text_left.y()) < 8
+    clear_left = window.clear_recent_activity_button.mapTo(
+        window.activity_group,
+        window.clear_recent_activity_button.rect().topLeft(),
+    )
+    assert clear_left.x() == button_left.x()
+    assert clear_left.y() > button_left.y()
+    window.close()
+
+
+def test_recent_activity_wraps_and_has_report_button(monkeypatch) -> None:
+    window = MailAssistDesktopWindow()
+    opened = []
+
+    monkeypatch.setattr(window, "open_bot_logs_dialog", lambda: opened.append(True))
+    window.activity_report_button.clicked.emit()
+
+    assert window.activity_report_button.text() == "Report"
+    assert "detailed activity report" in window.activity_report_button.toolTip()
+    assert opened == [True]
+    assert window.recent_activity.lineWrapMode() == QPlainTextEdit.LineWrapMode.WidgetWidth
+    assert window.recent_activity.wordWrapMode() == QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere
+    assert window.recent_activity.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Ignored
+    assert window.recent_activity.minimumWidth() == 0
+    window.close()
+
+
+def test_recent_activity_long_lines_do_not_force_window_wide() -> None:
+    app = _app()
+    window = MailAssistDesktopWindow()
+    window.resize(900, 680)
+
+    window._append_recent_activity("Long status " + ("keeps-going " * 80))
+    app.processEvents()
+
+    assert window.recent_activity.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Ignored
+    assert window.width() <= 900
+    assert window.recent_activity.width() < 760
     window.close()
 
 
@@ -1090,6 +1295,7 @@ def test_long_control_tooltips_are_wrapped_rich_text() -> None:
         window.start_watch_loop_button.toolTip(),
         window.stop_ollama_button.toolTip(),
         window.restart_ollama_button.toolTip(),
+        window.activity_report_button.toolTip(),
         window.clear_recent_activity_button.toolTip(),
     ):
         assert tooltip.startswith("<qt>")

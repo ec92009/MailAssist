@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QProcess, QProcessEnvironment, Qt, QTimer
-from PySide6.QtGui import QFont, QIcon, QKeySequence, QShortcut, QTextCharFormat, QTextCursor
+from PySide6.QtGui import QFont, QIcon, QKeySequence, QShortcut, QTextCharFormat, QTextCursor, QTextOption
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -82,6 +82,27 @@ def _wide_line_edit(value: str = "", *, min_width: int = 560) -> QLineEdit:
 def _wrapped_tooltip(text: str, *, width: int = 320) -> str:
     escaped = html.escape(" ".join(text.split()))
     return f'<qt><div style="white-space: normal; width: {width}px;">{escaped}</div></qt>'
+
+
+def _user_facing_failure_message(message: str) -> str:
+    if message.strip() == "invalid_grant":
+        return (
+            "Outlook sign-in expired or was revoked (invalid_grant). "
+            "Run Outlook setup/auth again before previewing Outlook drafts."
+        )
+    return message
+
+
+def _is_organizer_action(action: str) -> bool:
+    return action in {"gmail-populate-labels", "outlook-populate-categories"}
+
+
+def _organizer_stop_message(provider_label: str, reason: str, *, categorized: int, stage: str = "") -> str:
+    if categorized > 0:
+        return f"{provider_label} organize stopped after {categorized} emails categorized: {reason}"
+    if stage:
+        return f"{provider_label} organize stopped {stage}: {reason}"
+    return f"{provider_label} organize stopped before the first category: {reason}"
 
 
 def _time_window_combo(current_value: str) -> QComboBox:
@@ -273,6 +294,10 @@ class MailAssistDesktopWindow(QMainWindow):
         self.current_bot_action = ""
         self.current_bot_provider = ""
         self.current_bot_dry_run = False
+        self.current_bot_phase = ""
+        self.last_live_progress_summary = ""
+        self.current_provider_ready = True
+        self.current_provider_readiness_message = ""
         self.bot_progress: dict[str, int] = {}
         self.bot_action_started_at: float | None = None
         self.bot_heartbeat_timer = QTimer(self)
@@ -561,6 +586,16 @@ class MailAssistDesktopWindow(QMainWindow):
         activity_layout.setContentsMargins(10, 10, 10, 10)
         activity_body = QHBoxLayout()
         activity_body.setSpacing(8)
+        activity_controls = QVBoxLayout()
+        activity_controls.setSpacing(6)
+        self.activity_report_button = QPushButton("Report")
+        self.activity_report_button.setMaximumWidth(96)
+        self.activity_report_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.activity_report_button.setToolTip(_wrapped_tooltip(
+            "Open the detailed activity report with the selected run summary and timeline."
+        ))
+        self.activity_report_button.clicked.connect(lambda: self.open_bot_logs_dialog())
+        activity_controls.addWidget(self.activity_report_button)
         self.clear_recent_activity_button = QPushButton("Clear")
         self.clear_recent_activity_button.setMaximumWidth(96)
         self.clear_recent_activity_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
@@ -568,11 +603,17 @@ class MailAssistDesktopWindow(QMainWindow):
             "Clear the visible Recent Activity list. Saved run logs are not deleted."
         ))
         self.clear_recent_activity_button.clicked.connect(self.clear_recent_activity)
-        activity_body.addWidget(self.clear_recent_activity_button, 0, Qt.AlignmentFlag.AlignTop)
+        activity_controls.addWidget(self.clear_recent_activity_button)
+        activity_controls.addStretch(1)
+        activity_body.addLayout(activity_controls)
         self.recent_activity = QPlainTextEdit()
         self.recent_activity.setReadOnly(True)
+        self.recent_activity.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.recent_activity.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+        self.recent_activity.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.recent_activity.setMinimumWidth(0)
         self.recent_activity.setMinimumHeight(80)
-        self.recent_activity.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.recent_activity.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
         self.recent_activity.setPlainText("No bot activity yet.")
         activity_body.addWidget(self.recent_activity, 1)
         activity_layout.addLayout(activity_body, 1)
@@ -624,6 +665,8 @@ class MailAssistDesktopWindow(QMainWindow):
         layout.addWidget(stdout_label)
         self.bot_console = QPlainTextEdit()
         self.bot_console.setReadOnly(True)
+        self.bot_console.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.bot_console.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
         self.bot_console.setMinimumHeight(90)
         self.bot_console.setMaximumHeight(120)
         layout.addWidget(self.bot_console)
@@ -639,6 +682,8 @@ class MailAssistDesktopWindow(QMainWindow):
         layout.addLayout(log_header)
         self.bot_log_viewer = QPlainTextEdit()
         self.bot_log_viewer.setReadOnly(True)
+        self.bot_log_viewer.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.bot_log_viewer.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
         self.bot_log_viewer.setMinimumHeight(360)
         layout.addWidget(self.bot_log_viewer, 1)
         return widget
@@ -1761,7 +1806,9 @@ class MailAssistDesktopWindow(QMainWindow):
             "already_handled": 0,
             "filtered": 0,
             "updated_messages": 0,
+            "current_index": 0,
         }
+        self.bot_progress["current_detail"] = ""
 
     def _bot_progress_summary(self) -> str:
         total = self.bot_progress.get("total", 0)
@@ -1773,24 +1820,19 @@ class MailAssistDesktopWindow(QMainWindow):
         already_handled = self.bot_progress.get("already_handled", 0)
         filtered = self.bot_progress.get("filtered", 0)
         if self.current_bot_action in {"gmail-populate-labels", "outlook-populate-categories"}:
+            current_index = int(self.bot_progress.get("current_index") or categorized or 0)
             if total:
-                return f"{categorized}/{total} emails categorized"
-            return f"{categorized} emails categorized"
-        parts = [f"{checked} checked", f"{drafts} drafts generated"]
-        if draft_previews:
-            parts.append(f"{draft_previews} draft previews")
-        if skipped:
-            parts.append(f"{skipped} skipped")
-        if already_handled:
-            parts.append(f"{already_handled} already handled")
-        if filtered:
-            parts.append(f"{filtered} filtered")
-        return " · ".join(parts)
+                return f"{current_index}/{total} scanned · {categorized} categorized"
+            return f"{categorized} scanned · {categorized} categorized"
+        draft_total = drafts + draft_previews
+        return f"{checked} scanned / {draft_total} drafts"
 
     def _start_bot_heartbeat(self, action: str, provider: str, *, dry_run: bool = False) -> None:
         self.bot_action_started_at = time.monotonic()
         self.current_bot_provider = provider
         self.current_bot_dry_run = dry_run
+        self.current_bot_phase = "running"
+        self.last_live_progress_summary = ""
         self._reset_bot_progress()
         if action in {"watch-once", "watch-loop", "gmail-populate-labels", "outlook-populate-categories"}:
             self._append_bot_heartbeat()
@@ -1813,11 +1855,14 @@ class MailAssistDesktopWindow(QMainWindow):
             message = (
                 f"{provider} preview still running after {elapsed}. "
                 f"{self._bot_progress_summary()}. "
-                "Local model checks can take a minute; no email will be sent. "
-                "MailAssist will stop this preview after 2 minutes if it has not finished."
+                "No email will be sent; auto-stops after 2 minutes."
             )
         elif self.current_bot_action == "watch-loop":
-            message = f"{provider} auto-check still running after {elapsed}. {self._bot_progress_summary()}."
+            if self.current_bot_phase == "waiting":
+                summary = self.last_live_progress_summary or self._bot_progress_summary()
+                message = f"{provider} auto-check waiting for the next check after {elapsed}. Last pass: {summary}."
+            else:
+                message = f"{provider} auto-check checking after {elapsed}. {self._bot_progress_summary()}."
         else:
             message = f"{provider} action still running after {elapsed}. {self._bot_progress_summary()}."
         self._append_recent_activity(message)
@@ -1884,7 +1929,7 @@ class MailAssistDesktopWindow(QMainWindow):
                 )
                 if err:
                     when = _event_day_time_label(err.get("timestamp"))
-                    message = str(err.get("message") or "Bot error.").strip()
+                    message = _user_facing_failure_message(str(err.get("message") or "Bot error.").strip())
                     latest_failure = f"{when} · {message}"
             if latest_pass and latest_failure:
                 break
@@ -2244,9 +2289,8 @@ class MailAssistDesktopWindow(QMainWindow):
 
     def run_gmail_draft_test(self) -> None:
         self._announce_long_action(
-            "Previewing a Gmail draft. MailAssist will read recent Gmail threads and ask the local model; "
-            "this may take a minute, heartbeat updates will appear here, no Gmail draft will be created, "
-            "and the preview will stop after 2 minutes if it has not finished."
+            "Previewing Gmail draft. Dry run only; no Gmail draft will be created. "
+            "Heartbeat updates will appear here and the preview auto-stops after 2 minutes."
         )
         self.run_bot_action(
             "watch-once",
@@ -2278,9 +2322,8 @@ class MailAssistDesktopWindow(QMainWindow):
     def run_outlook_draft_preview(self) -> None:
         self.save_settings(announce=False)
         self._announce_long_action(
-            "Previewing an Outlook draft. MailAssist will read recent Outlook threads and ask the local model; "
-            "this may take a minute, heartbeat updates will appear here, no Outlook draft will be created, "
-            "and the preview will stop after 2 minutes if it has not finished."
+            "Previewing Outlook draft. Dry run only; no Outlook draft will be created. "
+            "Heartbeat updates will appear here and the preview auto-stops after 2 minutes."
         )
         self.run_bot_action(
             "watch-once",
@@ -2467,33 +2510,18 @@ class MailAssistDesktopWindow(QMainWindow):
         elif event_type == "draft_created":
             self.bot_progress["checked"] = self.bot_progress.get("checked", 0) + 1
             self.bot_progress["drafts"] = self.bot_progress.get("drafts", 0) + 1
-            self._append_recent_activity(
-                f"Draft created: {event.get('subject', 'Unknown subject')} ({event.get('classification', 'unclassified')})"
-            )
         elif event_type == "draft_ready":
             self.bot_progress["checked"] = self.bot_progress.get("checked", 0) + 1
             self.bot_progress["draft_previews"] = self.bot_progress.get("draft_previews", 0) + 1
-            self._append_recent_activity(
-                f"Draft dry run ready: {event.get('subject', 'Unknown subject')} ({event.get('classification', 'unclassified')})"
-            )
         elif event_type == "skipped_email":
             self.bot_progress["checked"] = self.bot_progress.get("checked", 0) + 1
             self.bot_progress["skipped"] = self.bot_progress.get("skipped", 0) + 1
-            self._append_recent_activity(
-                f"Skipped: {event.get('subject', 'Unknown subject')} ({event.get('classification', 'unclassified')})"
-            )
         elif event_type == "already_handled":
             self.bot_progress["checked"] = self.bot_progress.get("checked", 0) + 1
             self.bot_progress["already_handled"] = self.bot_progress.get("already_handled", 0) + 1
-            self._append_recent_activity(
-                f"Already handled: {event.get('subject', 'Unknown subject')}"
-            )
         elif event_type == "filtered_out":
             self.bot_progress["checked"] = self.bot_progress.get("checked", 0) + 1
             self.bot_progress["filtered"] = self.bot_progress.get("filtered", 0) + 1
-            self._append_recent_activity(
-                f"Filtered out: {event.get('subject', 'Unknown subject')} ({event.get('reason', 'filter')})"
-            )
         elif event_type in {
             "gmail_thread_labeled",
             "gmail_thread_label_preview",
@@ -2504,16 +2532,45 @@ class MailAssistDesktopWindow(QMainWindow):
             self.bot_progress["updated_messages"] = (
                 self.bot_progress.get("updated_messages", 0) + int(event.get("updated_message_count") or 0)
             )
-            category = str(event.get("category") or "NA")
-            self._append_recent_activity(
-                f"Categorized: {event.get('subject', 'Unknown subject')} ({category})"
-            )
+        elif event_type in {
+            "organize_phase",
+            "gmail_thread_classification_started",
+            "outlook_thread_classification_started",
+        }:
+            if "thread_count" in event:
+                self.bot_progress["total"] = int(event.get("thread_count") or 0)
+            if "current_index" in event:
+                self.bot_progress["current_index"] = int(event.get("current_index") or 0)
+            message = str(event.get("message") or "").strip()
+            if event_type == "organize_phase":
+                detail = message or "Preparing organizer run."
+                self.bot_progress["current_detail"] = detail
+                self._append_recent_activity(detail)
         elif event_type == "watch_pass_started":
-            self._append_recent_activity(f"Watch pass started for {event.get('provider', 'provider')}.")
+            self.current_bot_phase = "running"
+            self._reset_bot_progress()
+            provider = str(event.get("provider") or self.current_bot_provider or "provider").title()
+            self._append_recent_activity(f"{provider} auto-check pass started.")
         elif event_type == "watch_pass_completed":
-            self._append_recent_activity(f"Watch pass completed for {event.get('provider', 'provider')}.")
+            self.current_bot_phase = "waiting"
+            self.last_live_progress_summary = self._bot_progress_summary()
+            provider = str(event.get("provider") or self.current_bot_provider or "provider").title()
+            self._append_recent_activity(
+                f"{provider} auto-check pass completed: {self.last_live_progress_summary}. Waiting for next check."
+            )
         elif event_type == "failed_pass":
             self._append_recent_activity(f"Watch pass failed: {event.get('message', 'Unknown error')}")
+        elif event_type == "sleeping":
+            self.current_bot_phase = "waiting"
+        elif event_type == "outlook_readiness":
+            ready = bool(event.get("ready"))
+            self.current_provider_ready = ready
+            self.current_provider_readiness_message = str(event.get("message") or "").strip()
+            if not ready:
+                message = self.current_provider_readiness_message or "Outlook connection is not ready."
+                self._append_recent_activity(f"Outlook connection failed: {message}")
+                self.last_failure_summary = message
+                self._set_banner(message, level="error")
         elif event_type == "completed":
             self._stop_bot_heartbeat()
             if event.get("action") != "ollama-check":
@@ -2545,7 +2602,19 @@ class MailAssistDesktopWindow(QMainWindow):
                 thread_count = int(event.get("thread_count") or 0)
                 applied_count = int(event.get("applied_count") or 0)
                 updated_messages = int(event.get("message_update_count") or 0)
-                if updated_messages:
+                if event.get("ready") is False:
+                    reason = str(self.current_provider_readiness_message or event.get("message") or "").strip()
+                    if reason:
+                        detail = _organizer_stop_message(
+                            provider_label,
+                            reason,
+                            categorized=0,
+                            stage="before reading mail",
+                        )
+                    else:
+                        detail = f"{provider_label} organize stopped before reading mail because the provider is not connected."
+                    self.last_failure_summary = reason or "Provider is not connected."
+                elif updated_messages:
                     detail = (
                         f"{provider_label} organize completed: {thread_count} emails categorized · "
                         f"{applied_count} category writes · {updated_messages} messages updated."
@@ -2559,11 +2628,16 @@ class MailAssistDesktopWindow(QMainWindow):
             self.refresh_dashboard()
         elif event_type == "error":
             self._stop_bot_heartbeat()
-            failure = str(event.get("message", "Bot action failed."))
+            failure = _user_facing_failure_message(str(event.get("message", "Bot action failed.")))
             provider = str(event.get("provider") or self.current_bot_provider or "").strip()
             provider_label = provider.title() if provider else "MailAssist"
             if self.current_bot_action == "watch-once" and self.current_bot_dry_run:
                 self._append_recent_activity(f"{provider_label} preview failed: {failure}")
+            elif _is_organizer_action(str(event.get("action") or self.current_bot_action or "")):
+                categorized = int(self.bot_progress.get("categorized", 0) or 0)
+                self._append_recent_activity(
+                    _organizer_stop_message(provider_label, failure, categorized=categorized)
+                )
             else:
                 self._append_recent_activity(f"{provider_label} action failed: {failure}")
             if event.get("action") == "ollama-check":
@@ -2605,6 +2679,10 @@ class MailAssistDesktopWindow(QMainWindow):
         self.current_bot_action = ""
         self.current_bot_provider = ""
         self.current_bot_dry_run = False
+        self.current_bot_phase = ""
+        self.last_live_progress_summary = ""
+        self.current_provider_ready = True
+        self.current_provider_readiness_message = ""
         self.refresh_dashboard()
         self.refresh_bot_logs()
 

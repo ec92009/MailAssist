@@ -544,6 +544,19 @@ def test_review_bot_gmail_populate_labels_applies_recent_thread_bins(
         and line["labels"] == []
         for line in lines
     )
+    assert any(
+        line["type"] == "organize_phase"
+        and line["phase"] == "preparing_labels"
+        and line["provider"] == "gmail"
+        for line in lines
+    )
+    assert any(
+        line["type"] == "gmail_thread_classification_started"
+        and line["subject"] == "Weekly newsletter"
+        and line["current_index"] == 1
+        and line["thread_count"] == 1
+        for line in lines
+    )
     assert provider.applied[0][2]
     assert lines[-1]["applied_count"] == 1
 
@@ -632,6 +645,19 @@ def test_review_bot_outlook_populate_categories_previews_without_writes(
     assert any(
         line["type"] == "outlook_thread_category_preview"
         and line["categories"] == ["MailAssist - Subscriptions"]
+        for line in lines
+    )
+    assert any(
+        line["type"] == "organize_phase"
+        and line["phase"] == "reading_threads"
+        and line["provider"] == "outlook"
+        for line in lines
+    )
+    assert any(
+        line["type"] == "outlook_thread_classification_started"
+        and line["subject"] == "Weekly newsletter"
+        and line["current_index"] == 1
+        and line["thread_count"] == 1
         for line in lines
     )
     assert lines[-1]["dry_run"] is True

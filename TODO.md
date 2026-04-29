@@ -22,9 +22,9 @@ Mac/Gmail remains the proving ground because it is already working locally and e
     - `sed -n '1,220p' TODO.md`
     - `sed -n '1,180p' SUMMARY.md`
 - Current baseline at handoff:
-  - Last synchronized commit before this handoff commit: `2b9a130`
+  - Last synchronized commit before this handoff commit: `4389fbf`
   - Handoff commit: reported in the final assistant response after commit/push
-  - Current visible version: `v60.11`
+  - Current visible version: `v60.19`
   - Local app/dev entrypoint: `./.venv/bin/mailassist desktop-gui`
   - Packaged app path: `/Applications/MailAssist.app`
 - Known open issue to continue:
@@ -33,6 +33,7 @@ Mac/Gmail remains the proving ground because it is already working locally and e
   - Magali's Microsoft 365 state is now confirmed: home organization Golden Years Tax Strategy, admin center access works, mailbox license is Microsoft 365 Business Standard (no Teams), Outlook web opens the mailbox, and Classic Outlook Desktop account type is Microsoft Exchange.
   - The work/school multitenant `MailAssist Outlook` Entra app is verified. Current client id is `2b2639c3-605c-466d-ae89-63ef8ffff5c8`; use tenant `organizations` until Golden Years tenant id is known.
   - Immediate next implementation step: on the Zoom call, paste the one-command Windows bootstrap from `docs/magali-zoom-operator-script.md`. It downloads `tools/magali-bootstrap.ps1`, installs `uv` and Python 3.12 if needed, syncs MailAssist, and runs read-only Outlook setup plus the MailAssist-path `qwen3:8b` Ollama check before any controlled draft write.
+  - Latest local UI polish completed after user review: Recent Activity now has `Report`/`Clear`, wraps/shrinks safely, uses heartbeat-only progress for previews/watch/organizers, hides subject-level progress from the main feed, makes Gmail/Outlook organizer failure wording homogeneous, and distinguishes auto-check pass completion from waiting for the next polling interval.
   - Keep Outlook provider writes explicit. Current safe commands are `review-bot --action outlook-smoke-test --thread-id <id> --create-draft`, `review-bot --action watch-once --provider outlook --thread-id <id> --force`, and `review-bot --action outlook-populate-categories --days <n> --apply-categories`.
 - Handoff protocol for this repo:
   - Run `prepare for handoff` before switching machines or ending a work block that should resume elsewhere.
@@ -111,6 +112,14 @@ Mac/Gmail remains the proving ground because it is already working locally and e
 - Improved Outlook preview diagnostics: preview runs use a shorter Ollama timeout, Outlook preview is capped to one candidate, heartbeat lines also update the banner, auth failures appear in Recent Activity, and Microsoft `invalid_grant` now explains that Outlook sign-in must be refreshed. Bumped visible version to `v60.9`; full local test suite passed with 166 tests on April 29, 2026. (Managed by Codex)
 - Removed confirmation modals from dry-run Gmail and Outlook draft previews, while keeping confirmations for provider-writing and organizing actions. Stopped preview heartbeats immediately on completed/error events so `completed` and `still running` messages cannot conflict. Bumped visible version to `v60.10`; full local test suite passed with 166 tests on April 29, 2026. (Managed by Codex)
 - Added progress detail to Recent Activity heartbeat/final summaries: preview/watch actions report checked/drafts/draft previews/skipped/already/filtered counts, and Gmail/Outlook organizer runs report categorized totals plus applied category/message updates. Bumped visible version to `v60.11`; full local test suite passed with 169 tests on April 29, 2026. (Managed by Codex)
+- Added a visible `Report` button beside Recent Activity so the detailed run report/log window is reachable from the panel, wrapped Recent Activity/log text at the panel width, and expanded bare Outlook `invalid_grant` failures into re-auth guidance. Bumped visible version to `v60.12`; full local test suite passed with 171 tests on April 29, 2026. (Managed by Codex)
+- Prevented long Recent Activity lines from forcing the desktop window wider than the screen by making the activity field shrinkable and shortening preview/heartbeat copy. Bumped visible version to `v60.13`; full local test suite passed with 172 tests on April 29, 2026. (Managed by Codex)
+- Added organizer phase progress before the first categorized email: Gmail/Outlook organize now reports setup phases like preparing labels and reading threads, then reports `Classifying N/total: subject` before each model call so the first minute is explainable. Bumped visible version to `v60.14`; full local test suite passed with 174 tests on April 29, 2026. (Managed by Codex)
+- Made Outlook organizer connection failures explicit in Recent Activity: readiness failures now appear as connection failures and the completion line says Outlook stopped before reading mail instead of looking like a fast successful empty run. Bumped visible version to `v60.15`; full local test suite passed with 175 tests on April 29, 2026. (Managed by Codex)
+- Made Gmail and Outlook organizer failure wording homogeneous: organizer failures now say whether the run stopped before reading mail, before the first category, or after N emails categorized. Bumped visible version to `v60.16`; full local test suite passed with 177 tests on April 29, 2026. (Managed by Codex)
+- Simplified Recent Activity progress by removing subject-level progress lines from the main feed. Watch/previews now report `N scanned / M drafts`, while organizer runs report scan/category counts; detailed subjects remain in the run report/log. Bumped visible version to `v60.17`; full local test suite passed with 177 tests on April 29, 2026. (Managed by Codex)
+- Removed redundant per-item `Progress:` lines from Recent Activity. Draft/category events still update counters internally, but only the periodic heartbeat shows live progress. Bumped visible version to `v60.18`; full local test suite passed with 177 tests on April 29, 2026. (Managed by Codex)
+- Clarified auto-check loop progress after a pass completes: Recent Activity now says the pass completed and subsequent heartbeats say MailAssist is waiting for the next check, instead of saying the completed pass is still running. Bumped visible version to `v60.19`; full local test suite passed with 178 tests on April 29, 2026. (Managed by Codex)
 
 ## Remaining Backlog
 

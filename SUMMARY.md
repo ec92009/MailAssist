@@ -58,7 +58,7 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 - During the Magali screen-share, confirmed her Microsoft account home organization is Golden Years Tax Strategy, `admin.microsoft.com` opens for her, her mailbox license is Microsoft 365 Business Standard (no Teams), Outlook web opens the Golden Years mailbox, and Classic Outlook Desktop reports the account type as Microsoft Exchange.
 - A direct terminal `ollama run qwen3:8b ...` check was slow and showed thinking behavior; the real setup check should use MailAssist's own Ollama path with `think: false`.
 - Added `mailassist outlook-setup-check`, a read-only one-command Outlook setup path that runs Graph authorization, verifies readiness, checks an optional expected mailbox email, previews inbox thread subjects only, and explicitly avoids draft creation/sending. Bumped visible version to `v59.14` and ran the full local test suite: 140 passing tests on April 28, 2026.
-- Ran `rscp`, committed and pushed `0d1ddb3` to `main`, then prepared handoff docs. The current resume point is to verify or create a work/school-compatible Microsoft Entra app registration, then stage the Magali Windows run for `mailassist outlook-setup-check --expected-email MagaliDomingue@goldenyearstaxstrategy.com`.
+- Ran `rscp`, committed and pushed `0d1ddb3` to `main`, then prepared handoff docs. That older resume point was later completed by creating the work/school-compatible Microsoft Entra app registration and staging the Magali Windows bootstrap path.
 - Prepared the pre-Zoom Magali bundle: added `docs/magali-outlook.env.example`, refreshed `docs/outlook-m365-admin-consent.md` with a work/school app-registration checklist verified against Microsoft Learn on April 28, 2026, added `mailassist ollama-setup-check` for the MailAssist `think:false` Ollama path, and updated the call checklist/Windows notes/README. Bumped visible version to `v59.15`; full local test suite passed with 142 tests on April 28, 2026.
 - Fixed the Gmail dependency regression visible in the desktop GUI after plain `uv sync`: Gmail provider packages are now default project dependencies, stale `.[gmail]` setup guidance was removed, and the missing-dependency error now points to `uv sync`. Bumped visible version to `v59.16`; full local test suite passed with 142 tests on April 28, 2026.
 - Simplified the desktop bot action row for normal use: removed the demo inbox and controlled test-draft buttons from the main strip, added fuller tooltips to the remaining actions, and made slow actions write an immediate wait-time note in Recent Activity before starting. Bumped visible version to `v59.17`; full local test suite passed with 143 tests on April 28, 2026.
@@ -75,14 +75,22 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 - Improved Outlook preview diagnostics: preview runs use a shorter Ollama timeout, Outlook preview is capped to one candidate, heartbeat lines also update the banner, auth failures appear in Recent Activity, and Microsoft `invalid_grant` now explains that Outlook sign-in must be refreshed. Bumped visible version to `v60.9`; full local test suite passed with 166 tests on April 29, 2026.
 - Removed confirmation modals from dry-run Gmail and Outlook draft previews, while keeping confirmations for provider-writing and organizing actions. Stopped preview heartbeats immediately on completed/error events so `completed` and `still running` messages cannot conflict. Bumped visible version to `v60.10`; full local test suite passed with 166 tests on April 29, 2026.
 - Added progress detail to Recent Activity heartbeat/final summaries: preview/watch actions report checked/drafts/draft previews/skipped/already/filtered counts, and Gmail/Outlook organizer runs report categorized totals plus applied category/message updates. Bumped visible version to `v60.11`; full local test suite passed with 169 tests on April 29, 2026.
+- Added a visible `Report` button beside Recent Activity so the detailed bot log/report is reachable from the panel, wrapped Recent Activity/log text at the panel width, and expanded bare Outlook `invalid_grant` failures into re-auth guidance. Bumped visible version to `v60.12`; full local test suite passed with 171 tests on April 29, 2026.
+- Prevented long Recent Activity lines from forcing the desktop window wider than the screen by making the activity field shrinkable and shortening preview/heartbeat copy. Bumped visible version to `v60.13`; full local test suite passed with 172 tests on April 29, 2026.
+- Added organizer phase progress before the first categorized email: Gmail/Outlook organize now reports setup phases like preparing labels and reading threads, then reports `Classifying N/total: subject` before each model call so the first minute is explainable. Bumped visible version to `v60.14`; full local test suite passed with 174 tests on April 29, 2026.
+- Made Outlook organizer connection failures explicit in Recent Activity: readiness failures now appear as connection failures and the completion line says Outlook stopped before reading mail instead of looking like a fast successful empty run. Bumped visible version to `v60.15`; full local test suite passed with 175 tests on April 29, 2026.
+- Made Gmail and Outlook organizer failure wording homogeneous: organizer failures now say whether the run stopped before reading mail, before the first category, or after N emails categorized. Bumped visible version to `v60.16`; full local test suite passed with 177 tests on April 29, 2026.
+- Simplified Recent Activity progress by removing subject-level progress lines from the main feed. Watch/previews now report `N scanned / M drafts`, while organizer runs report scan/category counts; detailed subjects remain in the run report/log. Bumped visible version to `v60.17`; full local test suite passed with 177 tests on April 29, 2026.
+- Removed redundant per-item `Progress:` lines from Recent Activity. Draft/category events still update counters internally, but only the periodic heartbeat shows live progress. Bumped visible version to `v60.18`; full local test suite passed with 177 tests on April 29, 2026.
+- Clarified auto-check loop progress after a pass completes: Recent Activity now says the pass completed and subsequent heartbeats say MailAssist is waiting for the next check, instead of saying the completed pass is still running. Bumped visible version to `v60.19`; full local test suite passed with 178 tests on April 29, 2026.
 
 ## Current Verified State
 
-- Visible version: `v60.11`.
-- Full test suite: 169 passing tests on April 29, 2026.
+- Visible version: `v60.19`.
+- Full test suite: 178 passing tests on April 29, 2026.
 - Native desktop app is the active GUI surface; it has no localhost or LAN URL.
-- Latest synchronized commit before the handoff commit: `0d1ddb3`.
-- Latest pushed setup/bootstrap commit before this doc refresh: `2b9a130`.
+- Latest synchronized commit before the handoff commit: `4389fbf`.
+- Latest pushed setup/bootstrap commit before the current UI polish/doc refresh: `4389fbf`.
 - Installed app path: `/Applications/MailAssist.app`.
 - Gmail provider dependencies are default dependencies and are installed by plain `uv sync`.
 - Gmail read-only probing, Gmail dry-run watching, controlled Gmail provider-write draft creation, and Gmail multipart draft validation have all been exercised locally.
@@ -97,10 +105,11 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 - Live batch LLM output no longer asks for a separate `SHOULD_DRAFT` report flag.
 - Live watcher state lives in `data/live-state.json` with provider-scoped slots, account email discovery, recent activity, and migration from the older `data/bot-state.json`.
 - Magali's Outlook account discovery is resolved enough to proceed: her main business mailbox is Microsoft 365 / Exchange Online, she can access the Microsoft 365 admin center, and Outlook Desktop uses Microsoft Exchange.
+- Resume point: on the Magali Zoom call, run the one-command Windows bootstrap from `docs/magali-zoom-operator-script.md`, validate read-only Outlook Graph readiness and `qwen3:8b` through MailAssist's own Ollama setup check, and attempt any controlled Outlook draft write only after those checks succeed.
 
 ## Remaining Backlog
 
-- On the Zoom call, paste the bootstrap command from `docs/magali-zoom-operator-script.md`; it downloads `tools/magali-bootstrap.ps1`, installs `uv` and Python 3.12 if needed, syncs MailAssist, and runs read-only Outlook setup plus the MailAssist-path `qwen3:8b` Ollama check with verified client id `2b2639c3-605c-466d-ae89-63ef8ffff5c8`. Run any controlled draft write only after read-only readiness succeeds.
+- On the Zoom call, paste the bootstrap command from `docs/magali-zoom-operator-script.md`; it downloads `tools/magali-bootstrap.ps1`, installs `uv` and Python 3.12 if needed, syncs MailAssist, and runs read-only Outlook setup plus the MailAssist-path `qwen3:8b` Ollama check with verified client id `2b2639c3-605c-466d-ae89-63ef8ffff5c8`. Run any controlled draft write only after read-only readiness and model readiness succeed.
 - Run `mailassist ollama-setup-check --model qwen3:8b` on her setup; hardware RAM is likely sufficient, but raw terminal Ollama thinking was slow.
 - Use `docs/outlook-m365-admin-consent.md` as the packaged tenant/admin-consent guidance before attempting Magali's Microsoft 365 account.
 - Decide the next Outlook GUI exposure for drafting. Current GUI exposes `Organize Outlook`; targeted Outlook draft creation remains available through explicit CLI/smoke-test commands.
