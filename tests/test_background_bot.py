@@ -19,8 +19,10 @@ from mailassist.background_bot import (
     reply_recipients_for_thread,
     run_watch_pass,
 )
+from mailassist.contacts import ElderContact
 from mailassist.config import load_settings, write_env_file
 from mailassist.fixtures.mock_threads import build_mock_threads
+from mailassist.models import EmailMessage, EmailThread
 from mailassist.providers.mock import MockProvider
 
 
@@ -444,6 +446,51 @@ def test_build_batch_candidate_prompt_forbids_domain_company_names() -> None:
     assert "MailAssist will append the user's saved signature" in prompt
     assert "Best,\nTest" not in prompt
     assert "samira@brightforge.ai" in prompt
+
+
+def test_build_batch_candidate_prompt_includes_only_matching_elder_guidance() -> None:
+    matching_thread = EmailThread(
+        thread_id="elder-thread",
+        subject="Coucou",
+        participants=["agnes@example.com", "elie@example.com"],
+        messages=[
+            EmailMessage(
+                message_id="msg-1",
+                sender="agnes@example.com",
+                to=["elie@example.com"],
+                sent_at="2026-04-30T12:00:00+00:00",
+                text="Tu vois ce message?",
+            )
+        ],
+    )
+    other_thread = EmailThread(
+        thread_id="friend-thread",
+        subject="Salut",
+        participants=["friend@example.com", "elie@example.com"],
+        messages=[
+            EmailMessage(
+                message_id="msg-2",
+                sender="friend@example.com",
+                to=["elie@example.com"],
+                sent_at="2026-04-30T12:01:00+00:00",
+                text="Tu vois ce message?",
+            )
+        ],
+    )
+
+    prompt = build_batch_candidate_prompt(
+        [matching_thread, other_thread],
+        tone="Brief and casual",
+        guidance="Keep it short",
+        elder_contacts=(ElderContact("agnes@example.com", "Family elder."),),
+    )
+
+    elder_block = prompt.split("INPUT THREAD elder-thread", 1)[1].split("-- END INPUT THREAD elder-thread --", 1)[0]
+    friend_block = prompt.split("INPUT THREAD friend-thread", 1)[1].split("-- END INPUT THREAD friend-thread --", 1)[0]
+    assert "Relationship guidance:" in elder_block
+    assert "respectful `vous`" in elder_block
+    assert "Family elder." in elder_block
+    assert "Relationship guidance:" not in friend_block
 
 
 def test_build_prompt_preview_uses_current_tone_and_signature() -> None:

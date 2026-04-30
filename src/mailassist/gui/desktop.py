@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QDialogButtonBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -49,6 +50,7 @@ from mailassist.config import (
     read_env_file,
     write_env_file,
 )
+from mailassist.contacts import ElderContact, parse_elder_contacts, save_elder_contacts
 from mailassist.background_bot import TONE_OPTIONS, build_prompt_preview, tone_label
 from mailassist.version import load_visible_version
 from mailassist.models import utc_now_iso
@@ -70,6 +72,30 @@ def _configure_form(form: QFormLayout) -> QFormLayout:
     form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
     form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
     return form
+
+
+def _elder_contacts_to_text(contacts: tuple[ElderContact, ...]) -> str:
+    lines = []
+    for contact in contacts:
+        if contact.comment:
+            lines.append(f"{contact.email} | {contact.comment}")
+        else:
+            lines.append(contact.email)
+    return "\n".join(lines)
+
+
+def _elder_contact_display(contact: ElderContact) -> str:
+    if contact.comment:
+        return f"{contact.email} | {contact.comment}"
+    return contact.email
+
+
+def _elder_contact_text_to_payload(text: str) -> dict[str, str]:
+    email, separator, comment = text.strip().partition("|")
+    return {
+        "email": email.strip(),
+        "comment": comment.strip() if separator else "",
+    }
 
 
 def _wide_line_edit(value: str = "", *, min_width: int = 560) -> QLineEdit:
@@ -300,6 +326,9 @@ class MailAssistDesktopWindow(QMainWindow):
         self.current_provider_readiness_message = ""
         self.bot_progress: dict[str, int] = {}
         self.bot_action_started_at: float | None = None
+        self.bot_busy_cursor_active = False
+        self.last_removed_mailassist_category: tuple[str, int] | None = None
+        self.last_removed_elder_contact: tuple[ElderContact, int] | None = None
         self.bot_heartbeat_timer = QTimer(self)
         self.bot_heartbeat_timer.setInterval(10000)
         self.bot_heartbeat_timer.timeout.connect(self._append_bot_heartbeat)
@@ -1000,7 +1029,31 @@ class MailAssistDesktopWindow(QMainWindow):
         if category.lower() == LOCKED_NEEDS_REPLY_CATEGORY.lower():
             self._set_banner("Needs Reply is locked because it drives draft generation.", level="info")
             return
+        confirmation = QMessageBox.question(
+            self,
+            "Remove Category",
+            f"Remove {category} from MailAssist Categories?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirmation != QMessageBox.StandardButton.Yes:
+            return
         self.mailassist_category_list.takeItem(index)
+        self.last_removed_mailassist_category = (category, index)
+        if hasattr(self, "mailassist_category_undo_button"):
+            self.mailassist_category_undo_button.setEnabled(True)
+        self._refresh_prompt_preview()
+
+    def _undo_mailassist_category_removal(self) -> None:
+        if not hasattr(self, "mailassist_category_list") or self.last_removed_mailassist_category is None:
+            return
+        category, index = self.last_removed_mailassist_category
+        insert_index = min(max(index, 0), self.mailassist_category_list.count())
+        self.mailassist_category_list.insertItem(insert_index, category)
+        self.mailassist_category_list.setCurrentRow(insert_index)
+        self.last_removed_mailassist_category = None
+        if hasattr(self, "mailassist_category_undo_button"):
+            self.mailassist_category_undo_button.setEnabled(False)
         self._refresh_prompt_preview()
 
     def _build_category_settings_group(self) -> QGroupBox:
@@ -1025,12 +1078,17 @@ class MailAssistDesktopWindow(QMainWindow):
 
         add_button = QPushButton("Add")
         remove_button = QPushButton("Remove")
+        self.mailassist_category_undo_button = QPushButton("Undo")
         add_button.setMinimumWidth(100)
         remove_button.setMinimumWidth(100)
+        self.mailassist_category_undo_button.setMinimumWidth(100)
+        self.mailassist_category_undo_button.setEnabled(False)
         add_button.clicked.connect(self._add_mailassist_category)
         remove_button.clicked.connect(self._remove_selected_mailassist_category)
+        self.mailassist_category_undo_button.clicked.connect(self._undo_mailassist_category_removal)
         actions.addWidget(add_button)
         actions.addWidget(remove_button)
+        actions.addWidget(self.mailassist_category_undo_button)
         actions.addStretch(1)
         content.addLayout(actions)
         content.addWidget(self.mailassist_category_list, 1)
@@ -1082,7 +1140,8 @@ class MailAssistDesktopWindow(QMainWindow):
         refresh_models_button = QPushButton("Refresh model list")
         refresh_models_button.setMinimumWidth(210)
         refresh_models_button.clicked.connect(self.refresh_models)
-        test_button = QPushButton("Send small test prompt")
+        self.test_ollama_button = QPushButton("Send small test prompt")
+        test_button = self.test_ollama_button
         test_button.setMinimumWidth(230)
         test_button.clicked.connect(self.test_ollama)
         self.stop_ollama_button = QPushButton("Stop Ollama")
@@ -1135,7 +1194,41 @@ class MailAssistDesktopWindow(QMainWindow):
             self.tone_combo.setCurrentIndex(tone_index)
         self.tone_combo.currentIndexChanged.connect(self._refresh_prompt_preview)
         style_layout.addRow("Default tone", self.tone_combo)
+        style_layout.addRow("Elders", self._build_elder_contacts_editor())
         layout.addWidget(style_group, 0, Qt.AlignmentFlag.AlignTop)
+        return widget
+
+    def _build_elder_contacts_editor(self) -> QWidget:
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+        actions = QVBoxLayout()
+        actions.setSpacing(8)
+        add_button = QPushButton("Add")
+        add_button.setMinimumWidth(120)
+        add_button.clicked.connect(self._add_elder_contact)
+        remove_button = QPushButton("Remove")
+        remove_button.setMinimumWidth(120)
+        remove_button.clicked.connect(self._remove_selected_elder_contact)
+        self.elder_contacts_undo_button = QPushButton("Undo")
+        self.elder_contacts_undo_button.setMinimumWidth(120)
+        self.elder_contacts_undo_button.setEnabled(False)
+        self.elder_contacts_undo_button.clicked.connect(self._undo_elder_contact_removal)
+        actions.addWidget(add_button)
+        actions.addWidget(remove_button)
+        actions.addWidget(self.elder_contacts_undo_button)
+        actions.addStretch(1)
+        self.elder_contacts_list = QListWidget()
+        self.elder_contacts_list.setMinimumWidth(420)
+        self.elder_contacts_list.setMinimumHeight(104)
+        self.elder_contacts_list.setMaximumHeight(150)
+        for contact in self.settings.elder_contacts:
+            self._append_elder_contact_item(contact)
+        if self.elder_contacts_list.count():
+            self.elder_contacts_list.setCurrentRow(0)
+        layout.addLayout(actions)
+        layout.addWidget(self.elder_contacts_list, 1)
         return widget
 
     def _build_wizard_signature_page(self) -> QWidget:
@@ -1439,6 +1532,7 @@ class MailAssistDesktopWindow(QMainWindow):
             f"Active provider: {provider.title()}",
             f"Local AI model: {selected_model}",
             f"Default tone: {self.tone_combo.currentText()}",
+            f"Elders: {len(self._elder_contacts_from_input())}",
             f"Signature: {signature_state}",
             f"Attribution: {attribution_label}",
             f"Watcher filter: {self._watcher_filter_label()}",
@@ -1557,6 +1651,98 @@ class MailAssistDesktopWindow(QMainWindow):
             user_facing=True,
         )
 
+    def _append_elder_contact_item(self, contact: ElderContact) -> None:
+        self.elder_contacts_list.addItem(_elder_contact_display(contact))
+
+    def _add_elder_contact(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Add Elder")
+        layout = QVBoxLayout(dialog)
+        form = _configure_form(QFormLayout())
+        email_input = QLineEdit()
+        email_input.setMinimumWidth(360)
+        comment_input = QLineEdit()
+        comment_input.setMinimumWidth(360)
+        form.addRow("Email", email_input)
+        form.addRow("Comment", comment_input)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        if not self._upsert_elder_contact(email_input.text(), comment_input.text()):
+            QMessageBox.warning(self, "Add Elder", "Enter a valid email address.")
+        self._refresh_prompt_preview()
+
+    def _upsert_elder_contact(self, email: str, comment: str) -> bool:
+        contacts = parse_elder_contacts([{"email": email, "comment": comment}])
+        if not contacts:
+            return False
+        new_contact = contacts[0]
+        existing_contacts = list(self._elder_contacts_from_input())
+        for index, contact in enumerate(existing_contacts):
+            if contact.email == new_contact.email:
+                existing_contacts[index] = new_contact
+                self.elder_contacts_list.item(index).setText(_elder_contact_display(new_contact))
+                self.elder_contacts_list.setCurrentRow(index)
+                return True
+        self._append_elder_contact_item(new_contact)
+        self.elder_contacts_list.setCurrentRow(self.elder_contacts_list.count() - 1)
+        return True
+
+    def _remove_selected_elder_contact(self) -> None:
+        if not hasattr(self, "elder_contacts_list"):
+            return
+        item = self.elder_contacts_list.currentItem()
+        if item is None:
+            return
+        index = self.elder_contacts_list.row(item)
+        contacts = parse_elder_contacts([_elder_contact_text_to_payload(item.text())])
+        if not contacts:
+            return
+        contact = contacts[0]
+        confirmation = QMessageBox.question(
+            self,
+            "Remove Elder",
+            f"Remove {contact.email} from the Elders list?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirmation != QMessageBox.StandardButton.Yes:
+            return
+        self.elder_contacts_list.takeItem(index)
+        self.last_removed_elder_contact = (contact, index)
+        if hasattr(self, "elder_contacts_undo_button"):
+            self.elder_contacts_undo_button.setEnabled(True)
+        self._refresh_prompt_preview()
+
+    def _undo_elder_contact_removal(self) -> None:
+        if not hasattr(self, "elder_contacts_list") or self.last_removed_elder_contact is None:
+            return
+        contact, index = self.last_removed_elder_contact
+        insert_index = min(max(index, 0), self.elder_contacts_list.count())
+        self.elder_contacts_list.insertItem(insert_index, _elder_contact_display(contact))
+        self.elder_contacts_list.setCurrentRow(insert_index)
+        self.last_removed_elder_contact = None
+        if hasattr(self, "elder_contacts_undo_button"):
+            self.elder_contacts_undo_button.setEnabled(False)
+        self._refresh_prompt_preview()
+
+    def _elder_contacts_from_input(self) -> tuple[ElderContact, ...]:
+        if not hasattr(self, "elder_contacts_list"):
+            return self.settings.elder_contacts
+        items: list[dict[str, str]] = []
+        for index in range(self.elder_contacts_list.count()):
+            cleaned = self.elder_contacts_list.item(index).text().strip()
+            if not cleaned:
+                continue
+            items.append(_elder_contact_text_to_payload(cleaned))
+        return parse_elder_contacts(items)
+
     def _merge_signature_format(self, fmt: QTextCharFormat) -> None:
         if not hasattr(self, "signature_input"):
             return
@@ -1670,6 +1856,49 @@ class MailAssistDesktopWindow(QMainWindow):
         self._paint_status_pill(self.bot_status_label, "running" if state == "running" else state)
         self.last_bot_state = state
 
+    def _bot_start_controls(self) -> list[QWidget]:
+        controls: list[QWidget] = []
+        for name in (
+            "gmail_draft_preview_button",
+            "outlook_draft_preview_button",
+            "gmail_label_rescan_button",
+            "outlook_category_rescan_button",
+            "start_watch_loop_button",
+            "test_ollama_button",
+        ):
+            control = getattr(self, name, None)
+            if isinstance(control, QWidget):
+                controls.append(control)
+        for name in ("gmail_label_days_input", "outlook_category_days_input"):
+            control = getattr(self, name, None)
+            if isinstance(control, QWidget):
+                controls.append(control)
+        return controls
+
+    def _set_bot_busy_cursor(self, busy: bool) -> None:
+        if busy and not self.bot_busy_cursor_active:
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            self.bot_busy_cursor_active = True
+        elif not busy and self.bot_busy_cursor_active:
+            while QApplication.overrideCursor() is not None:
+                QApplication.restoreOverrideCursor()
+            self.bot_busy_cursor_active = False
+
+    def _refresh_bot_action_controls(self) -> None:
+        busy = self.bot_process is not None
+        for control in self._bot_start_controls():
+            control.setEnabled(not busy)
+        if hasattr(self, "stop_bot_button"):
+            self.stop_bot_button.setEnabled(busy)
+        self._set_bot_busy_cursor(busy)
+
+    def _bot_action_already_running(self) -> bool:
+        if self.bot_process is None:
+            return False
+        self._set_banner("A bot action is already running.", level="error")
+        self._refresh_bot_action_controls()
+        return True
+
     def _current_bot_ollama_settings(self) -> tuple[str, str]:
         base_url = self.ollama_url_input.text().strip() or self.settings.ollama_url
         selected_model = str(self.ollama_model_picker.currentData() or self.settings.ollama_model).strip()
@@ -1713,6 +1942,7 @@ class MailAssistDesktopWindow(QMainWindow):
             self._set_bot_state("error")
         else:
             self._set_bot_state("idle")
+        self._refresh_bot_action_controls()
 
     def _watcher_filter_label(self) -> str:
         provider = self._selected_provider()
@@ -2097,6 +2327,7 @@ class MailAssistDesktopWindow(QMainWindow):
         outlook_unread, outlook_window = self._watcher_filter_values("outlook")
         active_unread, active_window = self._watcher_filter_values(provider)
         categories = self._mailassist_category_values()
+        save_elder_contacts(self.settings.elder_contacts_file, self._elder_contacts_from_input())
         current.update(
             {
                 "MAILASSIST_OLLAMA_URL": self.ollama_url_input.text().strip() or "http://localhost:11434",
@@ -2153,8 +2384,7 @@ class MailAssistDesktopWindow(QMainWindow):
         self._set_banner("Settings saved. Bot controls are available.", level="info")
 
     def test_ollama(self) -> None:
-        if self.bot_process is not None:
-            self._set_banner("A bot action is already running.", level="error")
+        if self._bot_action_already_running():
             return
         prompt = "Reply with one short sentence confirming MailAssist can use this model."
         model = str(self.ollama_model_picker.currentData() or self.settings.ollama_model)
@@ -2169,6 +2399,8 @@ class MailAssistDesktopWindow(QMainWindow):
         self.run_bot_action("watch-once", provider="mock")
 
     def start_watch_loop(self) -> None:
+        if self._bot_action_already_running():
+            return
         self._announce_long_action(
             "Starting auto-check. MailAssist will keep checking in the background; "
             "drafting can take a minute when the local model is needed."
@@ -2288,6 +2520,8 @@ class MailAssistDesktopWindow(QMainWindow):
         return False, "Could not stop Ollama automatically because no stop command was available."
 
     def run_gmail_draft_test(self) -> None:
+        if self._bot_action_already_running():
+            return
         self._announce_long_action(
             "Previewing Gmail draft. Dry run only; no Gmail draft will be created. "
             "Heartbeat updates will appear here and the preview auto-stops after 2 minutes."
@@ -2301,6 +2535,8 @@ class MailAssistDesktopWindow(QMainWindow):
         )
 
     def run_controlled_gmail_draft(self) -> None:
+        if self._bot_action_already_running():
+            return
         confirmation = QMessageBox.question(
             self,
             "Create Controlled Gmail Draft",
@@ -2320,6 +2556,8 @@ class MailAssistDesktopWindow(QMainWindow):
         self.run_bot_action("gmail-controlled-draft", provider="gmail", thread_id="thread-008")
 
     def run_outlook_draft_preview(self) -> None:
+        if self._bot_action_already_running():
+            return
         self.save_settings(announce=False)
         self._announce_long_action(
             "Previewing Outlook draft. Dry run only; no Outlook draft will be created. "
@@ -2334,6 +2572,8 @@ class MailAssistDesktopWindow(QMainWindow):
         )
 
     def run_gmail_label_rescan(self) -> None:
+        if self._bot_action_already_running():
+            return
         days = int(self.gmail_label_days_input.value()) if hasattr(self, "gmail_label_days_input") else 7
         confirmation = QMessageBox.question(
             self,
@@ -2365,6 +2605,8 @@ class MailAssistDesktopWindow(QMainWindow):
         )
 
     def run_outlook_category_rescan(self) -> None:
+        if self._bot_action_already_running():
+            return
         days = (
             int(self.outlook_category_days_input.value())
             if hasattr(self, "outlook_category_days_input")
@@ -2412,8 +2654,7 @@ class MailAssistDesktopWindow(QMainWindow):
         apply_labels: bool = False,
         apply_categories: bool = False,
     ) -> None:
-        if self.bot_process is not None:
-            self._set_banner("A bot action is already running.", level="error")
+        if self._bot_action_already_running():
             return
 
         base_url, selected_model = self._current_bot_ollama_settings()
@@ -2469,8 +2710,7 @@ class MailAssistDesktopWindow(QMainWindow):
             level="info",
         )
         self._set_bot_state("running")
-        if hasattr(self, "stop_bot_button"):
-            self.stop_bot_button.setEnabled(True)
+        self._refresh_bot_action_controls()
         self._start_bot_heartbeat(action, provider, dry_run=dry_run)
         self.bot_process.start(sys.executable, args)
 

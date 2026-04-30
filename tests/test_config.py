@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from mailassist.contacts import ElderContact
 from mailassist.config import default_root_dir, load_settings, parse_bool, parse_int, read_env_file, write_env_file
 from mailassist.review_state import (
     OPTION_A_SEPARATOR,
@@ -418,6 +419,12 @@ def test_stream_candidate_for_tone_emits_incremental_chunks(monkeypatch, tmp_pat
 
 def test_load_settings_reads_new_gui_polish_env_vars(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
+    elder_file = tmp_path / "data" / "elders.json"
+    elder_file.parent.mkdir(parents=True)
+    elder_file.write_text(
+        '[{"email": "agnes@example.com", "comment": "Use respectful French."}]\n',
+        encoding="utf-8",
+    )
     write_env_file(
         tmp_path / ".env",
         {
@@ -432,6 +439,7 @@ def test_load_settings_reads_new_gui_polish_env_vars(monkeypatch, tmp_path: Path
             "MAILASSIST_DRAFT_ATTRIBUTION": "true",
             "MAILASSIST_DRAFT_ATTRIBUTION_PLACEMENT": "above_signature",
             "MAILASSIST_CATEGORIES": '["Needs Action", "Licenses & Accounts"]',
+            "MAILASSIST_ELDERS_FILE": "data/elders.json",
         },
     )
 
@@ -452,6 +460,10 @@ def test_load_settings_reads_new_gui_polish_env_vars(monkeypatch, tmp_path: Path
         "Needs Action",
         "Licenses & Accounts",
     )
+    assert settings.elder_contacts_file == elder_file
+    assert settings.elder_contacts == (
+        ElderContact(email="agnes@example.com", comment="Use respectful French."),
+    )
 
 
 def test_load_settings_defaults_for_new_gui_polish_env_vars(monkeypatch, tmp_path: Path) -> None:
@@ -468,6 +480,7 @@ def test_load_settings_defaults_for_new_gui_polish_env_vars(monkeypatch, tmp_pat
         "MAILASSIST_DRAFT_ATTRIBUTION",
         "MAILASSIST_DRAFT_ATTRIBUTION_PLACEMENT",
         "MAILASSIST_CATEGORIES",
+        "MAILASSIST_ELDERS_FILE",
     ):
         monkeypatch.delenv(var, raising=False)
 
@@ -484,6 +497,8 @@ def test_load_settings_defaults_for_new_gui_polish_env_vars(monkeypatch, tmp_pat
     assert settings.draft_attribution is False
     assert settings.draft_attribution_placement == "hide"
     assert settings.mailassist_categories[:2] == ("Needs Reply", "Needs Action")
+    assert settings.elder_contacts_file == tmp_path / "data" / "elders.json"
+    assert settings.elder_contacts == ()
 
 
 def test_load_settings_maps_legacy_attribution_boolean_to_below_signature(

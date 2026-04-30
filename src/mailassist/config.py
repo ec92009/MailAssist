@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict
 
+from mailassist.contacts import ElderContact, load_elder_contacts
+
 
 ATTRIBUTION_HIDE = "hide"
 ATTRIBUTION_ABOVE_SIGNATURE = "above_signature"
@@ -62,6 +64,8 @@ class Settings:
     draft_attribution: bool
     draft_attribution_placement: str
     mailassist_categories: tuple[str, ...]
+    elder_contacts_file: Path
+    elder_contacts: tuple[ElderContact, ...]
 
 
 def parse_bool(value: str | None, default: bool = False) -> bool:
@@ -296,4 +300,16 @@ def load_settings() -> Settings:
         draft_attribution=draft_attribution_placement != ATTRIBUTION_HIDE,
         draft_attribution_placement=draft_attribution_placement,
         mailassist_categories=parse_mailassist_categories(env("MAILASSIST_CATEGORIES")),
+        elder_contacts_file=path_from_env(
+            env("MAILASSIST_ELDERS_FILE"),
+            data_dir / "elders.json",
+            root_dir=root_dir,
+        ),
+        elder_contacts=load_elder_contacts(
+            path_from_env(
+                env("MAILASSIST_ELDERS_FILE"),
+                data_dir / "elders.json",
+                root_dir=root_dir,
+            )
+        ),
     )

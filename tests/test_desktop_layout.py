@@ -299,6 +299,7 @@ def test_watcher_filter_controls_persist_and_show_on_dashboard(monkeypatch, tmp_
     window.attribution_placement_combo.setCurrentIndex(
         window.attribution_placement_combo.findData("above_signature")
     )
+    window.elder_contacts_list.addItem("agnes@example.com | Family elder")
     window.mailassist_category_list.addItem("Travel")
     window.bot_poll_seconds_input.setValue(45)
     window.save_settings(announce=False)
@@ -315,8 +316,12 @@ def test_watcher_filter_controls_persist_and_show_on_dashboard(monkeypatch, tmp_
     assert env_values["MAILASSIST_DRAFT_ATTRIBUTION_PLACEMENT"] == "above_signature"
     assert json.loads(env_values["MAILASSIST_CATEGORIES"])[0] == "Needs Reply"
     assert "Travel" in json.loads(env_values["MAILASSIST_CATEGORIES"])
+    assert json.loads((tmp_path / "data" / "elders.json").read_text(encoding="utf-8")) == [
+        {"email": "agnes@example.com", "comment": "Family elder"}
+    ]
     assert window.watcher_filter_status_label.text() == "unread only, last 7 days"
     assert "Watcher filter: unread only, last 7 days" in window.settings_summary.toPlainText()
+    assert "Elders: 1" in window.settings_summary.toPlainText()
     assert "Attribution: Above Signature" in window.settings_summary.toPlainText()
     assert "Draft prepared by MailAssist" in window.signature_attribution_preview.toPlainText()
     assert window.bot_poll_seconds_input.minimumHeight() >= window.ollama_url_input.sizeHint().height()
@@ -344,6 +349,7 @@ def test_watcher_filter_controls_persist_and_show_on_dashboard(monkeypatch, tmp_
         "MAILASSIST_OUTLOOK_REDIRECT_URI",
         "MAILASSIST_DRAFT_ATTRIBUTION",
         "MAILASSIST_DRAFT_ATTRIBUTION_PLACEMENT",
+        "MAILASSIST_ELDERS_FILE",
         "MAILASSIST_SETUP_COMPLETE",
     ):
         monkeypatch.delenv(key, raising=False)
@@ -361,6 +367,95 @@ def test_provider_page_keeps_at_least_one_provider_checked() -> None:
     window.outlook_enabled.setChecked(False)
     app.processEvents()
     assert window.gmail_enabled.isChecked()
+
+    window.close()
+
+
+def test_elder_editor_adds_updates_and_removes_contacts(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        MailAssistDesktopWindow,
+        "_list_available_model_state",
+        lambda self: ([{"name": "gemma3:4b", "size": 3_000_000_000}], [], ""),
+    )
+    monkeypatch.setattr(
+        "mailassist.gui.desktop.system_memory_snapshot",
+        lambda: (8_000_000_000, 16_000_000_000),
+    )
+    app = _app()
+
+    window = MailAssistDesktopWindow()
+    app.processEvents()
+
+    assert window._upsert_elder_contact("Agnes <agnes@example.com>", "Family elder") is True
+    assert window.elder_contacts_list.currentItem().text() == "agnes@example.com | Family elder"
+    assert window._upsert_elder_contact("agnes@example.com", "Use vous") is True
+    assert window.elder_contacts_list.count() == 1
+    assert window.elder_contacts_list.currentItem().text() == "agnes@example.com | Use vous"
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.No,
+    )
+    window._remove_selected_elder_contact()
+    assert window.elder_contacts_list.count() == 1
+    assert not window.elder_contacts_undo_button.isEnabled()
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    window._remove_selected_elder_contact()
+    assert window.elder_contacts_list.count() == 0
+    assert window.elder_contacts_undo_button.isEnabled()
+    window._undo_elder_contact_removal()
+    assert window.elder_contacts_list.count() == 1
+    assert window.elder_contacts_list.currentItem().text() == "agnes@example.com | Use vous"
+    assert not window.elder_contacts_undo_button.isEnabled()
+
+    window.close()
+
+
+def test_category_editor_confirms_remove_and_can_undo(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        MailAssistDesktopWindow,
+        "_list_available_model_state",
+        lambda self: ([{"name": "gemma3:4b", "size": 3_000_000_000}], [], ""),
+    )
+    monkeypatch.setattr(
+        "mailassist.gui.desktop.system_memory_snapshot",
+        lambda: (8_000_000_000, 16_000_000_000),
+    )
+    app = _app()
+
+    window = MailAssistDesktopWindow()
+    app.processEvents()
+    window.mailassist_category_list.addItem("Travel")
+    travel_index = window.mailassist_category_list.count() - 1
+    window.mailassist_category_list.setCurrentRow(travel_index)
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.No,
+    )
+    window._remove_selected_mailassist_category()
+    assert "Travel" in window._mailassist_category_values()
+    assert not window.mailassist_category_undo_button.isEnabled()
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    window._remove_selected_mailassist_category()
+    assert "Travel" not in window._mailassist_category_values()
+    assert window.mailassist_category_undo_button.isEnabled()
+    window._undo_mailassist_category_removal()
+    assert "Travel" in window._mailassist_category_values()
+    assert window.mailassist_category_list.currentItem().text() == "Travel"
+    assert not window.mailassist_category_undo_button.isEnabled()
 
     window.close()
 
@@ -982,6 +1077,28 @@ def test_gmail_label_rescan_runs_with_limited_horizon(monkeypatch) -> None:
     window.close()
 
 
+def test_organizer_buttons_do_not_prompt_when_bot_action_is_running(monkeypatch) -> None:
+    window = MailAssistDesktopWindow()
+
+    class FakeProcess:
+        pass
+
+    window.bot_process = FakeProcess()
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("confirmation should not open")),
+    )
+
+    window.run_gmail_label_rescan()
+    window.run_outlook_category_rescan()
+
+    assert window.banner.text() == "A bot action is already running."
+    window.bot_process = None
+    window.refresh_dashboard()
+    window.close()
+
+
 def test_outlook_category_rescan_requires_confirmation(monkeypatch) -> None:
     window = MailAssistDesktopWindow()
     called = []
@@ -1270,6 +1387,43 @@ def test_bot_control_actions_use_user_centered_labels_tooltips_and_compact_days_
     assert window.outlook_category_days_input.maximumWidth() <= 104
     assert window.gmail_label_days_input.height() == window.gmail_label_rescan_button.height()
     assert window.outlook_category_days_input.height() == window.outlook_category_rescan_button.height()
+    window.close()
+
+
+def test_bot_action_controls_disable_and_wait_cursor_while_running() -> None:
+    app = _app()
+    window = MailAssistDesktopWindow()
+    app.processEvents()
+
+    class FakeProcess:
+        pass
+
+    window.bot_process = FakeProcess()
+    window.refresh_dashboard()
+
+    assert not window.gmail_draft_preview_button.isEnabled()
+    assert not window.outlook_draft_preview_button.isEnabled()
+    assert not window.gmail_label_rescan_button.isEnabled()
+    assert not window.outlook_category_rescan_button.isEnabled()
+    assert not window.start_watch_loop_button.isEnabled()
+    assert not window.gmail_label_days_input.isEnabled()
+    assert not window.outlook_category_days_input.isEnabled()
+    assert window.stop_bot_button.isEnabled()
+    assert QApplication.overrideCursor() is not None
+
+    window.bot_process = None
+    window.refresh_dashboard()
+
+    assert window.gmail_draft_preview_button.isEnabled()
+    assert window.outlook_draft_preview_button.isEnabled()
+    assert window.gmail_label_rescan_button.isEnabled()
+    assert window.outlook_category_rescan_button.isEnabled()
+    assert window.start_watch_loop_button.isEnabled()
+    assert window.gmail_label_days_input.isEnabled()
+    assert window.outlook_category_days_input.isEnabled()
+    assert not window.stop_bot_button.isEnabled()
+    assert QApplication.overrideCursor() is None
+
     window.close()
 
 

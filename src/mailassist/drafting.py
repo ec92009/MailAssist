@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import textwrap
 from collections import Counter
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
+from mailassist.contacts import ElderContact, elder_relationship_guidance_for_thread
 from mailassist.llm.ollama import OllamaClient
 from mailassist.models import EmailThread, utc_now_iso
 
@@ -43,6 +44,7 @@ OPTION_B_SEPARATOR = "-- END OPTION B --"
 COMMON_DRAFTING_RULES = """- If a reply is appropriate, write as the recipient of the thread.
 - Stay grounded in the thread. Do not invent status updates, dates, approvals, pricing, timelines, or deliverables.
 - Match the language and register of the thread. If the sender writes in French, reply in French. If the sender uses informal French with `tu`, reply informally with `tu`; do not switch to formal `vous` unless the thread uses `vous` or a formal business register.
+- If thread-specific relationship guidance says the sender is on the user's Elders list, that guidance overrides the mirror-register rule: in French, use respectful `vous` for that sender even if the sender used `tu`.
 - Mirror the sender's level of formality without becoming sloppy. A short informal question should get a short informal answer.
 - Do not turn email domains into company names unless that company name appears explicitly in the thread.
 - If the email asks the user to approve, choose, confirm attendance, accept terms, authorize access, call someone, contact someone, check with another party, or make a business decision, do not invent the user's decision or promise the user will do the requested action. Draft a safe holding response that says the user is reviewing it, asks for missing detail, or leaves the action for the user to complete.
@@ -104,6 +106,16 @@ def format_thread_context(thread: EmailThread) -> str:
             ]
         )
     return "\n".join(lines).strip()
+
+
+def relationship_prompt_block(
+    thread: EmailThread,
+    elder_contacts: Iterable[ElderContact] = (),
+) -> str:
+    guidance = elder_relationship_guidance_for_thread(thread, elder_contacts)
+    if not guidance:
+        return ""
+    return f"\n\nRelationship guidance:\n{guidance}"
 
 
 def normalize_classification(value: str | None) -> str:
@@ -296,6 +308,7 @@ def build_review_candidates_prompt(
     thread: EmailThread,
     *,
     signature: str = "",
+    elder_contacts: Iterable[ElderContact] = (),
 ) -> str:
     option_instructions = "\n".join(
         [
@@ -342,7 +355,7 @@ Output format requirements:
 - Do not add analysis, explanations, bullets, labels, or alternative options beyond the required separators.
 
 Thread context:
-{format_thread_context(thread)}
+{format_thread_context(thread)}{relationship_prompt_block(thread, elder_contacts)}
 """.strip()
 
 
@@ -353,6 +366,7 @@ def build_single_review_candidate_prompt(
     guidance: str,
     existing_body: str = "",
     signature: str = "",
+    elder_contacts: Iterable[ElderContact] = (),
 ) -> str:
     alternative_instruction = ""
     if existing_body.strip():
@@ -398,7 +412,7 @@ Output format requirements:
 - Do not add analysis, explanations, bullets, or alternative options.
 
 Thread context:
-{format_thread_context(thread)}
+{format_thread_context(thread)}{relationship_prompt_block(thread, elder_contacts)}
 """.strip()
 
 
@@ -409,6 +423,7 @@ def build_single_review_candidate_body_prompt(
     guidance: str,
     existing_body: str = "",
     signature: str = "",
+    elder_contacts: Iterable[ElderContact] = (),
 ) -> str:
     alternative_instruction = ""
     if existing_body.strip():
@@ -443,7 +458,7 @@ Output format requirements:
 - Do not add analysis or any preamble.
 
 Thread context:
-{format_thread_context(thread)}
+{format_thread_context(thread)}{relationship_prompt_block(thread, elder_contacts)}
 """.strip()
 
 
@@ -453,6 +468,7 @@ def generate_candidates_for_thread(
     selected_model: str,
     *,
     signature: str = "",
+    elder_contacts: Iterable[ElderContact] = (),
 ) -> tuple[list[dict[str, Any]], Optional[str], Optional[str], str]:
     models, model_error = list_available_models(base_url, selected_model)
     if model_error:
@@ -468,7 +484,11 @@ def generate_candidates_for_thread(
     heuristic_classification = fallback_classification_for_thread(thread)
 
     try:
-        prompt = build_review_candidates_prompt(thread, signature=signature)
+        prompt = build_review_candidates_prompt(
+            thread,
+            signature=signature,
+            elder_contacts=elder_contacts,
+        )
         response = llm.compose_reply(prompt)
         classification, bodies = extract_classification_and_bodies(response)
         classification = merge_classification(classification, heuristic_classification)
@@ -511,6 +531,7 @@ def generate_candidate_for_tone(
     selected_model: str,
     existing_body: str = "",
     signature: str = "",
+    elder_contacts: Iterable[ElderContact] = (),
 ) -> tuple[dict[str, Any], Optional[str], Optional[str], str]:
     models, model_error = list_available_models(base_url, selected_model)
     if model_error:
@@ -533,6 +554,7 @@ def generate_candidate_for_tone(
             guidance=guidance,
             existing_body=existing_body,
             signature=signature,
+            elder_contacts=elder_contacts,
         )
         response = llm.compose_reply(prompt)
         classification, body = extract_classification_and_body(response)
@@ -573,6 +595,7 @@ def stream_candidate_for_tone(
     existing_body: str = "",
     on_body_update=None,
     signature: str = "",
+    elder_contacts: Iterable[ElderContact] = (),
 ) -> tuple[dict[str, Any], Optional[str], Optional[str], str]:
     models, model_error = list_available_models(base_url, selected_model)
     if model_error:
@@ -595,6 +618,7 @@ def stream_candidate_for_tone(
             guidance=guidance,
             existing_body=existing_body,
             signature=signature,
+            elder_contacts=elder_contacts,
         )
         raw_response = ""
         for chunk in llm.compose_reply_stream(prompt):

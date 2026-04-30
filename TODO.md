@@ -24,7 +24,7 @@ Mac/Gmail remains the proving ground because it is already working locally and e
 - Current baseline at handoff:
   - Last synchronized commit before this handoff commit: `4389fbf`
   - Handoff commit: reported in the final assistant response after commit/push
-  - Current visible version: `v61.6`
+  - Current visible version: `v61.10`
   - Local app/dev entrypoint: `./.venv/bin/mailassist desktop-gui`
   - Packaged app path: `/Applications/MailAssist.app`
 - Known open issue to continue:
@@ -125,6 +125,10 @@ Mac/Gmail remains the proving ground because it is already working locally and e
 - Preserved Outlook unread state after reply-draft creation because Graph can mark the source message read while creating the native reply shell. Bumped visible version to `v61.3`; tests pending. (Managed by Codex)
 - Made Outlook reply drafts preserve the native quoted-reply body and attempt the original recipient alias as the draft sender, falling back if Graph rejects the alias. Bumped visible version to `v61.4`; full local test suite passed with 183 tests on April 30, 2026. (Managed by Codex)
 - Tightened draft prompting to mirror language/register, including informal French `tu` when the sender uses informal French. Verified a no-write Gemma `gemma4:31b` generation for the Outlook `Coucou` thread used `ton message`; bumped visible version to `v61.6`; full local test suite passed with 183 tests on April 30, 2026. (Managed by Codex)
+- Added a Tone-page Elders list, saved locally as ignored email/comment JSON, and scoped prompt guidance so only matching sender threads tell Gemma to use respectful French `vous` even if the sender used `tu`. Seeded Agnes locally and verified a no-write Gemma `gemma4:31b` generation for Outlook `Coucou` used `votre message`; bumped visible version to `v61.7`; full local test suite passed with 187 tests on April 30, 2026. (Managed by Codex)
+- Refined the Tone-page Elders editor to use Add/Remove controls and a small email/comment dialog instead of a raw multiline text field; bumped visible version to `v61.8`; full local test suite passed with 188 tests on April 30, 2026. (Managed by Codex)
+- Added remove confirmations and Undo buttons for both the Tone-page Elders editor and MailAssist Categories editor; bumped visible version to `v61.9`; full local test suite passed with 189 tests on April 30, 2026. (Managed by Codex)
+- Disabled bot-starting buttons and organizer day inputs while any bot action is running, left Stop enabled, used a wait cursor during active bot work, and blocked second organizer confirmations while busy; bumped visible version to `v61.10`; full local test suite passed with 191 tests on April 30, 2026. (Managed by Codex)
 
 ## Remaining Backlog
 
@@ -136,6 +140,8 @@ Mac/Gmail remains the proving ground because it is already working locally and e
 
 4. Continue architecture cleanup. Remaining two-candidate review helpers are now legacy-only compatibility/test support; future cleanup should delete them only after no archived tests or support paths need them. (Managed by Codex)
 
-5. Maintain the Mac/Gmail sandbox. Keep mock-to-Gmail draft tests, read-only Gmail preview, ignored OAuth credential paths, hidden developer OAuth settings, and optional Mac/Gmail `.dmg` artifacts available for regression and learning. (Managed by Codex)
+5. When bored: generalize the Elders reciprocal-respect rule beyond French for languages with formal/informal address distinctions, while keeping per-thread prompt disclosure limited to matching contacts. (Managed by Codex)
 
-6. Prepare packaging and distribution. Windows packaging notes now exist; the next real packaging step requires a Parallels VM or another Windows build machine. Keep `dist/` ignored, publish test builds through GitHub Releases when useful, keep README download links in sync with the visible version, and defer Mac signing/notarization until broader Mac use requires it. (Managed by Codex) (Blocked on Windows VM for Windows build)
+6. Maintain the Mac/Gmail sandbox. Keep mock-to-Gmail draft tests, read-only Gmail preview, ignored OAuth credential paths, hidden developer OAuth settings, and optional Mac/Gmail `.dmg` artifacts available for regression and learning. (Managed by Codex)
+
+7. Prepare packaging and distribution. Windows packaging notes now exist; the next real packaging step requires a Parallels VM or another Windows build machine. Keep `dist/` ignored, publish test builds through GitHub Releases when useful, keep README download links in sync with the visible version, and defer Mac signing/notarization until broader Mac use requires it. (Managed by Codex) (Blocked on Windows VM for Windows build)

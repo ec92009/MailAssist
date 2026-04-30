@@ -88,12 +88,16 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 - Preserved Outlook unread state after reply-draft creation. Graph can mark the source message read while creating a reply shell, so MailAssist now records whether the triggering message was unread and restores that read state after the unsent draft is created. Bumped visible version to `v61.3`; tests pending.
 - Made Outlook reply drafts preserve the native quoted-reply body and attempted sender alias. MailAssist now inserts generated text above Graph's native reply content instead of replacing the quoted original, and carries the original recipient alias into the draft update when Graph accepts it. Bumped visible version to `v61.4`; full local test suite passed with 183 tests on April 30, 2026.
 - Tightened draft prompting to mirror the sender's language and register, including informal French `tu` instead of switching to formal `vous` when the incoming thread is informal. A no-write Gemma `gemma4:31b` generation pass against the fresh Outlook `Coucou` thread replied `Coucou Agnès, oui, je vois bien ton message.` Bumped visible version to `v61.6`; full local test suite passed with 183 tests on April 30, 2026.
+- Added a local Elders list under Tone settings. The list stores email plus comment in ignored local data, and only matching sender threads receive the relationship guidance in the model prompt. Agnes is seeded locally as an Elder, and a no-write Gemma `gemma4:31b` pass against Outlook `Coucou` switched to respectful French: `Bonjour Agnès, oui, je vois bien votre message.` Bumped visible version to `v61.7`; full local test suite passed with 187 tests on April 30, 2026.
+- Refined the Tone-page Elders editor from a multiline text box into an Add/Remove list. Add opens a small email/comment dialog, matching the category-editor interaction style. Bumped visible version to `v61.8`; full local test suite passed with 188 tests on April 30, 2026.
+- Added confirmation before removing Elders or MailAssist Categories, plus Undo buttons for both editors. Bumped visible version to `v61.9`; full local test suite passed with 189 tests on April 30, 2026.
+- Disabled bot-starting controls while any bot action is running, kept Stop available, switched the cursor to a wait cursor during active bot work, and prevented organizer confirmation dialogs from opening while another action is active. Bumped visible version to `v61.10`; full local test suite passed with 191 tests on April 30, 2026.
 - During the inactivity handoff sweep, refreshed this summary so the current MailAssist work can be safely committed and pushed without relying on local context. The repo is on `main`, current with `origin/main`, and contains source/docs/test changes for native provider reply drafts, Outlook unread preservation, quoted reply handling, alias handling, and language/register mirroring.
 
 ## Current Verified State
 
-- Visible version: `v61.6`.
-- Full test suite: 183 passing tests on April 30, 2026.
+- Visible version: `v61.10`.
+- Full test suite: 191 passing tests on April 30, 2026.
 - Native desktop app is the active GUI surface; it has no localhost or LAN URL.
 - Latest synchronized commit before the handoff commit: `4389fbf`.
 - Latest pushed setup/bootstrap commit before the current UI polish/doc refresh: `4389fbf`.

@@ -63,6 +63,9 @@ The bot watches provider inboxes, uses a local Ollama model to classify new thre
 - Outlook unread state is preserved after reply-draft creation by restoring the source message to unread when it was unread before Graph created the reply shell.
 - Outlook reply draft body updates now preserve the native quoted original message by inserting MailAssist text above Graph's generated reply content. When the triggering message was sent to an account alias, MailAssist attempts to keep that alias as the draft sender and falls back if Graph rejects it.
 - Draft prompting now explicitly mirrors the sender's language and register, including informal French `tu` when the incoming thread uses informal French.
+- The Tone settings now include a local Elders list with Add/Remove controls. Add opens a small email/comment dialog, and entries are stored in ignored local data. When the latest sender matches the list, only that thread's prompt gets relationship guidance; French replies use respectful `vous` even if the sender used `tu`.
+- Elders and MailAssist Categories now confirm before removing a selected entry, and each editor has an Undo button that restores the most recently removed item.
+- While any bot action is running, bot-starting controls are disabled, Stop remains available, and the cursor switches to a wait cursor. A second organizer click no longer opens its confirmation dialog while another bot action is active.
 - The small local-model test shows a two-minute countdown while Ollama is running and reports `Test successful after <duration>` when the model responds.
 - The bot has an Outlook category-population path that classifies recent Outlook threads into MailAssist categories, dry-runs by default, and only writes Graph message categories with `--apply-categories`.
 - The bot has a Gmail category-labeling path that asks the selected local Ollama model to choose one configured MailAssist category, or `NA`, for each recent thread.
@@ -121,6 +124,7 @@ The bot watches provider inboxes, uses a local Ollama model to classify new thre
 - A live Outlook category pass on April 28, 2026 classified 5 recent Outlook messages and applied one `MailAssist - <Category>` category to each through Microsoft Graph.
 - A real live Outlook `watch-once --provider outlook --thread-id ... --force` pass on April 28, 2026 created one unsent model-generated draft for `Test from PT` using `qwen3.6:35b`. A prior dry run produced one `draft_ready` event, and a follow-up pass did not create a duplicate draft.
 - A no-write Gemma `gemma4:31b` generation pass on April 30, 2026 against the fresh Outlook `Coucou` thread replied informally in French, using `ton message` rather than formal `votre message`.
+- After adding Agnes to the local Elders list, a no-write Gemma `gemma4:31b` pass against the same Outlook `Coucou` thread replied with respectful French: `Bonjour Agnès, oui, je vois bien votre message.`
 - `dist/MailAssist-v56.46-mac-gmail.dmg` was built locally at about 253 MB, well under GitHub Releases' 2 GiB per-asset limit.
 
 ## Draft Quality Findings
@@ -168,8 +172,8 @@ These were useful experiments, but the lighter product should not build on them 
 
 ## Latest Verified State
 
-- Latest visible version: `v61.6`.
-- Latest test run: 183 passing tests on April 30, 2026.
+- Latest visible version: `v61.10`.
+- Latest test run: 191 passing tests on April 30, 2026.
 - Current visible GUI surface is the compact bot control panel and setup wizard.
 - Gmail provider dependencies are installed by plain `uv sync`.
 - Local Gmail setup has been proven for draft creation and readonly inbox preview.

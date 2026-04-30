@@ -19,6 +19,7 @@ data/drafts/*.json
 data/mock-provider-drafts/*.json
 data/bot-state.json
 data/live-state.json
+data/elders.json
 data/review-inbox.json
 data/bot_processed/*.json
 data/gui_acquired/*.json

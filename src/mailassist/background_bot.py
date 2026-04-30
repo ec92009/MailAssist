@@ -29,9 +29,11 @@ from mailassist.drafting import (
     list_available_models,
     merge_classification,
     normalize_classification,
+    relationship_prompt_block,
     resolve_generation_model,
     signature_prompt_block,
 )
+from mailassist.contacts import ElderContact
 from mailassist.llm.ollama import OllamaClient
 from mailassist.models import DraftRecord, EmailThread, utc_now_iso
 from mailassist.providers.base import DraftProvider
@@ -240,6 +242,7 @@ def run_watch_pass(
                     base_url=base_url,
                     selected_model=selected_model,
                     signature=settings.user_signature,
+                    elder_contacts=settings.elder_contacts,
                 )
             except (RuntimeError, ValueError) as exc:
                 generated = {}
@@ -253,6 +256,7 @@ def run_watch_pass(
                             base_url=base_url,
                             selected_model=selected_model,
                             signature=settings.user_signature,
+                            elder_contacts=settings.elder_contacts,
                         )
                     )
                     generated[thread.thread_id] = {
@@ -274,6 +278,7 @@ def run_watch_pass(
                 base_url=base_url,
                 selected_model=selected_model,
                 signature=settings.user_signature,
+                elder_contacts=settings.elder_contacts,
             )
             generated = {
                 thread.thread_id: {
@@ -429,6 +434,7 @@ def generate_batch_candidates_for_tone(
     base_url: str,
     selected_model: str,
     signature: str,
+    elder_contacts: list[ElderContact] | tuple[ElderContact, ...] = (),
 ) -> dict[str, dict[str, Any]]:
     models, model_error = list_available_models(base_url, selected_model)
     if model_error:
@@ -439,6 +445,7 @@ def generate_batch_candidates_for_tone(
         tone=tone,
         guidance=guidance,
         signature=signature,
+        elder_contacts=elder_contacts,
     )
     response = OllamaClient(base_url, generation_model).compose_reply(prompt)
     parsed = parse_batch_candidate_response(
@@ -466,12 +473,13 @@ def build_batch_candidate_prompt(
     tone: str,
     guidance: str,
     signature: str = "",
+    elder_contacts: list[ElderContact] | tuple[ElderContact, ...] = (),
 ) -> str:
     thread_sections = []
     for thread in threads:
         thread_sections.append(
             f"""INPUT THREAD {thread.thread_id}
-{format_thread_context(thread)}
+{format_thread_context(thread)}{relationship_prompt_block(thread, elder_contacts)}
 -- END INPUT THREAD {thread.thread_id} --"""
         )
 
@@ -495,6 +503,7 @@ Drafting rules:
 - If a reply is appropriate, write as the recipient of that specific thread.
 - Stay grounded in that thread only.
 - Match the language and register of the thread. If the sender writes in French, reply in French. If the sender uses informal French with `tu`, reply informally with `tu`; do not switch to formal `vous` unless the thread uses `vous` or a formal business register.
+- If thread-specific relationship guidance says the sender is on the user's Elders list, that guidance overrides the mirror-register rule: in French, use respectful `vous` for that sender even if the sender used `tu`.
 - Mirror the sender's level of formality without becoming sloppy. A short informal question should get a short informal answer.
 - Do not turn email domains into company names unless that company name appears explicitly in the thread.
 - If the email asks the user to approve, choose, confirm attendance, accept terms, authorize access, call someone, contact someone, check with another party, or make a business decision, do not invent the user's decision or promise the user will do the requested action. Draft a safe holding response that says the user is reviewing it, asks for missing detail, or leaves the action for the user to complete.
