@@ -42,6 +42,8 @@ OPTION_A_SEPARATOR = "-- END OPTION A --"
 OPTION_B_SEPARATOR = "-- END OPTION B --"
 COMMON_DRAFTING_RULES = """- If a reply is appropriate, write as the recipient of the thread.
 - Stay grounded in the thread. Do not invent status updates, dates, approvals, pricing, timelines, or deliverables.
+- Match the language and register of the thread. If the sender writes in French, reply in French. If the sender uses informal French with `tu`, reply informally with `tu`; do not switch to formal `vous` unless the thread uses `vous` or a formal business register.
+- Mirror the sender's level of formality without becoming sloppy. A short informal question should get a short informal answer.
 - Do not turn email domains into company names unless that company name appears explicitly in the thread.
 - If the email asks the user to approve, choose, confirm attendance, accept terms, authorize access, call someone, contact someone, check with another party, or make a business decision, do not invent the user's decision or promise the user will do the requested action. Draft a safe holding response that says the user is reviewing it, asks for missing detail, or leaves the action for the user to complete.
 - Do not invent teams, reviewers, calendars, availability, internal processes, vendors, companies, or people that are not explicitly named in the thread.

@@ -115,13 +115,22 @@ class GmailProvider(DraftProvider):
             message["cc"] = ", ".join(draft.cc)
         if draft.bcc:
             message["bcc"] = ", ".join(draft.bcc)
+        in_reply_to = _normalize_message_id(draft.reply_to_rfc_message_id or "")
+        if in_reply_to:
+            message["In-Reply-To"] = in_reply_to
+        references = _draft_references_header(draft, in_reply_to)
+        if references:
+            message["References"] = references
         encoded = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
 
         service = build("gmail", "v1", credentials=creds)
+        message_body: dict[str, Any] = {"raw": encoded}
+        if draft.thread_id and (draft.reply_to_message_id or in_reply_to):
+            message_body["threadId"] = draft.thread_id
         created = (
             service.users()
             .drafts()
-            .create(userId="me", body={"message": {"raw": encoded}})
+            .create(userId="me", body={"message": message_body})
             .execute()
         )
         message = created.get("message", {})
@@ -593,6 +602,11 @@ def _gmail_thread_to_email_thread(payload: dict[str, Any]) -> EmailThread | None
                 to=recipients,
                 sent_at=_gmail_message_sent_at(raw_message, headers.get("date", "")),
                 text=_gmail_message_text(raw_message),
+                rfc_message_id=_normalize_message_id(headers.get("message-id", "")),
+                references=_message_id_references(
+                    headers.get("references", ""),
+                    headers.get("in-reply-to", ""),
+                ),
             )
         )
 
@@ -697,3 +711,40 @@ def _decode_gmail_body(value: str) -> str:
     except (ValueError, TypeError):
         return ""
     return raw.decode("utf-8", errors="replace")
+
+
+def _draft_references_header(draft: DraftRecord, in_reply_to: str) -> str:
+    references = [
+        _normalize_message_id(value)
+        for value in [*draft.reply_references, in_reply_to]
+        if _normalize_message_id(value)
+    ]
+    deduped: list[str] = []
+    for reference in references:
+        if reference not in deduped:
+            deduped.append(reference)
+    return " ".join(deduped)
+
+
+def _message_id_references(*values: str) -> list[str]:
+    references: list[str] = []
+    for value in values:
+        matches = re.findall(r"<[^>]+>", value)
+        candidates = matches or value.split()
+        for candidate in candidates:
+            normalized = _normalize_message_id(candidate)
+            if normalized and normalized not in references:
+                references.append(normalized)
+    return references
+
+
+def _normalize_message_id(value: str) -> str:
+    cleaned = " ".join(str(value or "").strip().split())
+    if not cleaned:
+        return ""
+    match = re.search(r"<[^>]+>", cleaned)
+    if match:
+        return match.group(0)
+    if "@" in cleaned and not (cleaned.startswith("<") and cleaned.endswith(">")):
+        return f"<{cleaned.strip('<>')}>"
+    return cleaned

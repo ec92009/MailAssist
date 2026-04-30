@@ -363,16 +363,18 @@ def run_watch_pass(
                 model=generation_model_name,
                 attribution_placement=settings.draft_attribution_placement,
                 user_address=user_address,
+                include_review_context=False,
             )
             draft = DraftRecord(
                 draft_id=str(uuid4()),
                 thread_id=thread.thread_id,
                 provider=provider.name,
                 subject=f"Re: {thread.subject}",
-                body=body_with_review_context(thread, body, user_address=user_address),
+                body=body,
                 body_html=body_html,
                 model=generation_model_name,
                 to=reply_recipients_for_thread(thread, user_address=user_address),
+                **reply_metadata_for_thread(thread, user_address=user_address),
             )
             if dry_run:
                 provider_reference = None
@@ -492,6 +494,8 @@ Drafting rules:
 - If classification is `automated`, `no_response`, or `spam`, leave `BODY:` empty.
 - If a reply is appropriate, write as the recipient of that specific thread.
 - Stay grounded in that thread only.
+- Match the language and register of the thread. If the sender writes in French, reply in French. If the sender uses informal French with `tu`, reply informally with `tu`; do not switch to formal `vous` unless the thread uses `vous` or a formal business register.
+- Mirror the sender's level of formality without becoming sloppy. A short informal question should get a short informal answer.
 - Do not turn email domains into company names unless that company name appears explicitly in the thread.
 - If the email asks the user to approve, choose, confirm attendance, accept terms, authorize access, call someone, contact someone, check with another party, or make a business decision, do not invent the user's decision or promise the user will do the requested action. Draft a safe holding response that says the user is reviewing it, asks for missing detail, or leaves the action for the user to complete.
 - Do not invent teams, reviewers, calendars, availability, internal processes, vendors, companies, or people that are not explicitly named in the thread.
@@ -671,6 +675,7 @@ def build_draft_body_html(
     include_attribution: bool = False,
     attribution_placement: str | None = None,
     user_address: str = "you@example.com",
+    include_review_context: bool = True,
 ) -> str | None:
     placement = attribution_placement
     if placement is None:
@@ -707,7 +712,43 @@ def build_draft_body_html(
             html_body = f"{html_body}<br>{signature_fragment}"
         if attribution_fragment:
             html_body = f"{html_body}{attribution_fragment}"
+    if not include_review_context:
+        return sanitize_html_fragment(html_body)
     return body_with_review_context_html(thread, html_body, user_address=user_address)
+
+
+def reply_metadata_for_thread(thread: EmailThread, *, user_address: str = "") -> dict[str, Any]:
+    if not thread.messages:
+        return {}
+    latest = thread.messages[-1]
+    in_reply_to = str(getattr(latest, "rfc_message_id", "") or "").strip()
+    references = [
+        str(item).strip()
+        for item in getattr(latest, "references", [])
+        if str(item).strip()
+    ]
+    if in_reply_to and in_reply_to not in references:
+        references.append(in_reply_to)
+    return {
+        "from_address": reply_from_address_for_thread(thread, user_address=user_address) or None,
+        "reply_to_message_id": latest.message_id or None,
+        "reply_to_rfc_message_id": in_reply_to or None,
+        "reply_references": references,
+        "reply_to_message_unread": thread.unread,
+    }
+
+
+def reply_from_address_for_thread(thread: EmailThread, *, user_address: str = "") -> str:
+    if not thread.messages:
+        return ""
+    latest = thread.messages[-1]
+    recipients = [address.strip().lower() for address in latest.to if address.strip()]
+    cleaned_user = user_address.strip().lower()
+    if cleaned_user and cleaned_user in recipients:
+        return cleaned_user
+    if len(recipients) == 1:
+        return recipients[0]
+    return ""
 
 
 def strip_configured_signature(body: str, *, signature: str = "") -> str:
@@ -736,6 +777,7 @@ def has_promise_shaped_language(body: str) -> bool:
         rf"\bI\s+will\s+({alternatives})\b",
         rf"\bI'll\s+({alternatives})\b",
         rf"\bI\s+am\s+going\s+to\s+({alternatives})\b",
+        rf"\bI\b[^.!?\n]{{0,120}}\bwill\s+({alternatives})\b",
     ]
     return any(re.search(pattern, body, flags=re.IGNORECASE) for pattern in patterns)
 

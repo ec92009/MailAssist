@@ -241,6 +241,8 @@ def test_build_review_candidates_prompt_includes_full_contract() -> None:
     assert "MailAssist will append the user's saved signature" in prompt
     assert "Best regards,\nEthan" not in prompt
     assert "Do not turn email domains into company names" in prompt
+    assert "Match the language and register of the thread" in prompt
+    assert "informal French with `tu`" in prompt
     assert "do not invent the user's decision" in prompt
     assert "Do not invent teams" in prompt
     assert "leave the final choice for the user to add" in prompt
@@ -266,6 +268,8 @@ def test_build_single_review_candidate_prompt_requests_one_alternative() -> None
     assert "MailAssist will append the user's saved signature" in prompt
     assert "Best regards,\nEthan" not in prompt
     assert "Do not turn email domains into company names" in prompt
+    assert "Match the language and register of the thread" in prompt
+    assert "informal French with `tu`" in prompt
     assert "do not invent the user's decision" in prompt
     assert "Do not invent teams" in prompt
     assert "leave the final choice for the user to add" in prompt

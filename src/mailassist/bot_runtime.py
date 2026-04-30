@@ -11,6 +11,7 @@ from mailassist.background_bot import (
     append_draft_attribution,
     body_with_review_context,
     build_draft_body_html,
+    reply_metadata_for_thread,
     run_watch_pass,
 )
 from mailassist.config import (
@@ -489,13 +490,14 @@ def command_review_bot(args: argparse.Namespace) -> int:
                     draft_id=f"controlled-outlook-{thread.thread_id}",
                     thread_id=thread.thread_id,
                     provider="outlook",
-                    subject=f"MailAssist controlled draft test - Re: {thread.subject}",
+                    subject=f"Re: {thread.subject}",
                     body=(
                         "MailAssist controlled Outlook draft test. "
                         "This draft validates Microsoft Graph write access and should be deleted."
                     ),
                     model="controlled-test",
                     to=[recipient] if recipient else [],
+                    **reply_metadata_for_thread(thread, user_address=readiness.account_email or ""),
                 )
                 reference = provider.create_draft(draft)
                 draft_count = 1

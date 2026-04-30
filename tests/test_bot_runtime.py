@@ -923,6 +923,8 @@ def test_review_bot_outlook_smoke_can_create_controlled_draft(
         def create_draft(self, draft):
             self.drafts.append(draft)
             assert draft.to == ["sender@example.com"]
+            assert draft.from_address == "me@example.com"
+            assert draft.reply_to_message_id == "msg-1"
 
             class Reference:
                 draft_id = "outlook-draft-1"

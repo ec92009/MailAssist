@@ -1,4 +1,5 @@
 import json
+import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -93,6 +94,8 @@ def test_outlook_create_draft_maps_to_graph_reply_payload() -> None:
         model="gemma4:31b",
         to=["vendor@example.com"],
         cc=["bookkeeper@example-cpa.com"],
+        reply_to_message_id="msg-action-2",
+        reply_to_message_unread=True,
     )
 
     reference = provider.create_draft(draft)
@@ -108,6 +111,7 @@ def test_outlook_create_draft_maps_to_graph_reply_payload() -> None:
     assert created["ccRecipients"] == [
         {"emailAddress": {"address": "bookkeeper@example-cpa.com"}}
     ]
+    assert graph_client.messages[1]["isRead"] is False
 
 
 def test_outlook_replace_thread_categories_preserves_non_mailassist_categories() -> None:
@@ -223,6 +227,71 @@ def test_real_graph_client_uses_refresh_token_for_me_request(tmp_path: Path) -> 
     )
 
     assert client.get_me()["mail"] == "magali@example-cpa.com"
+
+
+def test_real_graph_client_creates_native_reply_then_updates_draft(tmp_path: Path) -> None:
+    token_file = tmp_path / "outlook-token.json"
+    token_file.write_text(
+        json.dumps({"access_token": "access-123", "expires_at": int(time.time()) + 3600}),
+        encoding="utf-8",
+    )
+    requests: list[tuple[str, str, dict[str, str], bytes | None]] = []
+
+    def transport(method: str, url: str, headers: dict[str, str], data: bytes | None):
+        requests.append((method, url, headers, data))
+        assert headers["Authorization"] == "Bearer access-123"
+        if method == "POST" and url.endswith("/me/messages/source-msg/createReply"):
+            assert data is None
+            return {
+                "id": "reply-draft-1",
+                "conversationId": "conv-action",
+                "subject": "Re: Vendor W-9 confirmation",
+                "isDraft": True,
+                "body": {
+                    "contentType": "HTML",
+                    "content": "<div>Native quoted reply</div>",
+                },
+            }
+        if method == "PATCH" and url.endswith("/me/messages/reply-draft-1"):
+            payload = json.loads((data or b"{}").decode("utf-8"))
+            assert "subject" not in payload
+            assert payload["body"] == {
+                "contentType": "HTML",
+                "content": "<p>I am reviewing this.</p><br><br><div>Native quoted reply</div>",
+            }
+            assert payload["from"] == {"emailAddress": {"address": "magali-alias@example-cpa.com"}}
+            assert payload["toRecipients"] == [{"emailAddress": {"address": "vendor@example.com"}}]
+            return {
+                "id": "reply-draft-1",
+                "conversationId": "conv-action",
+                "subject": "Re: Vendor W-9 confirmation",
+                "body": payload["body"],
+                "isDraft": True,
+            }
+        raise AssertionError(f"{method} {url}")
+
+    client = MicrosoftGraphClient(
+        client_id="client-123",
+        tenant_id="tenant-456",
+        token_file=token_file,
+        transport=transport,
+    )
+    draft = DraftRecord(
+        draft_id="draft-1",
+        thread_id="conv-action",
+        provider="outlook",
+        subject="MailAssist controlled draft test - Re: Vendor W-9 confirmation",
+        body="I am reviewing this.",
+        body_html="<p>I am reviewing this.</p>",
+        model="mock",
+        from_address="magali-alias@example-cpa.com",
+        to=["vendor@example.com"],
+    )
+
+    created = client.create_reply_draft(message_id="source-msg", draft=draft)
+
+    assert created["subject"] == "Re: Vendor W-9 confirmation"
+    assert [request[0] for request in requests] == ["POST", "PATCH"]
 
 
 def test_real_graph_client_explains_invalid_grant_refresh_failure(tmp_path: Path) -> None:

@@ -15,6 +15,7 @@ from mailassist.background_bot import (
     human_review_context_time,
     load_bot_state,
     parse_batch_candidate_response,
+    reply_metadata_for_thread,
     reply_recipients_for_thread,
     run_watch_pass,
 )
@@ -314,6 +315,40 @@ def test_build_draft_body_html_falls_back_when_rich_signature_has_no_text() -> N
     assert body_html.index("Best,<br>Elie") < body_html.index("Draft prepared by MailAssist")
 
 
+def test_build_draft_body_html_can_omit_review_context_for_provider_replies() -> None:
+    thread = next(item for item in build_mock_threads() if item.thread_id == "thread-010")
+
+    body_html = build_draft_body_html(
+        thread,
+        "I am reviewing the open house options.",
+        signature="Best,\nElie",
+        signature_html="<b>Best,</b><br><i>Elie</i>",
+        include_review_context=False,
+    )
+
+    assert body_html is not None
+    assert "Review context - delete before sending:" not in body_html
+    assert "I am reviewing the open house options." in body_html
+    assert "<b>Best,</b>" in body_html
+
+
+def test_reply_metadata_for_thread_uses_latest_message() -> None:
+    thread = next(item for item in build_mock_threads() if item.thread_id == "thread-008")
+    latest = thread.messages[-1]
+    latest.rfc_message_id = "<latest@example.com>"
+    latest.references = ["<original@example.com>"]
+
+    metadata = reply_metadata_for_thread(thread)
+
+    assert metadata == {
+        "from_address": "you@example.com",
+        "reply_to_message_id": latest.message_id,
+        "reply_to_rfc_message_id": "<latest@example.com>",
+        "reply_references": ["<original@example.com>", "<latest@example.com>"],
+        "reply_to_message_unread": thread.unread,
+    }
+
+
 def test_append_signature_replaces_model_supplied_copy() -> None:
     signature = "Best,\nElie"
 
@@ -325,6 +360,9 @@ def test_append_signature_replaces_model_supplied_copy() -> None:
 def test_has_promise_shaped_language_detects_common_commitments() -> None:
     assert has_promise_shaped_language("I will let you know if anything changes.")
     assert has_promise_shaped_language("I'll follow up with details.")
+    assert has_promise_shaped_language(
+        "I am currently reviewing this matter and will provide a detailed response."
+    )
     assert not has_promise_shaped_language("I am reviewing the details.")
 
 
@@ -395,6 +433,8 @@ def test_build_batch_candidate_prompt_forbids_domain_company_names() -> None:
     )
 
     assert "Do not turn email domains into company names" in prompt
+    assert "Match the language and register of the thread" in prompt
+    assert "informal French with `tu`" in prompt
     assert "do not invent the user's decision" in prompt
     assert "Do not invent teams" in prompt
     assert "leave the final choice for the user to add" in prompt
@@ -529,7 +569,8 @@ def test_mock_watch_pass_persists_provider_account_email_and_uses_it(monkeypatch
         (tmp_path / "data" / "mock-provider-drafts" / "thread-008.json").read_text(encoding="utf-8")
     )
     assert draft_payload["to"] == ["ops@harborhq.com"]
-    assert "ops@harborhq.com wrote" in draft_payload["body"]
+    assert "Review context - delete before sending:" not in draft_payload["body"]
+    assert draft_payload["reply_to_message_id"] == "msg-702"
     assert "magali@example.com wrote" not in draft_payload["body"]
 
 

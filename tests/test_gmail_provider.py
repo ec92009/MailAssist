@@ -10,6 +10,7 @@ from mailassist.providers.gmail import (
     GMAIL_SCOPES,
     GmailProvider,
     _build_gmail_thread_query,
+    _gmail_thread_to_email_thread,
     _gmail_signature_to_text,
     _has_child_label,
     _is_label_cleanup_excluded,
@@ -104,6 +105,89 @@ def test_gmail_provider_includes_recipients_in_raw_draft(monkeypatch, tmp_path: 
     assert parsed["cc"] == "cc@example.com"
     assert parsed["bcc"] == "bcc@example.com"
     assert parsed["subject"] == "Re: Test"
+    assert "threadId" not in created_body["message"]
+
+
+def test_gmail_provider_creates_threaded_reply_draft(monkeypatch, tmp_path: Path) -> None:
+    created_body = {}
+
+    class FakeDrafts:
+        def create(self, *, userId, body):
+            created_body.update(body)
+            return self
+
+        def execute(self):
+            return {"id": "draft-1", "message": {"id": "msg-1", "threadId": "gmail-thread-1"}}
+
+    class FakeUsers:
+        def drafts(self):
+            return FakeDrafts()
+
+    class FakeService:
+        def users(self):
+            return FakeUsers()
+
+    provider = GmailProvider(tmp_path / "credentials.json", tmp_path / "token.json")
+    monkeypatch.setattr(provider, "_credentials", lambda **kwargs: object())
+    monkeypatch.setattr(
+        provider,
+        "_load_google_modules",
+        lambda: (object, object, object, lambda *args, **kwargs: FakeService()),
+    )
+
+    provider.create_draft(
+        DraftRecord(
+            draft_id="draft-local",
+            thread_id="gmail-thread-1",
+            provider="gmail",
+            subject="Re: Test",
+            body="Draft body",
+            model="mock",
+            to=["sender@example.com"],
+            reply_to_message_id="gmail-msg-2",
+            reply_to_rfc_message_id="<msg-2@example.com>",
+            reply_references=["<msg-1@example.com>"],
+        )
+    )
+
+    import base64
+
+    assert created_body["message"]["threadId"] == "gmail-thread-1"
+    parsed = message_from_bytes(base64.urlsafe_b64decode(created_body["message"]["raw"].encode("utf-8")))
+    assert parsed["In-Reply-To"] == "<msg-2@example.com>"
+    assert parsed["References"] == "<msg-1@example.com> <msg-2@example.com>"
+
+
+def test_gmail_thread_parser_keeps_rfc_reply_headers() -> None:
+    payload = {
+        "id": "thread-1",
+        "messages": [
+            {
+                "id": "gmail-msg-1",
+                "threadId": "thread-1",
+                "internalDate": "1770000000000",
+                "labelIds": ["INBOX", "UNREAD"],
+                "payload": {
+                    "headers": [
+                        {"name": "From", "value": "Sender <sender@example.com>"},
+                        {"name": "To", "value": "me@example.com"},
+                        {"name": "Subject", "value": "Question"},
+                        {"name": "Message-ID", "value": "<gmail-rfc-1@example.com>"},
+                        {"name": "References", "value": "<gmail-rfc-0@example.com>"},
+                    ],
+                    "body": {"data": ""},
+                },
+                "snippet": "Can you confirm?",
+            }
+        ],
+    }
+
+    thread = _gmail_thread_to_email_thread(payload)
+
+    assert thread is not None
+    assert thread.messages[0].message_id == "gmail-msg-1"
+    assert thread.messages[0].rfc_message_id == "<gmail-rfc-1@example.com>"
+    assert thread.messages[0].references == ["<gmail-rfc-0@example.com>"]
 
 
 def test_gmail_label_cleanup_excludes_archive_labels() -> None:

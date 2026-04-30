@@ -16,6 +16,8 @@ class EmailMessage:
     to: List[str]
     sent_at: str
     text: str
+    rfc_message_id: str = ""
+    references: List[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, payload: Dict[str, Any]) -> "EmailMessage":
@@ -25,6 +27,8 @@ class EmailMessage:
             to=list(payload.get("to", [])),
             sent_at=payload["sent_at"],
             text=payload["text"],
+            rfc_message_id=str(payload.get("rfc_message_id", "")),
+            references=list(payload.get("references", [])),
         )
 
 
@@ -63,9 +67,14 @@ class DraftRecord:
     body: str
     model: str
     body_html: Optional[str] = None
+    from_address: Optional[str] = None
     to: List[str] = field(default_factory=list)
     cc: List[str] = field(default_factory=list)
     bcc: List[str] = field(default_factory=list)
+    reply_to_message_id: Optional[str] = None
+    reply_to_rfc_message_id: Optional[str] = None
+    reply_references: List[str] = field(default_factory=list)
+    reply_to_message_unread: Optional[bool] = None
     status: str = "pending_review"
     created_at: str = field(default_factory=utc_now_iso)
     provider_submission_status: str = "not_submitted"
@@ -86,9 +95,14 @@ class DraftRecord:
             body=payload["body"],
             model=payload["model"],
             body_html=payload.get("body_html"),
+            from_address=payload.get("from_address"),
             to=list(payload.get("to", [])),
             cc=list(payload.get("cc", [])),
             bcc=list(payload.get("bcc", [])),
+            reply_to_message_id=payload.get("reply_to_message_id"),
+            reply_to_rfc_message_id=payload.get("reply_to_rfc_message_id"),
+            reply_references=list(payload.get("reply_references", [])),
+            reply_to_message_unread=payload.get("reply_to_message_unread"),
             status=payload.get("status", "pending_review"),
             created_at=payload.get("created_at", utc_now_iso()),
             provider_submission_status=payload.get("provider_submission_status", "not_submitted"),

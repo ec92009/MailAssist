@@ -13,7 +13,7 @@ from urllib.request import Request, urlopen
 from mailassist.live_filters import WatcherFilter, thread_passes_filter
 from mailassist.models import DraftRecord, EmailMessage, EmailThread, ProviderDraftReference
 from mailassist.providers.base import DraftProvider, ProviderReadiness
-from mailassist.rich_text import html_to_plain_text
+from mailassist.rich_text import html_to_plain_text, plain_text_to_html
 
 OUTLOOK_GRAPH_SCOPES = [
     "offline_access",
@@ -45,6 +45,9 @@ class OutlookGraphClient(Protocol):
     def create_reply_draft(self, *, message_id: str, draft: DraftRecord) -> dict[str, Any]:
         ...
 
+    def update_message_read_state(self, *, message_id: str, is_read: bool) -> dict[str, Any]:
+        ...
+
     def update_message_categories(self, *, message_id: str, categories: list[str]) -> dict[str, Any]:
         ...
 
@@ -71,12 +74,20 @@ class InMemoryOutlookGraphClient:
 
     def create_reply_draft(self, *, message_id: str, draft: DraftRecord) -> dict[str, Any]:
         self.authenticate()
+        source = next(
+            (message for message in self.messages if str(message.get("id", "")) == message_id),
+            {},
+        )
+        source_subject = str(source.get("subject") or draft.subject).strip()
+        subject = source_subject if source_subject.lower().startswith("re:") else f"Re: {source_subject}"
         content = draft.body_html or draft.body
+        if source:
+            source["isRead"] = True
         created = {
             "id": f"outlook-draft-{len(self.created_drafts) + 1}",
             "conversationId": draft.thread_id,
             "replyToMessageId": message_id,
-            "subject": draft.subject,
+            "subject": subject,
             "body": {
                 "contentType": "HTML" if draft.body_html else "Text",
                 "content": content,
@@ -94,6 +105,14 @@ class InMemoryOutlookGraphClient:
         for message in self.messages:
             if str(message.get("id", "")) == message_id:
                 message["categories"] = list(categories)
+                return dict(message)
+        raise OutlookGraphHttpError(f"Outlook message not found: {message_id}")
+
+    def update_message_read_state(self, *, message_id: str, is_read: bool) -> dict[str, Any]:
+        self.authenticate()
+        for message in self.messages:
+            if str(message.get("id", "")) == message_id:
+                message["isRead"] = bool(is_read)
                 return dict(message)
         raise OutlookGraphHttpError(f"Outlook message not found: {message_id}")
 
@@ -168,24 +187,40 @@ class MicrosoftGraphClient:
         return list(payload.get("value", []))
 
     def create_reply_draft(self, *, message_id: str, draft: DraftRecord) -> dict[str, Any]:
-        content = draft.body_html or draft.body
-        payload = {
-            "message": {
-                "subject": draft.subject,
-                "body": {
-                    "contentType": "HTML" if draft.body_html else "Text",
-                    "content": content,
-                },
-                "toRecipients": [_graph_recipient(address) for address in draft.to],
-                "ccRecipients": [_graph_recipient(address) for address in draft.cc],
-                "bccRecipients": [_graph_recipient(address) for address in draft.bcc],
-            }
-        }
-        return self._graph_request(
+        created = self._graph_request(
             "POST",
             f"/me/messages/{quote(message_id, safe='')}/createReply",
-            payload,
         )
+        draft_id = str(created.get("id", "")).strip()
+        if not draft_id:
+            return created
+        update_payload: dict[str, Any] = {
+            "body": _outlook_reply_body_update(draft, created.get("body", {})),
+        }
+        if draft.from_address:
+            update_payload["from"] = _graph_recipient(draft.from_address)
+        if draft.to:
+            update_payload["toRecipients"] = [_graph_recipient(address) for address in draft.to]
+        if draft.cc:
+            update_payload["ccRecipients"] = [_graph_recipient(address) for address in draft.cc]
+        if draft.bcc:
+            update_payload["bccRecipients"] = [_graph_recipient(address) for address in draft.bcc]
+        try:
+            updated = self._graph_request(
+                "PATCH",
+                f"/me/messages/{quote(draft_id, safe='')}",
+                update_payload,
+            )
+        except OutlookGraphAuthError:
+            if "from" not in update_payload:
+                raise
+            update_payload.pop("from")
+            updated = self._graph_request(
+                "PATCH",
+                f"/me/messages/{quote(draft_id, safe='')}",
+                update_payload,
+            )
+        return {**created, **updated}
 
     def update_message_categories(self, *, message_id: str, categories: list[str]) -> dict[str, Any]:
         cleaned = [category for category in dict.fromkeys(str(item).strip() for item in categories) if category]
@@ -193,6 +228,13 @@ class MicrosoftGraphClient:
             "PATCH",
             f"/me/messages/{quote(message_id, safe='')}",
             {"categories": cleaned},
+        )
+
+    def update_message_read_state(self, *, message_id: str, is_read: bool) -> dict[str, Any]:
+        return self._graph_request(
+            "PATCH",
+            f"/me/messages/{quote(message_id, safe='')}",
+            {"isRead": bool(is_read)},
         )
 
     def has_saved_token(self) -> bool:
@@ -458,13 +500,20 @@ class OutlookProvider(DraftProvider):
             raise NotImplementedError(
                 "Outlook support is planned next. The provider interface is ready for it."
             )
-        source_message_id = _latest_message_id_for_conversation(
-            self.graph_client.list_messages(),
-            draft.thread_id,
-        )
+        source_message_id = (draft.reply_to_message_id or "").strip()
+        if not source_message_id:
+            source_message_id = _latest_message_id_for_conversation(
+                self.graph_client.list_messages(),
+                draft.thread_id,
+            )
         if not source_message_id:
             raise RuntimeError(f"Outlook source message not found for conversation {draft.thread_id}")
         created = self.graph_client.create_reply_draft(message_id=source_message_id, draft=draft)
+        if draft.reply_to_message_unread is True:
+            self.graph_client.update_message_read_state(
+                message_id=source_message_id,
+                is_read=False,
+            )
         return ProviderDraftReference(
             draft_id=str(created.get("id", "")),
             thread_id=str(created.get("conversationId", draft.thread_id)),
@@ -510,6 +559,28 @@ def _account_email_from_me(payload: dict[str, Any]) -> str | None:
         if value and "@" in value:
             return value
     return None
+
+
+def _outlook_reply_body_update(draft: DraftRecord, native_body: Any) -> dict[str, str]:
+    native = native_body if isinstance(native_body, dict) else {}
+    native_content = str(native.get("content") or "").strip()
+    native_type = str(native.get("contentType") or "").strip().lower()
+    if native_content:
+        if native_type == "html":
+            generated = draft.body_html or plain_text_to_html(draft.body)
+            return {
+                "contentType": "HTML",
+                "content": f"{generated}<br><br>{native_content}",
+            }
+        generated = html_to_plain_text(draft.body_html) if draft.body_html else draft.body
+        return {
+            "contentType": "Text",
+            "content": f"{generated.strip()}\n\n{native_content}",
+        }
+    return {
+        "contentType": "HTML" if draft.body_html else "Text",
+        "content": draft.body_html or draft.body,
+    }
 
 
 def _graph_messages_to_email_threads(messages: list[dict[str, Any]]) -> list[EmailThread]:

@@ -83,11 +83,17 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 - Simplified Recent Activity progress by removing subject-level progress lines from the main feed. Watch/previews now report `N scanned / M drafts`, while organizer runs report scan/category counts; detailed subjects remain in the run report/log. Bumped visible version to `v60.17`; full local test suite passed with 177 tests on April 29, 2026.
 - Removed redundant per-item `Progress:` lines from Recent Activity. Draft/category events still update counters internally, but only the periodic heartbeat shows live progress. Bumped visible version to `v60.18`; full local test suite passed with 177 tests on April 29, 2026.
 - Clarified auto-check loop progress after a pass completes: Recent Activity now says the pass completed and subsequent heartbeats say MailAssist is waiting for the next check, instead of saying the completed pass is still running. Bumped visible version to `v60.19`; full local test suite passed with 178 tests on April 29, 2026.
+- Corrected live draft creation to produce provider-native reply drafts. Gmail drafts now carry thread/reply metadata (`threadId`, `In-Reply-To`, and `References`) when created from real provider threads, Outlook controlled/live drafts pass the source message id directly to Graph `createReply`, and live drafts no longer prepend review-context summaries because the provider thread already supplies the conversation context. Bumped visible version to `v61.1`; full local test suite passed with 182 tests on April 30, 2026.
+- Tightened Outlook reply-draft creation to let Microsoft Graph create the native reply shell first, then patch only body/recipients. This preserves Graph's normal reply subject and conversation shape instead of making controlled tests look like standalone custom-subject messages. Bumped visible version to `v61.2`; full local test suite passed with 183 tests on April 30, 2026.
+- Preserved Outlook unread state after reply-draft creation. Graph can mark the source message read while creating a reply shell, so MailAssist now records whether the triggering message was unread and restores that read state after the unsent draft is created. Bumped visible version to `v61.3`; tests pending.
+- Made Outlook reply drafts preserve the native quoted-reply body and attempted sender alias. MailAssist now inserts generated text above Graph's native reply content instead of replacing the quoted original, and carries the original recipient alias into the draft update when Graph accepts it. Bumped visible version to `v61.4`; full local test suite passed with 183 tests on April 30, 2026.
+- Tightened draft prompting to mirror the sender's language and register, including informal French `tu` instead of switching to formal `vous` when the incoming thread is informal. A no-write Gemma `gemma4:31b` generation pass against the fresh Outlook `Coucou` thread replied `Coucou Agnès, oui, je vois bien ton message.` Bumped visible version to `v61.6`; full local test suite passed with 183 tests on April 30, 2026.
+- During the inactivity handoff sweep, refreshed this summary so the current MailAssist work can be safely committed and pushed without relying on local context. The repo is on `main`, current with `origin/main`, and contains source/docs/test changes for native provider reply drafts, Outlook unread preservation, quoted reply handling, alias handling, and language/register mirroring.
 
 ## Current Verified State
 
-- Visible version: `v60.19`.
-- Full test suite: 178 passing tests on April 29, 2026.
+- Visible version: `v61.6`.
+- Full test suite: 183 passing tests on April 30, 2026.
 - Native desktop app is the active GUI surface; it has no localhost or LAN URL.
 - Latest synchronized commit before the handoff commit: `4389fbf`.
 - Latest pushed setup/bootstrap commit before the current UI polish/doc refresh: `4389fbf`.

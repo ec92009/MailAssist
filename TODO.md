@@ -24,7 +24,7 @@ Mac/Gmail remains the proving ground because it is already working locally and e
 - Current baseline at handoff:
   - Last synchronized commit before this handoff commit: `4389fbf`
   - Handoff commit: reported in the final assistant response after commit/push
-  - Current visible version: `v60.19`
+  - Current visible version: `v61.6`
   - Local app/dev entrypoint: `./.venv/bin/mailassist desktop-gui`
   - Packaged app path: `/Applications/MailAssist.app`
 - Known open issue to continue:
@@ -120,6 +120,11 @@ Mac/Gmail remains the proving ground because it is already working locally and e
 - Simplified Recent Activity progress by removing subject-level progress lines from the main feed. Watch/previews now report `N scanned / M drafts`, while organizer runs report scan/category counts; detailed subjects remain in the run report/log. Bumped visible version to `v60.17`; full local test suite passed with 177 tests on April 29, 2026. (Managed by Codex)
 - Removed redundant per-item `Progress:` lines from Recent Activity. Draft/category events still update counters internally, but only the periodic heartbeat shows live progress. Bumped visible version to `v60.18`; full local test suite passed with 177 tests on April 29, 2026. (Managed by Codex)
 - Clarified auto-check loop progress after a pass completes: Recent Activity now says the pass completed and subsequent heartbeats say MailAssist is waiting for the next check, instead of saying the completed pass is still running. Bumped visible version to `v60.19`; full local test suite passed with 178 tests on April 29, 2026. (Managed by Codex)
+- Corrected live Gmail/Outlook draft creation to use provider-native reply metadata instead of standalone new-thread drafts, and removed inserted review-context summaries from live provider replies because the mail thread already provides that context. Bumped visible version to `v61.1`; full local test suite passed with 182 tests on April 30, 2026. (Managed by Codex)
+- Tightened Outlook reply-draft creation to create the native Graph reply shell first and patch body/recipients afterward, preserving the normal reply subject/conversation shape. Bumped visible version to `v61.2`; full local test suite passed with 183 tests on April 30, 2026. (Managed by Codex)
+- Preserved Outlook unread state after reply-draft creation because Graph can mark the source message read while creating the native reply shell. Bumped visible version to `v61.3`; tests pending. (Managed by Codex)
+- Made Outlook reply drafts preserve the native quoted-reply body and attempt the original recipient alias as the draft sender, falling back if Graph rejects the alias. Bumped visible version to `v61.4`; full local test suite passed with 183 tests on April 30, 2026. (Managed by Codex)
+- Tightened draft prompting to mirror language/register, including informal French `tu` when the sender uses informal French. Verified a no-write Gemma `gemma4:31b` generation for the Outlook `Coucou` thread used `ton message`; bumped visible version to `v61.6`; full local test suite passed with 183 tests on April 30, 2026. (Managed by Codex)
 
 ## Remaining Backlog
 
