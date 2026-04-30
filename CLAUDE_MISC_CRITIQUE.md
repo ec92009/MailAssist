@@ -1,91 +1,90 @@
 # Miscellaneous Critique — MailAssist
 
-*Reviewed 2026-04-26. Issues that do not fit the architecture or GUI critiques.*
+*Originally reviewed 2026-04-26. Refreshed 2026-04-30 against `main` at `146b8c9` (v61.10), 191 tests green.*
+
+Issues that do not fit the architecture or GUI critiques.
 
 ---
 
-## 1. `MAILASSIST_BOT_POLL_SECONDS` is configured but never used
+## Resolved Since 2026-04-26
 
-`Settings.bot_poll_seconds` is parsed from the environment and saved by the settings wizard. The app has no polling loop. The bot only runs when the user clicks "Run Mock Pass" or "Create Gmail Test Draft". The setting is inert. Either the polling loop needs to be built (TODO P2), or the setting should be removed from the wizard and settings model to avoid implying a capability that does not exist.
-
----
-
-## 2. `append_signature_to_body` is implemented twice
-
-`review_state.py` defines `append_signature_to_body` which strips a trailing signature before appending.
-
-`background_bot.py` defines `append_signature` and `strip_configured_signature` which do the same thing with a slightly different implementation.
-
-These are functionally identical but live in separate modules and are not shared. Any subtle divergence in behavior (e.g., case-sensitivity of the strip) would produce different output depending on which path generated the draft. One implementation in a shared module should replace both.
+- **`bot_poll_seconds` configured but inert** — the `watch-loop` action now exists (`bot_runtime.py:91, 781–784`) and uses `args.poll_seconds or settings.bot_poll_seconds or 30`. The desktop's "Start Auto-Check" button is wired to it (`desktop.py:573–593`), and Recent Activity now distinguishes "pass completed" from "waiting for next interval". The poll-interval field in the settings wizard is no longer aspirational.
+- **`ensure_review_state` blocking the main thread** — `desktop.py` no longer imports `review_state`; the synchronous-Ollama-call-during-`refresh_dashboard` path is gone with the rest of the review UI.
+- **No tests for `desktop.py`** — `tests/test_desktop_layout.py` (1527 lines) covers wizard navigation, layout stability, status pill painting, and the action gating helpers. (Severity-of-coverage caveat in GUI critique #7.)
 
 ---
 
-## 3. `ensure_review_state` can block the main thread
+## 1. `append_signature_to_body` still implemented twice
 
-```python
-# review_state.py:946
-def ensure_review_state(root_dir, *, base_url, selected_model):
-    state = load_review_state(root_dir)
-    for thread_state in state.get("threads", []):
-        if not thread_state.get("candidates"):
-            regenerate_thread_candidates(...)   # ← synchronous Ollama call
-```
+`review_state.py:113` and `drafting.py:79` both define `append_signature_to_body`. `background_bot.py:649` defines `append_signature` as a thin wrapper around the `drafting.py` version. The active production path uses `drafting.py`'s implementation, but `review_state.py`'s copy is still imported by `tests/test_review_state.py` and is loaded into the package whenever `review_state.py` is imported.
 
-`ensure_review_state` is called from `refresh_dashboard` in the desktop GUI. If `review-inbox.json` exists but has threads with no candidates, `ensure_review_state` calls Ollama synchronously in the main thread for each such thread. The GUI freezes until Ollama responds. This should run in a QThread or worker process, the same way `run_bot_action` does.
+If the duplicate had truly diverged it would already be a bug; the safer reading is that they happen to agree today and could silently diverge tomorrow. Resolution depends on Issue 1 of the architecture critique: if `review_state.py` is removed, this duplicate goes with it. Otherwise, `review_state.py` should `from mailassist.drafting import append_signature_to_body` rather than re-defining it.
 
 ---
 
-## 4. `bot_poll_seconds` setting conflicts with the manual-only bot
+## 2. `fallback_classification_for_thread` still uses unbounded substring matching
 
-Related to issue 1: the settings wizard Advanced page includes a "Poll interval" field. Showing this to users implies the bot auto-polls. The real behavior is manual-only. Displaying a setting that does nothing erodes trust in the setup flow. Hide or remove it until the polling loop is implemented.
+`review_state.py:350–381` (also re-exported from `drafting.py`) classifies threads by joining subject + participants + every message body, lowercasing, and testing `if any(token in haystack for token in (...))`. The original critique noted the false-positive risk — "no-reply" inside ordinary prose. Active triggers:
 
----
+- `"unsubscribe"` flags any message that contains the literal substring (legitimate "you can unsubscribe at any time" copy in a *human-written* mail will misclassify as `automated`).
+- `"digest"` matches "digestive issues" or anything else where that substring appears.
+- `"urgent"`, `"asap"`, `"this afternoon"`, `"end of day"` are all matched anywhere in the body, including quoted history.
 
-## 5. No test coverage for `desktop.py`
-
-There are unit tests for `background_bot.py`, `bot_runtime.py`, `config.py`, and `review_state.py`. There are no tests for `desktop.py`. At minimum, the helper functions (`_format_model_size`, `_format_model_age`, `_event_time_label`, `_log_action_label`, `_humanize`) are pure functions that can and should be tested without a display.
-
----
-
-## 6. `fallback_classification_for_thread` uses fragile keyword matching
-
-```python
-# review_state.py:361
-if any(token in haystack for token in ("unsubscribe", "no-reply", ...)):
-    return "automated"
-```
-
-The heuristic scans raw email text for literal substrings without word boundaries, case folding applied to the haystack only. "no-reply" would match inside "I'm not going to reply today". The patterns should use `re.search` with `\b` word boundaries, or at minimum be applied only to sender addresses and subject lines rather than the entire message body.
+The fix is unchanged from Apr 26: scope the match to sender address and subject, and use `\b` word boundaries when scanning body text. Lower priority since this is a heuristic fallback — the LLM classifier is the primary path — but the heuristic is what gets used when Ollama is unreachable.
 
 ---
 
-## 7. `parse_batch_candidate_response` raises on any missing block
+## 3. `parse_batch_candidate_response` still raises on any missing block
 
-```python
-# background_bot.py:423
-if start < 0 or end < 0:
-    raise ValueError(f"Missing packed response block for {thread_id}.")
-```
+`background_bot.py:540–556` builds the per-thread block markers and raises `ValueError` as soon as one expected thread block is missing. The caller falls back to per-thread generation for the whole batch, so the granularity issue from Apr 26 still applies: a single missing block causes N–1 redundant retries.
 
-If the LLM omits one thread block from the batch response, the entire batch fails and the caller falls back to individual per-thread generation for all threads. The fallback is correct but the granularity is wrong: a single missing block should fail only that thread, not the entire batch. The caller (`run_mock_watch_pass`) would then retry just the missing thread.
+The cleaner shape is to keep the parsed blocks for threads that were present and report missing ones to the caller, so the caller can retry only those threads. This is one localized change in `_parse_batch_block` / `parse_batch_candidate_response` plus a small contract change in the caller.
 
 ---
 
-## 8. `review-inbox.json` lives under `data/legacy/`
+## 4. Active review state is still stored under `data/legacy/`
 
-The active review state file is stored at `data/legacy/review-inbox.json`. The "legacy" path segment was intended for the queue phase directories that were removed. Keeping the active review file at a path explicitly labelled "legacy" is confusing for anyone reading the data directory. If the review flow is being retired (TODO P6), this is a non-issue. If it is kept, the file should move to `data/review-inbox.json` and the migration helper should move it there.
+`review_state_path` (`review_state.py:322–323`) returns `root_dir / "data" / "legacy" / REVIEW_STATE_FILENAME`. `config.migrate_legacy_runtime_layout` even moves `data/review-inbox.json` → `data/legacy/review-inbox.json` on startup (`config.py:191`). This is fine *if* the review module is being deleted (architecture critique Issue 1). If it stays, the path is misleading: `data/legacy/` was created during an earlier migration to hold *deprecated* artifacts, and stashing the active file there reads like a mistake.
+
+Either delete the review module entirely, or move `review-inbox.json` back to `data/review-inbox.json` and update the migration helper.
+
+---
+
+## 5. Mock-thread fixtures still hard-code `you@example.com`
+
+`fixtures/mock_threads.py` uses `you@example.com` as the recipient and as a participant in 12 mock threads. This is fine for unit tests and for the mock provider (the provider explicitly accepts `account_email` and threads it through), but two surprises remain:
+
+- The controlled Gmail test draft (`bot_runtime.py:680, 691`) constructs body text with `user_address="you@example.com"` even though the surrounding code resolves the real `account_email` via `provider.get_account_email()` two lines later. The two coexist because the controlled test path is intentionally synthetic, but the literal address still appears in the body that is sent to the Gmail draft API.
+- Anyone running `mailassist outlook-smoke-test` against a fixture-shaped Outlook conversation would see the same placeholder leak through.
+
+Pass `user_address=account_email or "you@example.com"` (or simply omit the kwarg now that defaults exist) and the placeholder stops being user-visible.
+
+---
+
+## 6. `MAILASSIST_USER_SIGNATURE_HTML` and the plain-text signature can drift
+
+The wizard maintains both `user_signature` (plain text) and `user_signature_html` (rich text). Persistence and import paths now exist for both, but nothing reconciles them: a user who changes `user_signature` directly via `.env` after first-run will keep an out-of-date `user_signature_html`, and vice versa. Drafts then assemble using the HTML signature for the HTML part and the plain-text signature for the plain part, producing a draft where the two MIME parts disagree.
+
+A single `derive_html_from_plain(text)` fallback (used when `user_signature_html` is empty *or* when the plain version was edited more recently) would close this. Lower priority because the wizard is the normal editing surface and keeps them in sync.
+
+---
+
+## 7. CLI surface and GUI surface have grown in parallel without sharing entry-point types
+
+`bot_runtime.py` argparse declares each action's flags. `gui/desktop.py` `run_bot_action(action, **kwargs)` constructs the same flags by hand. There is no shared schema. Every new flag (e.g., `--days` for organizers, `--force`, `--dry-run`) has to be added in argparse *and* hand-spelled in the GUI dispatch, with no compile-time guarantee they agree. A small `BotActionSpec` dataclass per action — used by both surfaces — would prevent the silent-typo class of bug.
+
+This is a tax that will scale with the number of actions; it has not yet caused a visible regression.
 
 ---
 
 ## Summary
 
-| Issue | Severity |
-|---|---|
-| `bot_poll_seconds` configured in wizard but polling loop does not exist | Medium |
-| `append_signature_to_body` duplicated with divergent implementations | Medium |
-| `ensure_review_state` can freeze the main thread with synchronous Ollama calls | Medium |
-| Poll interval field in settings wizard implies a capability that does not exist | Medium |
-| No tests for `desktop.py` helper functions | Low |
-| `fallback_classification_for_thread` uses unbounded substring matching | Low |
-| Batch parse fails the entire batch when one thread block is missing | Low |
-| Active review state stored under `data/legacy/` | Low |
+| # | Issue | Severity | Δ vs. 2026-04-26 |
+|---|---|---|---|
+| 1 | `append_signature_to_body` duplicated in `review_state.py` and `drafting.py` | Medium | Carryover (was Issue 2) |
+| 2 | `fallback_classification_for_thread` uses unbounded substring matching | Low–Medium | Carryover (was Issue 6) |
+| 3 | `parse_batch_candidate_response` fails the whole batch on one missing block | Low | Carryover (was Issue 7) |
+| 4 | Active review state still under `data/legacy/` | Low | Carryover (was Issue 8) |
+| 5 | `you@example.com` placeholder leaks into controlled Gmail draft body | Low–Medium | New |
+| 6 | Plain-text and HTML signatures can drift out of sync | Low | New |
+| 7 | CLI argparse and GUI `run_bot_action` flags hand-spelled in two places | Low | New |
