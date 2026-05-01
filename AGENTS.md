@@ -29,6 +29,13 @@ Working preferences for `~/Dev/MailAssist`.
 - Full procedure lives in [PICKUP_WHERE_LEFT_OFF_SOP.md](~/Dev/MailAssist/PICKUP_WHERE_LEFT_OFF_SOP.md).
 - When that phrase appears, execute `PICKUP_WHERE_LEFT_OFF_SOP.md` exactly.
 
+## Claude Critiques
+
+- Current consolidated critique lives in [2026.04.30_Claude_Critique_2.md](~/Dev/MailAssist/2026.04.30_Claude_Critique_2.md).
+- Treat critique files as pointers, not marching orders.
+- Apply critique suggestions only after checking them against current code, `TODO.md`, `RESULTS.md`, product safety, and provider-write constraints.
+- Prefer small, useful process or safety improvements over large refactors unless the refactor is the highest-priority unblocked work.
+
 ## `rscp`
 
 - `rscp` means: refresh docs, summarize the current conversation to `SUMMARY.md`, commit, and push.

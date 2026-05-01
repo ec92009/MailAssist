@@ -13,11 +13,13 @@ When asked to pick up where we left off, always execute this sequence:
    - read `TODO.md` fully, especially `Handoff` and the highest-priority open section
    - read `SUMMARY.md`
    - read `RESULTS.md`
+   - read the latest dated Claude critique file, currently `2026.04.30_Claude_Critique_2.md`, as advisory input only
    - read `STRATEGY.md` and `REALISM.md` before changing the core drafting flow, provider boundaries, privacy, approval, or provider-write behavior
    - read `RESEARCH.md` before adding Gmail sync, Outlook support, or revision/approval workflows
 3. Reconstruct current execution status:
    - identify the single highest-priority unblocked item
    - identify the exact next implementation step already recorded
+   - decide which critique suggestions are accepted now, deferred, or rejected because they conflict with current product direction or safety constraints
    - confirm blockers, environment gaps, and whether local credentials or tokens are intentionally absent on the current machine
 4. Resume execution immediately:
    - start with the recorded next step

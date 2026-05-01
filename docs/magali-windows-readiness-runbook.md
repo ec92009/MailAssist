@@ -87,6 +87,12 @@ Use the Windows virtualenv executable:
 
 ## Safe Readiness Checks
 
+On a local Windows rehearsal VM without Magali's mailbox, the work/school Entra
+app may reject personal accounts such as Outlook.com/Live.com. That is expected
+and only proves the app is targeting the right account type. Use the VM to test
+bootstrap/install/runtime plumbing; use Magali's Microsoft 365 account during
+the Zoom for the real Outlook readiness result.
+
 The simplest call-time path is to pass the Entra Application (client) ID into
 the helper so it updates `.env` for you:
 

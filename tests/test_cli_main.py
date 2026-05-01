@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+import pytest
+
 from mailassist.cli import main as cli_main
 from mailassist.config import write_env_file
 from mailassist.models import EmailMessage, EmailThread
@@ -78,6 +80,27 @@ class FakeOllamaClient:
 class MissingModelOllamaClient(FakeOllamaClient):
     def list_models(self) -> list[str]:
         return ["llama3.1:8b"]
+
+
+class FakeReadyProvider:
+    def __init__(self) -> None:
+        self.authenticated = False
+
+    def authenticate(self) -> str:
+        self.authenticated = True
+        return "ok"
+
+    def readiness_check(self) -> ProviderReadiness:
+        return ProviderReadiness(
+            provider="outlook",
+            status="ready",
+            message="Provider is ready.",
+            account_email="magalidomingue@goldenyearstaxstrategy.com",
+            can_authenticate=True,
+            can_read=True,
+            can_create_drafts=True,
+            requires_admin_consent=False,
+        )
 
 
 def test_outlook_setup_check_is_read_only_and_prints_mailbox_summary(
@@ -203,3 +226,90 @@ def test_ollama_setup_check_stops_when_model_is_not_installed(
     assert exit_code == 1
     assert "Configured model is not installed: qwen3:8b" in output
     assert "ollama pull qwen3:8b" in output
+
+
+def test_parser_prints_machine_readable_version(capsys) -> None:
+    parser = cli_main.build_parser()
+
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(["--version"])
+
+    output = capsys.readouterr().out
+    assert exc.value.code == 0
+    assert output.startswith("mailassist ")
+    assert cli_main.__version__ in output
+
+
+def test_doctor_runs_model_and_provider_checks_without_mail_writes(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_env_file(
+        tmp_path / ".env",
+        {
+            "MAILASSIST_DEFAULT_PROVIDER": "outlook",
+            "MAILASSIST_OLLAMA_MODEL": "qwen3:8b",
+        },
+    )
+    provider = FakeReadyProvider()
+    monkeypatch.setattr(cli_main, "OllamaClient", FakeOllamaClient)
+    monkeypatch.setattr(
+        cli_main,
+        "get_provider_for_settings",
+        lambda settings, provider_name: provider,
+    )
+
+    exit_code = cli_main.command_doctor(
+        argparse.Namespace(
+            provider="",
+            authorize=False,
+            expected_email="MagaliDomingue@GoldenYearsTaxStrategy.com",
+            model="",
+            base_url="",
+            skip_model=False,
+        )
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "MailAssist doctor" in output
+    assert "This report does not create drafts or send email" in output
+    assert "Ollama setup check completed" in output
+    assert "Provider: outlook" in output
+    assert "Provider is ready" in output
+    assert "Doctor completed. MailAssist readiness checks passed" in output
+    assert provider.authenticated is False
+
+
+def test_doctor_reports_expected_account_mismatch(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_env_file(
+        tmp_path / ".env",
+        {
+            "MAILASSIST_DEFAULT_PROVIDER": "outlook",
+        },
+    )
+    monkeypatch.setattr(
+        cli_main,
+        "get_provider_for_settings",
+        lambda settings, provider_name: FakeReadyProvider(),
+    )
+
+    exit_code = cli_main.command_doctor(
+        argparse.Namespace(
+            provider="",
+            authorize=False,
+            expected_email="other@example.com",
+            model="",
+            base_url="",
+            skip_model=True,
+        )
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 1
+    assert "Ollama: skipped" in output
+    assert "does not match the expected account" in output
+    assert "Doctor completed with issues" in output

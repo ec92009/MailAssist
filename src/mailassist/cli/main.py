@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import argparse
 import time
+from mailassist import __version__
 from mailassist.bot_runtime import build_review_bot_parser, command_review_bot
 from mailassist.config import load_settings
 from mailassist.llm.ollama import OllamaClient
 from mailassist.models import DraftRecord, EmailThread
 from mailassist.providers.base import ProviderReadiness
+from mailassist.providers.factory import get_provider_for_settings
 from mailassist.providers.gmail import GmailProvider
 from mailassist.providers.outlook import OutlookGraphAuthError, OutlookProvider
 
@@ -19,6 +21,7 @@ DEFAULT_OLLAMA_SETUP_PROMPT = (
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="mailassist")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("gmail-auth", help="Run Gmail OAuth setup and save the token.")
@@ -59,6 +62,41 @@ def build_parser() -> argparse.ArgumentParser:
         "--prompt",
         default=DEFAULT_OLLAMA_SETUP_PROMPT,
         help="Small prompt to send through MailAssist's Ollama client.",
+    )
+    doctor = subparsers.add_parser(
+        "doctor",
+        help="Run a no-send MailAssist readiness report for local model and provider setup.",
+    )
+    doctor.add_argument(
+        "--provider",
+        choices=("mock", "gmail", "outlook"),
+        default="",
+        help="Provider to check. Defaults to MAILASSIST_DEFAULT_PROVIDER.",
+    )
+    doctor.add_argument(
+        "--authorize",
+        action="store_true",
+        help="Allow one-time interactive provider authorization if the provider needs it.",
+    )
+    doctor.add_argument(
+        "--expected-email",
+        default="",
+        help="Optional provider account email that must match the signed-in account.",
+    )
+    doctor.add_argument(
+        "--model",
+        default="",
+        help="Ollama model to test. Defaults to MAILASSIST_OLLAMA_MODEL.",
+    )
+    doctor.add_argument(
+        "--base-url",
+        default="",
+        help="Ollama base URL. Defaults to MAILASSIST_OLLAMA_URL.",
+    )
+    doctor.add_argument(
+        "--skip-model",
+        action="store_true",
+        help="Skip the live Ollama prompt check.",
     )
     subparsers.add_parser(
         "desktop-gui", help="Run the native PySide6 desktop bot control panel."
@@ -197,6 +235,75 @@ def command_ollama_setup_check(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_doctor(args: argparse.Namespace) -> int:
+    settings = load_settings()
+    provider_name = str(getattr(args, "provider", "") or settings.default_provider or "gmail")
+    expected_email = str(getattr(args, "expected_email", "") or "").strip().lower()
+    authorize = bool(getattr(args, "authorize", False))
+
+    print("MailAssist doctor")
+    print(f"Version: {__version__}")
+    print(f"Workspace: {settings.root_dir}")
+    print("This report does not create drafts or send email.")
+    print()
+
+    ok = True
+    if bool(getattr(args, "skip_model", False)):
+        print("Ollama: skipped")
+    else:
+        print("Ollama")
+        model_exit = command_ollama_setup_check(
+            argparse.Namespace(
+                model=str(getattr(args, "model", "") or ""),
+                base_url=str(getattr(args, "base_url", "") or ""),
+                prompt=DEFAULT_OLLAMA_SETUP_PROMPT,
+            )
+        )
+        ok = ok and model_exit == 0
+
+    print()
+    print(f"Provider: {provider_name}")
+    try:
+        provider = get_provider_for_settings(settings, provider_name)
+    except Exception as exc:
+        print(f"Provider check failed: {exc}")
+        print()
+        print("Doctor completed with issues.")
+        return 1
+
+    if authorize:
+        try:
+            provider.authenticate()
+        except OutlookGraphAuthError as exc:
+            _print_outlook_auth_failure(exc)
+            ok = False
+        except Exception as exc:
+            print(f"Provider authorization failed: {exc}")
+            ok = False
+
+    try:
+        readiness = provider.readiness_check()
+    except Exception as exc:
+        print(f"Provider readiness failed: {exc}")
+        ok = False
+    else:
+        _print_provider_readiness(readiness)
+        ok = ok and readiness.ready
+        account_email = (readiness.account_email or "").strip().lower()
+        if expected_email and account_email != expected_email:
+            print("Signed-in provider account does not match the expected account.")
+            print(f"Expected: {expected_email}")
+            print(f"Actual:   {account_email or '(unknown)'}")
+            ok = False
+
+    print()
+    if ok:
+        print("Doctor completed. MailAssist readiness checks passed.")
+        return 0
+    print("Doctor completed with issues.")
+    return 1
+
+
 def command_desktop_gui() -> int:
     from mailassist.gui.desktop import run_desktop_gui
 
@@ -215,6 +322,8 @@ def main() -> int:
         return command_outlook_setup_check(args)
     if args.command == "ollama-setup-check":
         return command_ollama_setup_check(args)
+    if args.command == "doctor":
+        return command_doctor(args)
     if args.command == "desktop-gui":
         return command_desktop_gui()
     if args.command == "review-bot":
@@ -247,6 +356,18 @@ def _print_outlook_readiness(readiness: ProviderReadiness) -> None:
     print(f"Message: {readiness.message}")
     if readiness.account_email:
         print(f"Mailbox: {readiness.account_email}")
+    print(f"Can read mailbox: {'yes' if readiness.can_read else 'no'}")
+    print(f"Can create drafts later: {'yes' if readiness.can_create_drafts else 'no'}")
+    print(f"Admin consent required: {'yes' if readiness.requires_admin_consent else 'no'}")
+
+
+def _print_provider_readiness(readiness: ProviderReadiness) -> None:
+    label = readiness.provider.title()
+    print(f"{label} readiness: {readiness.status}")
+    print(f"Message: {readiness.message}")
+    if readiness.account_email:
+        print(f"Account: {readiness.account_email}")
+    print(f"Can authenticate: {'yes' if readiness.can_authenticate else 'no'}")
     print(f"Can read mailbox: {'yes' if readiness.can_read else 'no'}")
     print(f"Can create drafts later: {'yes' if readiness.can_create_drafts else 'no'}")
     print(f"Admin consent required: {'yes' if readiness.requires_admin_consent else 'no'}")

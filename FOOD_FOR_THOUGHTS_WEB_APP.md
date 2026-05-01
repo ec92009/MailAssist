@@ -88,7 +88,6 @@ This file is parked analysis, not an implementation plan. A follow-up plan would
 
 ## Cross-References
 
-- `CLAUDE_GUI_CRITIQUE.md` (issue 1: 3085-line megaclass; issue 4: per-action `QProcess` tax)
-- `CLAUDE_ARCH_CRITIQUE.md` (issue 3: same megaclass observation)
+- `2026.04.30_Claude_Critique_2.md` (merged current critique: 3085-line megaclass, per-action `QProcess` tax, and architecture cleanup pointers)
 - `TODO.md` item 7 (Windows packaging blocked on Parallels VM)
 - `docs/magali-zoom-operator-script.md` (current install path that would simplify)

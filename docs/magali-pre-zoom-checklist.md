@@ -61,6 +61,14 @@ uv sync
   - `docs/outlook-m365-admin-consent.md`
   - `docs/mailassist-outlook-entra-portal-steps.md`
 
+## Windows VM Rehearsal
+
+- Wendy, a Windows 11 Enterprise Evaluation x64 VM on the Intel iMac, is available for pre-call rehearsal.
+- RDP works with the local account `wendy\mailassist`.
+- A pushed-`main` bootstrap rehearsal succeeded through repo download, `uv`/Python sync, MailAssist executable startup, and a mock dry-run bot pass.
+- The work/school Entra app correctly rejected personal Microsoft accounts during device-code auth. Do not treat rejection of `@live.com` or personal Microsoft accounts as a Magali blocker; the Magali path needs her Microsoft 365 work/school account.
+- After each push that changes setup scripts or CLI entry points, rerun the bootstrap on Wendy before the Zoom call.
+
 ## Windows Command To Have Ready
 
 Preferred one-command bootstrap for Zoom chat:
