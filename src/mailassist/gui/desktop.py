@@ -14,7 +14,9 @@ from typing import Any
 from PySide6.QtCore import QProcess, QProcessEnvironment, Qt, QTimer
 from PySide6.QtGui import QFont, QIcon, QKeySequence, QShortcut, QTextCharFormat, QTextCursor, QTextOption
 from PySide6.QtWidgets import (
+    QAbstractSpinBox,
     QApplication,
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -25,6 +27,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QLineEdit,
+    QListView,
     QListWidget,
     QMainWindow,
     QMessageBox,
@@ -34,6 +37,7 @@ from PySide6.QtWidgets import (
     QTextEdit,
     QFrame,
     QSizePolicy,
+    QGridLayout,
     QSpinBox,
     QStackedWidget,
     QToolButton,
@@ -42,6 +46,9 @@ from PySide6.QtWidgets import (
 )
 
 from mailassist.config import (
+    APPEARANCE_DAY,
+    APPEARANCE_NIGHT,
+    APPEARANCE_SYSTEM,
     ATTRIBUTION_ABOVE_SIGNATURE,
     ATTRIBUTION_BELOW_SIGNATURE,
     ATTRIBUTION_HIDE,
@@ -295,6 +302,7 @@ class MailAssistDesktopWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.settings = load_settings()
+        self.appearance = self.settings.appearance
         self.bot_process: QProcess | None = None
         self.bot_stdout_buffer = ""
         self.latest_bot_log_path: Path | None = None
@@ -311,6 +319,7 @@ class MailAssistDesktopWindow(QMainWindow):
         self.total_memory_bytes: int | None = None
         self.model_memory_recommendation = ""
         self.last_bot_state = "idle"
+        self.last_bot_error_label = ""
         self.gmail_signature_import_attempted = False
         self.review_previous_step_index = 3
         setup_value = read_env_file(self.settings.root_dir / ".env").get("MAILASSIST_SETUP_COMPLETE", "false")
@@ -363,89 +372,662 @@ class MailAssistDesktopWindow(QMainWindow):
             shortcut = QShortcut(QKeySequence(sequence), self)
             shortcut.activated.connect(slot)
 
+    def _resolved_appearance(self) -> str:
+        if self.appearance != APPEARANCE_SYSTEM:
+            return self.appearance
+        try:
+            color_scheme = QApplication.styleHints().colorScheme()
+            if color_scheme == Qt.ColorScheme.Dark:
+                return APPEARANCE_NIGHT
+            if color_scheme == Qt.ColorScheme.Light:
+                return APPEARANCE_DAY
+        except Exception:
+            pass
+        palette = QApplication.palette()
+        return APPEARANCE_NIGHT if palette.window().color().lightness() < 128 else APPEARANCE_DAY
+
+    def _theme_colors(self) -> dict[str, str]:
+        if self._resolved_appearance() == APPEARANCE_NIGHT:
+            return {
+                "root_bg": "#18202a",
+                "workspace_bg": "#202a36",
+                "nav_bg": "#111821",
+                "nav_border": "#2f3b49",
+                "panel_bg": "#26313f",
+                "panel_border": "#3d4b5b",
+                "card_bg": "#202b39",
+                "card_border": "#4a5b70",
+                "field_bg": "#1c2530",
+                "field_border": "#4a596b",
+                "text": "#eef3f7",
+                "muted": "#a9b5c2",
+                "button_bg": "#273342",
+                "button_hover": "#314156",
+                "button_border": "#536274",
+                "disabled_bg": "#252d37",
+                "disabled_text": "#7b8795",
+                "accent": "#34a6a5",
+                "accent_hover": "#2b908f",
+                "accent_soft": "rgba(52,166,165,0.18)",
+                "info_bg": "#223041",
+                "info_text": "#c7d2df",
+                "info_border": "#43566d",
+                "success_bg": "#153a34",
+                "success_text": "#7ee2c9",
+                "success_border": "#327e70",
+                "warn_bg": "#3d321e",
+                "warn_text": "#f3c87a",
+                "warn_border": "#806334",
+                "error_bg": "#472b28",
+                "error_text": "#f1aaa0",
+                "error_border": "#8e5149",
+                "idle_bg": "#2e3846",
+                "idle_text": "#b8c3ce",
+                "idle_border": "#566373",
+            }
+        return {
+            "root_bg": "#dfe4ea",
+                "workspace_bg": "#e8eff4",
+                "nav_bg": "#182230",
+                "nav_border": "#223044",
+                "panel_bg": "#ffffff",
+                "panel_border": "#b8c7d5",
+                "card_bg": "#f6f9fc",
+                "card_border": "#b2c1d0",
+                "field_bg": "#ffffff",
+                "field_border": "#aebdcc",
+            "text": "#172233",
+            "muted": "#5d6b7c",
+            "button_bg": "#ffffff",
+            "button_hover": "#eef6fb",
+            "button_border": "#b9c4cf",
+            "disabled_bg": "#edf0f2",
+            "disabled_text": "#9aa4af",
+            "accent": "#137c8b",
+            "accent_hover": "#0f6976",
+            "accent_soft": "rgba(19,124,139,0.12)",
+            "info_bg": "#fff4df",
+            "info_text": "#536273",
+            "info_border": "#e3c47c",
+            "success_bg": "#e5f5ef",
+            "success_text": "#04765c",
+            "success_border": "#9bd4c4",
+            "warn_bg": "#fff4df",
+            "warn_text": "#94661b",
+            "warn_border": "#e3c47c",
+            "error_bg": "#fae8e4",
+            "error_text": "#9a4036",
+            "error_border": "#e0aaa3",
+            "idle_bg": "#eef2f6",
+            "idle_text": "#536273",
+            "idle_border": "#c7d0da",
+        }
+
+    def _apply_app_theme(self) -> None:
+        colors = self._theme_colors()
+        self.setStyleSheet(
+            f"""
+            QMainWindow, QWidget#appRoot {{
+                background: {colors["root_bg"]};
+                color: {colors["text"]};
+            }}
+            QFrame#navRail {{
+                background: {colors["nav_bg"]};
+                border-right: 1px solid {colors["nav_border"]};
+            }}
+            QFrame#dashboardCard {{
+                background: {colors["card_bg"]};
+                border: 1px solid {colors["card_border"]};
+                border-radius: 8px;
+            }}
+            QWidget#mainWorkspace {{
+                background: {colors["workspace_bg"]};
+            }}
+            QGroupBox {{
+                background: {colors["panel_bg"]};
+                border: 1px solid {colors["panel_border"]};
+                border-radius: 8px;
+                margin-top: 10px;
+                padding: 10px;
+                color: {colors["text"]};
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 12px;
+                padding: 0 6px;
+                color: {colors["muted"]};
+                font-weight: 700;
+            }}
+            QLabel {{
+                color: {colors["text"]};
+            }}
+            QPushButton {{
+                background: {colors["button_bg"]};
+                border: 1px solid {colors["button_border"]};
+                border-radius: 8px;
+                color: {colors["text"]};
+                padding: 6px 11px;
+            }}
+            QPushButton:hover {{
+                background: {colors["button_hover"]};
+            }}
+            QPushButton:checked {{
+                background: {colors["accent"]};
+                border: 1px solid {colors["accent"]};
+                color: #ffffff;
+                font-weight: 700;
+            }}
+            QPushButton:disabled {{
+                background: {colors["disabled_bg"]};
+                color: {colors["disabled_text"]};
+            }}
+            QPushButton#navButton {{
+                background: transparent;
+                border: 0;
+                border-radius: 8px;
+                color: #bdc8d6;
+                font-weight: 650;
+                padding: 8px 10px;
+                text-align: left;
+            }}
+            QPushButton#navButton:hover {{
+                background: rgba(255,255,255,0.08);
+            }}
+            QPushButton#navButton:checked {{
+                background: {colors["accent"]};
+                color: #ffffff;
+            }}
+            QLineEdit, QComboBox, QPlainTextEdit, QTextEdit, QListWidget, QSpinBox {{
+                background: {colors["field_bg"]};
+                border: 1px solid {colors["field_border"]};
+                border-radius: 8px;
+                color: {colors["text"]};
+                padding: 5px;
+                selection-background-color: {colors["accent"]};
+            }}
+            QComboBox {{
+                min-width: 260px;
+            }}
+            QComboBox QAbstractItemView, QListView#comboPopup {{
+                background: {colors["field_bg"]};
+                border: 1px solid {colors["field_border"]};
+                color: {colors["text"]};
+                selection-background-color: {colors["accent"]};
+                selection-color: #ffffff;
+                outline: 0;
+            }}
+            QComboBox QAbstractItemView::item, QListView#comboPopup::item {{
+                min-height: 28px;
+                padding: 4px 10px;
+            }}
+            QComboBox QAbstractItemView::item:hover, QListView#comboPopup::item:hover {{
+                background: {colors["button_hover"]};
+                color: {colors["text"]};
+            }}
+            QComboBox QAbstractItemView::item:selected, QListView#comboPopup::item:selected {{
+                background: {colors["accent"]};
+                color: #ffffff;
+            }}
+            QComboBox::drop-down {{
+                border: 0;
+                width: 30px;
+            }}
+            QToolButton {{
+                background: {colors["button_bg"]};
+                border: 1px solid {colors["button_border"]};
+                border-radius: 8px;
+                color: {colors["text"]};
+                padding: 5px 9px;
+            }}
+            QToolButton:hover {{
+                background: {colors["button_hover"]};
+            }}
+            QToolButton:disabled {{
+                background: {colors["disabled_bg"]};
+                color: {colors["disabled_text"]};
+            }}
+            QCheckBox {{
+                color: {colors["text"]};
+                spacing: 8px;
+            }}
+            QCheckBox:disabled {{
+                color: {colors["disabled_text"]};
+            }}
+            QDialog {{
+                background: {colors["workspace_bg"]};
+                color: {colors["text"]};
+            }}
+            QScrollBar:vertical {{
+                background: {colors["field_bg"]};
+                border: 0;
+                width: 12px;
+                margin: 2px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {colors["button_border"]};
+                border-radius: 5px;
+                min-height: 28px;
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0;
+            }}
+            QScrollBar:horizontal {{
+                background: {colors["field_bg"]};
+                border: 0;
+                height: 12px;
+                margin: 2px;
+            }}
+            QScrollBar::handle:horizontal {{
+                background: {colors["button_border"]};
+                border-radius: 5px;
+                min-width: 28px;
+            }}
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+                width: 0;
+            }}
+            """
+        )
+        self._refresh_theme_dependent_widgets()
+
+    def _combo_popup_style(self) -> str:
+        colors = self._theme_colors()
+        return (
+            f"QListView#comboPopup {{ background: {colors['field_bg']}; "
+            f"border: 1px solid {colors['field_border']}; color: {colors['text']}; "
+            f"selection-background-color: {colors['accent']}; selection-color: #ffffff; outline: 0; }}"
+            f"QListView#comboPopup::item {{ min-height: 28px; padding: 4px 10px; }}"
+            f"QListView#comboPopup::item:hover {{ background: {colors['button_hover']}; color: {colors['text']}; }}"
+            f"QListView#comboPopup::item:selected {{ background: {colors['accent']}; color: #ffffff; }}"
+        )
+
+    def _tool_button_style(self) -> str:
+        colors = self._theme_colors()
+        return (
+            f"QToolButton {{ background: {colors['button_bg']}; border: 1px solid {colors['button_border']}; "
+            f"border-radius: 8px; color: {colors['text']}; padding: 5px 9px; }}"
+            f"QToolButton:hover {{ background: {colors['button_hover']}; }}"
+            f"QToolButton:disabled {{ background: {colors['disabled_bg']}; color: {colors['disabled_text']}; }}"
+        )
+
+    def _refresh_theme_dependent_widgets(self) -> None:
+        popup_style = self._combo_popup_style()
+        for combo in self.findChildren(QComboBox):
+            if not isinstance(combo.view(), QListView):
+                combo.setView(QListView(combo))
+            combo.view().setObjectName("comboPopup")
+            combo.view().setStyleSheet(popup_style)
+            combo.view().viewport().setStyleSheet(f"background: {self._theme_colors()['field_bg']};")
+        tool_style = self._tool_button_style()
+        for button in self.findChildren(QToolButton):
+            button.setAutoRaise(False)
+            button.setStyleSheet(tool_style)
+        if hasattr(self, "ollama_connection_status"):
+            self._style_ollama_connection_status()
+        if hasattr(self, "stdout_label"):
+            self.stdout_label.setStyleSheet(self._muted_label_style())
+        if hasattr(self, "log_label"):
+            self.log_label.setStyleSheet(self._muted_label_style())
+        self._refresh_dashboard_contrast_styles()
+
+    def _style_number_input(self, spin_box: QSpinBox) -> None:
+        spin_box.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        spin_box.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+    def _confirm_action(self, title: str, message: str) -> QMessageBox.StandardButton:
+        colors = self._theme_colors()
+        dialog = QDialog(self)
+        dialog.setObjectName("confirmDialog")
+        dialog.setModal(True)
+        dialog.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+        dialog.setStyleSheet(
+            f"""
+            QDialog#confirmDialog {{
+                background: {colors['panel_bg']};
+                border: 1px solid {colors['panel_border']};
+                border-radius: 10px;
+            }}
+            QLabel#confirmTitle {{
+                color: {colors['text']};
+                font-size: 18px;
+                font-weight: 800;
+            }}
+            QLabel#confirmMessage {{
+                color: {colors['text']};
+                font-size: 15px;
+                font-weight: 650;
+                line-height: 1.25;
+            }}
+            """
+        )
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(26, 24, 26, 24)
+        layout.setSpacing(18)
+
+        title_label = QLabel(title)
+        title_label.setObjectName("confirmTitle")
+        layout.addWidget(title_label)
+
+        message_label = QLabel(message)
+        message_label.setObjectName("confirmMessage")
+        message_label.setWordWrap(True)
+        message_label.setMinimumWidth(520)
+        layout.addWidget(message_label)
+
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        no_button = QPushButton("No")
+        yes_button = QPushButton("Yes")
+        no_button.setMinimumWidth(82)
+        yes_button.setMinimumWidth(82)
+        result = {"button": QMessageBox.StandardButton.No}
+
+        def choose(button: QMessageBox.StandardButton) -> None:
+            result["button"] = button
+            dialog.accept()
+
+        no_button.clicked.connect(lambda: choose(QMessageBox.StandardButton.No))
+        yes_button.clicked.connect(lambda: choose(QMessageBox.StandardButton.Yes))
+        actions.addWidget(no_button)
+        actions.addWidget(yes_button)
+        layout.addLayout(actions)
+        no_button.setDefault(True)
+        dialog.exec()
+        return result["button"]
+
+    def _info_panel_style(self) -> str:
+        colors = self._theme_colors()
+        return (
+            f"background: {colors['info_bg']}; border: 1px solid {colors['info_border']}; "
+            f"border-radius: 8px; padding: 6px; color: {colors['info_text']};"
+        )
+
+    def _muted_label_style(self) -> str:
+        return f"color: {self._theme_colors()['muted']}; font-size: 13px;"
+
+    def _status_text_style(self, level: str) -> str:
+        colors = self._theme_colors()
+        color = {
+            "ok": colors["success_text"],
+            "warn": colors["warn_text"],
+            "error": colors["error_text"],
+        }.get(level, colors["muted"])
+        return f"color: {color}; font-size: 13px;"
+
+    def _style_ollama_connection_status(self) -> None:
+        if not hasattr(self, "ollama_connection_status"):
+            return
+        _text, level = self.ollama_health
+        self.ollama_connection_status.setStyleSheet(self._status_text_style(level))
+
+    def _refresh_dashboard_contrast_styles(self) -> None:
+        colors = self._theme_colors()
+        title_style = f"color: {colors['muted']}; font-size: 12px; font-weight: 700;"
+        for label in getattr(self, "dashboard_card_titles", []):
+            label.setStyleSheet(title_style)
+        plain_style = f"color: {colors['text']}; font-size: 14px;"
+        for name in (
+            "tone_status_label",
+            "signature_status_label",
+            "watcher_filter_status_label",
+            "last_activity_label",
+            "last_pass_label",
+            "last_failure_label",
+        ):
+            widget = getattr(self, name, None)
+            if isinstance(widget, QLabel):
+                widget.setStyleSheet(plain_style)
+
+    def _style_command_button(self, button: QPushButton) -> None:
+        colors = self._theme_colors()
+        button.setStyleSheet(
+            f"border: 1px solid {colors['button_border']}; border-radius: 8px; "
+            f"padding: 7px 11px; background: {colors['button_bg']}; color: {colors['text']};"
+        )
+
+    def _refresh_command_chrome(self) -> None:
+        if not hasattr(self, "version_label"):
+            return
+        colors = self._theme_colors()
+        self._style_appearance_switch()
+        self.version_label.setStyleSheet(
+            f"border: 1px solid {colors['button_border']}; border-radius: 8px; "
+            f"padding: 7px 11px; color: {colors['muted']}; background: {colors['button_bg']};"
+        )
+        self.dashboard_subtitle.setStyleSheet(f"font-size: 12px; color: {colors['muted']};")
+        self.progress_bar.setStyleSheet(
+            f"QProgressBar {{ border: 1px solid {colors['panel_border']}; border-radius: 8px; "
+            f"background: {colors['panel_bg']}; padding: 2px; color: {colors['text']}; }}"
+            f"QProgressBar::chunk {{ background: {colors['accent']}; border-radius: 6px; }}"
+        )
+
+    def _style_appearance_switch(self) -> None:
+        if not hasattr(self, "appearance_toggle"):
+            return
+        colors = self._theme_colors()
+        self.appearance_toggle.setStyleSheet(
+            f"QFrame#appearanceToggle {{ background: {colors['field_bg']}; "
+            f"border: 1px solid {colors['button_border']}; border-radius: 8px; }}"
+        )
+        segment_base = (
+            "border: 0; border-radius: 8px; margin: 2px; padding: 6px 9px; min-width: 58px; "
+            f"background: transparent; color: {colors['muted']};"
+        )
+        checked = (
+            f"QPushButton:checked {{ background: {colors['accent']}; color: #ffffff; font-weight: 800; }}"
+            f"QPushButton:hover {{ background: {colors['button_hover']}; }}"
+            f"QPushButton:checked:hover {{ background: {colors['accent_hover']}; color: #ffffff; }}"
+        )
+        self.system_toggle_button.setStyleSheet(
+            f"QPushButton {{ {segment_base} }}{checked}"
+        )
+        self.day_toggle_button.setStyleSheet(
+            f"QPushButton {{ {segment_base} }}{checked}"
+        )
+        self.night_toggle_button.setStyleSheet(
+            f"QPushButton {{ {segment_base} }}{checked}"
+        )
+
+    def _refresh_appearance_toggle(self) -> None:
+        if not hasattr(self, "system_toggle_button"):
+            return
+        self.system_toggle_button.setChecked(self.appearance == APPEARANCE_SYSTEM)
+        self.day_toggle_button.setChecked(self.appearance == APPEARANCE_DAY)
+        self.night_toggle_button.setChecked(self.appearance == APPEARANCE_NIGHT)
+
+    def set_appearance(self, appearance: str, *, persist: bool = True) -> None:
+        cleaned = (
+            appearance
+            if appearance in {APPEARANCE_SYSTEM, APPEARANCE_DAY, APPEARANCE_NIGHT}
+            else APPEARANCE_SYSTEM
+        )
+        if cleaned == self.appearance and hasattr(self, "day_toggle_button"):
+            self._refresh_appearance_toggle()
+            return
+        self.appearance = cleaned
+        self._apply_app_theme()
+        self._refresh_command_chrome()
+        self._refresh_appearance_toggle()
+        if hasattr(self, "banner") and self.banner.isVisible():
+            self._set_banner(self.banner.text(), level="info")
+        self._refresh_settings_progress_line()
+        self.refresh_dashboard()
+        if persist:
+            env_file = self.settings.root_dir / ".env"
+            current = read_env_file(env_file)
+            current["MAILASSIST_APPEARANCE"] = self.appearance
+            write_env_file(env_file, current)
+            self.settings = load_settings()
+
+    def _select_nav_item(self, label: str) -> None:
+        if not hasattr(self, "nav_buttons"):
+            return
+        for item_label, button in self.nav_buttons.items():
+            button.setChecked(item_label == label)
+
+    def _open_settings_nav_step(self, label: str, step_index: int) -> None:
+        self._show_embedded_settings(label)
+        self._show_settings_step(step_index)
+
+    def _handle_nav_click(self, label: str) -> None:
+        if label == "Dashboard":
+            if self.settings_open:
+                self.save_settings(announce=False)
+            self.settings_open = False
+            self._select_nav_item(label)
+            self._set_banner("")
+            self.dashboard_title.setText("Dashboard")
+            self.dashboard_subtitle.setText("Monitor provider access, local model health, and draft activity.")
+            self.main_stack.setCurrentWidget(self.dashboard_page)
+            self._refresh_bot_action_controls()
+            self.control_group.setFocus(Qt.FocusReason.MouseFocusReason)
+            return
+        if label == "Activity":
+            self._show_activity_page()
+            return
+        settings_steps = {
+            "Providers": 0,
+            "Model": 1,
+            "Tone": 2,
+            "Signature": 3,
+            "Advanced": 4,
+            "Review": 5,
+        }
+        step_index = settings_steps.get(label)
+        if step_index is not None:
+            self._open_settings_nav_step(label, step_index)
+
+    def _show_embedded_settings(self, label: str) -> None:
+        self.settings_open = True
+        self._select_nav_item(label)
+        self.dashboard_title.setText(label)
+        self.dashboard_subtitle.setText("Use the left rail to move between setup sections.")
+        self.main_stack.setCurrentWidget(self.settings_wizard)
+        self._refresh_bot_action_controls()
+
+    def _show_activity_page(self) -> None:
+        if self.settings_open:
+            self.save_settings(announce=False)
+        self.settings_open = False
+        self._select_nav_item("Activity")
+        self.dashboard_title.setText("Activity")
+        self.dashboard_subtitle.setText("Review saved run logs, live stdout, and the selected run timeline.")
+        self.main_stack.setCurrentWidget(self.activity_page)
+        self.refresh_bot_logs()
+        self._refresh_bot_action_controls()
+
+    def _build_dashboard_card(self, title: str, widget: QWidget) -> QFrame:
+        card = QFrame()
+        card.setObjectName("dashboardCard")
+        card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(5)
+        label = QLabel(title)
+        self.dashboard_card_titles = getattr(self, "dashboard_card_titles", [])
+        self.dashboard_card_titles.append(label)
+        label.setStyleSheet(f"color: {self._theme_colors()['muted']}; font-size: 12px; font-weight: 700;")
+        layout.addWidget(label)
+        if isinstance(widget, QLabel):
+            widget.setWordWrap(True)
+        layout.addWidget(widget)
+        return card
+
     def _build_ui(self) -> None:
         root = QWidget()
         root.setObjectName("appRoot")
-        shell = QVBoxLayout(root)
-        shell.setContentsMargins(10, 10, 10, 10)
-        shell.setSpacing(8)
-        self.setStyleSheet(
-            """
-            QMainWindow, QWidget#appRoot {
-                background: #f7efe6;
-            }
-            QGroupBox {
-                background: #fffaf4;
-                border: 1px solid #dfc7ad;
-                border-radius: 14px;
-                margin-top: 8px;
-                padding: 8px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 14px;
-                padding: 0 6px;
-                color: #8a5d2b;
-                font-weight: 700;
-            }
-            QPushButton {
-                background: #ffffff;
-                border: 1px solid #cfb89f;
-                border-radius: 9px;
-                color: #1d2430;
-                padding: 6px 12px;
-            }
-            QPushButton:hover {
-                background: #f5e5d1;
-            }
-            QPushButton:disabled {
-                background: #eee9e2;
-                color: #9c948b;
-            }
-            QLineEdit, QComboBox, QPlainTextEdit {
-                background: #ffffff;
-                border: 1px solid #cfb89f;
-                border-radius: 8px;
-                color: #1d2430;
-                padding: 5px;
-                selection-background-color: #2f6da3;
-            }
-            QComboBox {
-                min-width: 260px;
-            }
-            QCheckBox {
-                color: #1d2430;
-                spacing: 8px;
-            }
-            """
-        )
+        app_layout = QHBoxLayout(root)
+        app_layout.setContentsMargins(0, 0, 0, 0)
+        app_layout.setSpacing(0)
+        self._apply_app_theme()
 
-        hero = QHBoxLayout()
+        self.nav_rail = QFrame()
+        self.nav_rail.setObjectName("navRail")
+        self.nav_rail.setFixedWidth(176)
+        nav_layout = QVBoxLayout(self.nav_rail)
+        nav_layout.setContentsMargins(14, 16, 14, 16)
+        nav_layout.setSpacing(8)
+        nav_title = QLabel("MailAssist")
+        nav_title.setStyleSheet("font-size: 22px; font-weight: 850; color: #ffffff;")
+        nav_layout.addWidget(nav_title)
+        nav_subtitle = QLabel("Local draft ops")
+        nav_subtitle.setStyleSheet("font-size: 12px; font-weight: 650; color: #8fa2b8;")
+        nav_layout.addWidget(nav_subtitle)
+        nav_layout.addSpacing(12)
+        self.nav_buttons: dict[str, QPushButton] = {}
+        self.nav_button_group = QButtonGroup(self)
+        self.nav_button_group.setExclusive(True)
+        for label, checked in (
+            ("Dashboard", True),
+            ("Providers", False),
+            ("Model", False),
+            ("Tone", False),
+            ("Signature", False),
+            ("Advanced", False),
+            ("Review", False),
+            ("Activity", False),
+        ):
+            button = QPushButton(label)
+            button.setObjectName("navButton")
+            button.setCheckable(True)
+            button.setChecked(checked)
+            button.clicked.connect(partial(self._handle_nav_click, label))
+            self.nav_buttons[label] = button
+            self.nav_button_group.addButton(button)
+            nav_layout.addWidget(button)
+        nav_layout.addStretch(1)
+        nav_status = QLabel("Drafts only\nNo sending")
+        nav_status.setStyleSheet(
+            "font-size: 12px; color: #8fa2b8; border-top: 1px solid #2b394a; padding-top: 10px;"
+        )
+        nav_layout.addWidget(nav_status)
+        app_layout.addWidget(self.nav_rail)
+
+        main_workspace = QWidget()
+        main_workspace.setObjectName("mainWorkspace")
+        shell = QVBoxLayout(main_workspace)
+        shell.setContentsMargins(16, 14, 16, 14)
+        shell.setSpacing(10)
+        app_layout.addWidget(main_workspace, 1)
+
+        command_bar = QHBoxLayout()
+        command_bar.setSpacing(8)
         title_box = QVBoxLayout()
-        title = QLabel("MailAssist")
-        title.setStyleSheet("font-size: 26px; font-weight: 800; color: #1d2430;")
+        title_box.setSpacing(0)
+        title = QLabel("Dashboard")
+        self.dashboard_title = title
+        title.setStyleSheet("font-size: 22px; font-weight: 800;")
+        subtitle = QLabel("Monitor provider access, local model health, and draft activity.")
+        self.dashboard_subtitle = subtitle
+        subtitle.setStyleSheet(f"font-size: 12px; color: {self._theme_colors()['muted']};")
         title_box.addWidget(title)
-        hero.addLayout(title_box, 1)
+        title_box.addWidget(subtitle)
+        command_bar.addLayout(title_box, 1)
 
         self.version_label = QLabel(f"v{load_visible_version(self.settings.root_dir)}")
         self.version_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.version_label.setStyleSheet(
-            "border: 1px solid #dccbbb; border-radius: 16px; padding: 8px 12px; color: #5e6978;"
-        )
-        logs_button = QPushButton("View logs")
-        logs_button.setStyleSheet(
-            "border: 1px solid #dccbbb; border-radius: 18px; padding: 8px 14px; background: #fffaf4; color: #5e6978;"
-        )
-        logs_button.clicked.connect(self.open_bot_logs_dialog)
-        self.settings_button = QPushButton("Settings")
-        self.settings_button.setStyleSheet(
-            "border: 1px solid #dccbbb; border-radius: 18px; padding: 8px 14px; background: #fffaf4; color: #5e6978;"
-        )
-        self.settings_button.clicked.connect(self.open_settings_wizard)
-        hero.addWidget(self.settings_button)
-        hero.addWidget(logs_button)
-        hero.addWidget(self.version_label)
-        shell.addLayout(hero)
+        self.appearance_toggle = QFrame()
+        self.appearance_toggle.setObjectName("appearanceToggle")
+        appearance_layout = QHBoxLayout(self.appearance_toggle)
+        appearance_layout.setContentsMargins(0, 0, 0, 0)
+        appearance_layout.setSpacing(0)
+        self.system_toggle_button = QPushButton("System")
+        self.day_toggle_button = QPushButton("Day")
+        self.night_toggle_button = QPushButton("Night")
+        self.appearance_button_group = QButtonGroup(self)
+        self.appearance_button_group.setExclusive(True)
+        for button in (self.system_toggle_button, self.day_toggle_button, self.night_toggle_button):
+            button.setCheckable(True)
+            button.setToolTip("Use the system appearance or choose an explicit Day/Night appearance.")
+            self.appearance_button_group.addButton(button)
+            appearance_layout.addWidget(button)
+        self.system_toggle_button.clicked.connect(lambda: self.set_appearance(APPEARANCE_SYSTEM))
+        self.day_toggle_button.clicked.connect(lambda: self.set_appearance(APPEARANCE_DAY))
+        self.night_toggle_button.clicked.connect(lambda: self.set_appearance(APPEARANCE_NIGHT))
+        self._style_appearance_switch()
+        self._refresh_appearance_toggle()
+        command_bar.addWidget(self.appearance_toggle)
+        command_bar.addWidget(self.version_label)
+        shell.addLayout(command_bar)
 
         self.status_overlay = QWidget()
         self.status_overlay.hide()
@@ -459,10 +1041,7 @@ class MailAssistDesktopWindow(QMainWindow):
         self.progress_bar.setTextVisible(True)
         self.progress_bar.hide()
         self.progress_bar.setMinimumHeight(44)
-        self.progress_bar.setStyleSheet(
-            "QProgressBar { border: 1px solid #dccbbb; border-radius: 12px; background: #fffaf4; padding: 2px; }"
-            "QProgressBar::chunk { background: #2f6da3; border-radius: 10px; }"
-        )
+        self._refresh_command_chrome()
         status_layout.addWidget(self.progress_bar)
 
         self.banner = QLabel("")
@@ -473,14 +1052,20 @@ class MailAssistDesktopWindow(QMainWindow):
         status_layout.addWidget(self.banner)
         shell.addWidget(self.status_overlay)
 
-        self._build_settings_dialog()
+        self.main_stack = QStackedWidget()
+        self.main_stack.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        shell.addWidget(self.main_stack, 1)
+
+        self.dashboard_page = QWidget()
+        dashboard_layout = QVBoxLayout(self.dashboard_page)
+        dashboard_layout.setContentsMargins(0, 0, 0, 0)
+        dashboard_layout.setSpacing(10)
 
         self.control_group = QGroupBox("Bot Control")
         control_layout = QVBoxLayout(self.control_group)
         control_layout.setContentsMargins(14, 14, 14, 14)
         control_layout.setSpacing(10)
 
-        status_grid = _configure_form(QFormLayout())
         self.bot_status_label = QLabel("Idle")
         self.provider_status_label = QLabel(self.settings.default_provider)
         self.ollama_status_label = QLabel(self.settings.ollama_model)
@@ -490,25 +1075,25 @@ class MailAssistDesktopWindow(QMainWindow):
         self.last_activity_label = QLabel(self.last_activity_summary)
         self.last_pass_label = QLabel("No watch pass yet")
         self.last_failure_label = QLabel("None")
-        plain_style = "color: #1d2430; font-size: 14px;"
-        for label_text, widget, style in (
-            ("Bot", self.bot_status_label, ""),
-            ("Provider", self.provider_status_label, ""),
-            ("Ollama", self.ollama_status_label, ""),
-            ("Tone", self.tone_status_label, plain_style),
-            ("Signature", self.signature_status_label, plain_style),
-            ("Watcher filter", self.watcher_filter_status_label, plain_style),
-            ("Last activity", self.last_activity_label, plain_style),
-            ("Last pass", self.last_pass_label, plain_style),
-            ("Last failure", self.last_failure_label, plain_style),
-        ):
-            label = QLabel(label_text)
-            label.setStyleSheet("color: #5e6978; font-size: 12px;")
-            if style:
-                widget.setStyleSheet(style)
-            status_grid.addRow(label, widget)
+        self._refresh_dashboard_contrast_styles()
         self._set_bot_state("idle")
-        control_layout.addLayout(status_grid)
+        status_cards = QGridLayout()
+        status_cards.setSpacing(8)
+        for index, (label_text, widget) in enumerate(
+            (
+                ("Bot", self.bot_status_label),
+                ("Provider", self.provider_status_label),
+                ("Ollama", self.ollama_status_label),
+                ("Tone", self.tone_status_label),
+                ("Signature", self.signature_status_label),
+                ("Watcher filter", self.watcher_filter_status_label),
+                ("Last activity", self.last_activity_label),
+                ("Last pass", self.last_pass_label),
+                ("Last failure", self.last_failure_label),
+            )
+        ):
+            status_cards.addWidget(self._build_dashboard_card(label_text, widget), index // 3, index % 3)
+        control_layout.addLayout(status_cards)
 
         bot_actions = QHBoxLayout()
         bot_actions.setSpacing(6)
@@ -545,6 +1130,7 @@ class MailAssistDesktopWindow(QMainWindow):
             "It changes MailAssist categories only; it does not create drafts and does not send email."
         ))
         self.gmail_label_days_input = QSpinBox()
+        self._style_number_input(self.gmail_label_days_input)
         self.gmail_label_days_input.setRange(1, 30)
         self.gmail_label_days_input.setValue(7)
         self.gmail_label_days_input.setSuffix(" days")
@@ -554,6 +1140,7 @@ class MailAssistDesktopWindow(QMainWindow):
             "How far back Organize Gmail should look. Keep this small for quick checks; larger windows take longer."
         ))
         self.outlook_category_days_input = QSpinBox()
+        self._style_number_input(self.outlook_category_days_input)
         self.outlook_category_days_input.setRange(1, 30)
         self.outlook_category_days_input.setValue(7)
         self.outlook_category_days_input.setSuffix(" days")
@@ -594,21 +1181,29 @@ class MailAssistDesktopWindow(QMainWindow):
             self.stop_bot_button,
         ):
             button.setFixedHeight(action_height)
-        label_scan_actions = QHBoxLayout()
-        label_scan_actions.setSpacing(4)
-        label_scan_actions.addWidget(gmail_label_rescan_button)
-        label_scan_actions.addWidget(self.gmail_label_days_input)
-        label_scan_actions.addSpacing(6)
-        label_scan_actions.addWidget(outlook_category_rescan_button)
-        label_scan_actions.addWidget(self.outlook_category_days_input)
-        bot_actions.addWidget(gmail_draft_test_button)
-        bot_actions.addWidget(outlook_draft_preview_button)
-        bot_actions.addLayout(label_scan_actions)
-        bot_actions.addWidget(start_watch_loop_button)
-        bot_actions.addWidget(self.stop_bot_button)
+        preview_actions = QHBoxLayout()
+        preview_actions.setSpacing(6)
+        preview_actions.addWidget(gmail_draft_test_button)
+        preview_actions.addWidget(outlook_draft_preview_button)
+        organize_actions = QHBoxLayout()
+        organize_actions.setSpacing(4)
+        organize_actions.addWidget(gmail_label_rescan_button)
+        organize_actions.addWidget(self.gmail_label_days_input)
+        organize_actions.addSpacing(6)
+        organize_actions.addWidget(outlook_category_rescan_button)
+        organize_actions.addWidget(self.outlook_category_days_input)
+        auto_check_actions = QHBoxLayout()
+        auto_check_actions.setSpacing(6)
+        auto_check_actions.addWidget(start_watch_loop_button)
+        auto_check_actions.addWidget(self.stop_bot_button)
+        bot_actions.addLayout(preview_actions)
+        bot_actions.addSpacing(8)
+        bot_actions.addLayout(organize_actions)
+        bot_actions.addSpacing(8)
+        bot_actions.addLayout(auto_check_actions)
         bot_actions.addStretch(1)
         control_layout.addLayout(bot_actions)
-        shell.addWidget(self.control_group)
+        dashboard_layout.addWidget(self.control_group)
 
         self.activity_group = QGroupBox("Recent Activity")
         activity_layout = QVBoxLayout(self.activity_group)
@@ -646,33 +1241,32 @@ class MailAssistDesktopWindow(QMainWindow):
         self.recent_activity.setPlainText("No bot activity yet.")
         activity_body.addWidget(self.recent_activity, 1)
         activity_layout.addLayout(activity_body, 1)
-        shell.addWidget(self.activity_group, 1)
+        dashboard_layout.addWidget(self.activity_group, 1)
 
-        self._build_bot_logs_dialog()
+        self.activity_page = self._build_activity_page()
+
+        self.main_stack.addWidget(self.dashboard_page)
+        self.main_stack.addWidget(self.activity_page)
+        self.main_stack.addWidget(self._build_settings_wizard())
+        self.main_stack.setCurrentWidget(self.dashboard_page)
 
         self.setCentralWidget(root)
+        self._refresh_theme_dependent_widgets()
         self._refresh_setup_visibility()
 
-    def _build_bot_logs_dialog(self) -> None:
-        dialog = QDialog(self)
-        dialog.setModal(False)
-        dialog.setWindowTitle("MailAssist Bot Logs")
-        dialog.resize(980, 760)
-
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(18, 18, 18, 18)
-        layout.setSpacing(12)
-
-        layout.addWidget(self._build_bot_panel(), 1)
-
-        footer = QHBoxLayout()
-        footer.addStretch(1)
-        close_button = QPushButton("Done")
-        close_button.clicked.connect(dialog.close)
-        footer.addWidget(close_button)
-        layout.addLayout(footer)
-
-        self.bot_logs_dialog = dialog
+    def _build_activity_page(self) -> QWidget:
+        page = QWidget()
+        page.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+        activity_group = QGroupBox("Activity")
+        activity_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        activity_layout = QVBoxLayout(activity_group)
+        activity_layout.setContentsMargins(14, 14, 14, 14)
+        activity_layout.addWidget(self._build_bot_panel(), 1)
+        layout.addWidget(activity_group, 1)
+        return page
 
     def _build_bot_panel(self) -> QWidget:
         widget = QWidget()
@@ -689,9 +1283,9 @@ class MailAssistDesktopWindow(QMainWindow):
         bot_actions.addWidget(self.bot_log_selector, 1)
         layout.addLayout(bot_actions)
 
-        stdout_label = QLabel("Live stdout")
-        stdout_label.setStyleSheet("font-size: 13px; color: #5e6978;")
-        layout.addWidget(stdout_label)
+        self.stdout_label = QLabel("Live stdout")
+        self.stdout_label.setStyleSheet(self._muted_label_style())
+        layout.addWidget(self.stdout_label)
         self.bot_console = QPlainTextEdit()
         self.bot_console.setReadOnly(True)
         self.bot_console.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
@@ -701,9 +1295,9 @@ class MailAssistDesktopWindow(QMainWindow):
         layout.addWidget(self.bot_console)
 
         log_header = QHBoxLayout()
-        log_label = QLabel("Selected log")
-        log_label.setStyleSheet("font-size: 13px; color: #5e6978;")
-        log_header.addWidget(log_label)
+        self.log_label = QLabel("Selected log")
+        self.log_label.setStyleSheet(self._muted_label_style())
+        log_header.addWidget(self.log_label)
         log_header.addStretch(1)
         self.show_raw_log_checkbox = QCheckBox("Show raw JSON")
         self.show_raw_log_checkbox.toggled.connect(self.load_selected_bot_log)
@@ -718,63 +1312,51 @@ class MailAssistDesktopWindow(QMainWindow):
         return widget
 
     def open_settings_wizard(self) -> None:
-        if self.settings_dialog is None:
-            self._build_settings_dialog()
-        self.settings_open = True
-        self._refresh_setup_visibility()
-        self.settings_dialog.show()
-        self.settings_dialog.raise_()
-        self.settings_dialog.activateWindow()
-        self._set_banner("Settings are open in a separate window.", level="info")
+        self._open_settings_nav_step("Review", 5)
 
     def _build_settings_dialog(self) -> None:
         dialog = QDialog(self)
         dialog.setModal(False)
         dialog.setWindowTitle("MailAssist Settings")
-        dialog.resize(1120, 720)
+        dialog.resize(900, 560)
 
         layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(18, 18, 18, 18)
-        layout.setSpacing(12)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
         layout.addWidget(self._build_settings_wizard(), 1)
         dialog.finished.connect(self._settings_dialog_closed)
         self.settings_dialog = dialog
 
     def _settings_dialog_closed(self, _result: int = 0) -> None:
         self.settings_open = False
+        self._refresh_bot_action_controls()
         self._refresh_setup_visibility()
 
     def open_bot_logs_dialog(self) -> None:
-        if self.bot_logs_dialog is None:
-            self._build_bot_logs_dialog()
-        self.refresh_bot_logs()
-        self.bot_logs_dialog.show()
-        self.bot_logs_dialog.raise_()
-        self.bot_logs_dialog.activateWindow()
+        self._show_activity_page()
 
     def _build_settings_wizard(self) -> QWidget:
         widget = QWidget()
         self.settings_wizard = widget
         widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout = QVBoxLayout(widget)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(6)
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(5)
 
         self.settings_step_label = QLabel("")
         self.settings_step_label.hide()
 
         self.settings_step_title = QLabel("")
-        self.settings_step_title.setStyleSheet("font-size: 19px; font-weight: 800; color: #1d2430;")
+        self.settings_step_title.setStyleSheet("font-size: 17px; font-weight: 800; color: #1d2430;")
+        self.settings_step_title.hide()
         layout.addWidget(self.settings_step_title)
 
         self.settings_step_help = QLabel("")
         self.settings_step_help.setWordWrap(True)
         self.settings_step_help.setMinimumWidth(0)
-        self.settings_step_help.setMinimumHeight(46)
+        self.settings_step_help.setMinimumHeight(30)
         self.settings_step_help.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Maximum)
-        self.settings_step_help.setStyleSheet(
-            "background: #fff3df; border: 1px solid #dfc7ad; border-radius: 10px; padding: 6px; color: #5e6978;"
-        )
+        self.settings_step_help.setStyleSheet(self._info_panel_style())
         layout.addWidget(self.settings_step_help)
 
         self.settings_stack = QStackedWidget()
@@ -811,30 +1393,25 @@ class MailAssistDesktopWindow(QMainWindow):
             "Here is the global view of what MailAssist will do. The prompt preview is read-only and uses a sanitized sample email.",
             self._build_wizard_summary_page(),
         )
-        layout.insertWidget(0, self._build_settings_progress_line())
-        self.settings_stack.setMinimumHeight(420)
+        self.settings_stack.setMinimumHeight(300)
         layout.addWidget(self.settings_stack, 1)
 
-        nav = QHBoxLayout()
-        nav.setSpacing(10)
         self.settings_back_button = QPushButton("Back")
         self.settings_back_button.setMinimumWidth(120)
         self.settings_back_button.clicked.connect(self._previous_settings_step)
+        self.settings_back_button.hide()
         self.settings_next_button = QPushButton("Next")
         self.settings_next_button.setMinimumWidth(120)
         self.settings_next_button.clicked.connect(self._next_settings_step)
+        self.settings_next_button.hide()
         self.settings_done_button = QPushButton("Done")
         self.settings_done_button.setMinimumWidth(140)
         self.settings_done_button.clicked.connect(self.finish_settings_wizard)
+        self.settings_done_button.hide()
         self.settings_advanced_button = QPushButton("Advanced settings")
         self.settings_advanced_button.setMinimumWidth(160)
         self.settings_advanced_button.clicked.connect(lambda _checked=False: self._open_advanced_settings_step())
-        nav.addWidget(self.settings_back_button)
-        nav.addStretch(1)
-        nav.addWidget(self.settings_advanced_button)
-        nav.addWidget(self.settings_next_button)
-        nav.addWidget(self.settings_done_button)
-        layout.addLayout(nav)
+        self.settings_advanced_button.hide()
 
         self.settings_step_index = 0
         self._show_settings_step(0)
@@ -853,7 +1430,7 @@ class MailAssistDesktopWindow(QMainWindow):
             button.setFlat(True)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.setMinimumWidth(64)
-            button.setMaximumHeight(42)
+            button.setMaximumHeight(36)
             button.clicked.connect(partial(self._jump_to_settings_step, step_index))
             self.settings_progress_buttons.append((button, step_index))
             layout.addWidget(button)
@@ -951,22 +1528,27 @@ class MailAssistDesktopWindow(QMainWindow):
         self.watcher_unread_only_checkbox = self.gmail_watcher_unread_only_checkbox
         self.watcher_time_window_combo = self.gmail_watcher_time_window_combo
 
-        layout.addWidget(
+        provider_row = QHBoxLayout()
+        provider_row.setSpacing(10)
+        provider_row.addWidget(
             self._build_provider_filter_group(
                 "Gmail",
                 self.gmail_enabled,
                 self.gmail_watcher_unread_only_checkbox,
                 self.gmail_watcher_time_window_combo,
-            )
+            ),
+            1,
         )
-        layout.addWidget(
+        provider_row.addWidget(
             self._build_provider_filter_group(
                 "Outlook",
                 self.outlook_enabled,
                 self.outlook_watcher_unread_only_checkbox,
                 self.outlook_watcher_time_window_combo,
-            )
+            ),
+            1,
         )
+        layout.addLayout(provider_row)
         layout.addWidget(self._build_category_settings_group())
         layout.addStretch(1)
         return widget
@@ -979,7 +1561,8 @@ class MailAssistDesktopWindow(QMainWindow):
         time_window_combo: QComboBox,
     ) -> QGroupBox:
         group = QGroupBox(title)
-        group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        group.setMinimumHeight(138)
         layout = QVBoxLayout(group)
         layout.setSpacing(8)
         layout.setContentsMargins(18, 16, 18, 16)
@@ -1029,12 +1612,9 @@ class MailAssistDesktopWindow(QMainWindow):
         if category.lower() == LOCKED_NEEDS_REPLY_CATEGORY.lower():
             self._set_banner("Needs Reply is locked because it drives draft generation.", level="info")
             return
-        confirmation = QMessageBox.question(
-            self,
+        confirmation = self._confirm_action(
             "Remove Category",
             f"Remove {category} from MailAssist Categories?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
         )
         if confirmation != QMessageBox.StandardButton.Yes:
             return
@@ -1069,8 +1649,8 @@ class MailAssistDesktopWindow(QMainWindow):
         actions.setSpacing(6)
         self.mailassist_category_list = QListWidget()
         self.mailassist_category_list.setMinimumWidth(420)
-        self.mailassist_category_list.setMinimumHeight(128)
-        self.mailassist_category_list.setMaximumHeight(170)
+        self.mailassist_category_list.setMinimumHeight(96)
+        self.mailassist_category_list.setMaximumHeight(124)
         for category in self.settings.mailassist_categories:
             self.mailassist_category_list.addItem(category)
         if self.mailassist_category_list.count():
@@ -1100,41 +1680,41 @@ class MailAssistDesktopWindow(QMainWindow):
             "draft generation."
         )
         note.setWordWrap(True)
-        note.setStyleSheet("color: #5e6978; font-size: 13px;")
+        note.setStyleSheet(self._muted_label_style())
         layout.addWidget(note)
         return group
 
     def _build_wizard_ollama_model_page(self) -> QWidget:
         widget = QWidget()
-        widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
-        layout = QVBoxLayout(widget)
-        layout.setSpacing(12)
+        widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        layout = QHBoxLayout(widget)
+        layout.setSpacing(10)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         model_group = QGroupBox("Local AI Model")
         self.ollama_model_group = model_group
-        model_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
-        model_group.setMaximumHeight(410)
+        model_group.setMinimumHeight(400)
+        model_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         model_layout = QVBoxLayout(model_group)
-        model_layout.setSpacing(6)
-        model_layout.setContentsMargins(18, 16, 18, 14)
+        model_layout.setSpacing(10)
+        model_layout.setContentsMargins(18, 18, 18, 16)
         model_form = _configure_form(QFormLayout())
         self.ollama_model_picker = QComboBox()
         self.ollama_model_picker.setMinimumWidth(520)
         self.ollama_model_picker.currentIndexChanged.connect(self._ollama_model_selection_changed)
         model_form.addRow("Model", self.ollama_model_picker)
         self.ollama_connection_status = QLabel("Checking Ollama...")
-        self.ollama_connection_status.setStyleSheet("color: #5e6978; font-size: 13px;")
+        self.ollama_connection_status.setStyleSheet(self._muted_label_style())
         model_form.addRow("Status", self.ollama_connection_status)
         model_layout.addLayout(model_form)
         self.ollama_models_hint = QLabel("")
         self.ollama_models_hint.setWordWrap(True)
-        self.ollama_models_hint.setStyleSheet("color: #5e6978; font-size: 13px;")
+        self.ollama_models_hint.setStyleSheet(self._muted_label_style())
         self.ollama_models_hint.hide()
         self.ollama_model_hint = QLabel("")
         self.ollama_model_hint.setWordWrap(True)
-        self.ollama_model_hint.setStyleSheet(
-            "background: #fffaf4; border: 1px solid #dccbbb; border-radius: 10px; padding: 8px; color: #1d2430;"
-        )
+        self.ollama_model_hint.setMinimumHeight(184)
+        self.ollama_model_hint.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.ollama_model_hint.setStyleSheet(self._info_panel_style())
         model_layout.addWidget(self.ollama_model_hint)
         actions = QHBoxLayout()
         refresh_models_button = QPushButton("Refresh model list")
@@ -1159,31 +1739,45 @@ class MailAssistDesktopWindow(QMainWindow):
         ))
         actions.addWidget(refresh_models_button)
         actions.addWidget(test_button)
-        actions.addWidget(self.stop_ollama_button)
-        actions.addWidget(self.restart_ollama_button)
-        actions.addStretch(1)
         model_layout.addLayout(actions)
+        recovery_actions = QHBoxLayout()
+        recovery_actions.addWidget(self.stop_ollama_button)
+        recovery_actions.addWidget(self.restart_ollama_button)
+        recovery_actions.addStretch(1)
+        model_layout.addLayout(recovery_actions)
+        layout.addWidget(model_group, 1, Qt.AlignmentFlag.AlignTop)
+
+        result_group = QGroupBox("Model Check")
+        self.ollama_result_group = result_group
+        result_group.setMinimumHeight(400)
+        result_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        result_layout = QVBoxLayout(result_group)
+        result_layout.setContentsMargins(18, 16, 18, 14)
+        result_layout.setSpacing(8)
         self.ollama_result_label = QLabel("Model test result")
-        self.ollama_result_label.setStyleSheet("font-size: 13px; color: #5e6978;")
+        self.ollama_result_label.setStyleSheet(self._muted_label_style())
         self.ollama_result_label.setMaximumHeight(22)
         self.ollama_result_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        model_layout.addWidget(self.ollama_result_label)
+        result_layout.addWidget(self.ollama_result_label)
         self.ollama_result = QPlainTextEdit()
         self.ollama_result.setReadOnly(True)
         self.ollama_result.setPlainText("Send a small test prompt to see the model response here.")
-        self.ollama_result.setMinimumHeight(104)
-        self.ollama_result.setMaximumHeight(124)
-        model_layout.addWidget(self.ollama_result)
-        layout.addWidget(model_group, 0, Qt.AlignmentFlag.AlignTop)
+        self.ollama_result.setMinimumHeight(180)
+        self.ollama_result.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        result_layout.addWidget(self.ollama_result, 1)
+        layout.addWidget(result_group, 1, Qt.AlignmentFlag.AlignTop)
         return widget
 
     def _build_wizard_writing_style_page(self) -> QWidget:
         widget = QWidget()
-        widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
-        layout = QVBoxLayout(widget)
-        layout.setSpacing(12)
+        widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        layout = QHBoxLayout(widget)
+        layout.setSpacing(10)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         style_group = QGroupBox("Writing Style")
-        style_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        self.writing_style_group = style_group
+        style_group.setMinimumHeight(186)
+        style_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         style_layout = _configure_form(QFormLayout(style_group))
         self.tone_combo = QComboBox()
         self.tone_combo.setMinimumWidth(420)
@@ -1194,8 +1788,23 @@ class MailAssistDesktopWindow(QMainWindow):
             self.tone_combo.setCurrentIndex(tone_index)
         self.tone_combo.currentIndexChanged.connect(self._refresh_prompt_preview)
         style_layout.addRow("Default tone", self.tone_combo)
-        style_layout.addRow("Elders", self._build_elder_contacts_editor())
-        layout.addWidget(style_group, 0, Qt.AlignmentFlag.AlignTop)
+        layout.addWidget(style_group, 1, Qt.AlignmentFlag.AlignTop)
+
+        elders_group = QGroupBox("Relationship Guidance")
+        self.relationship_guidance_group = elders_group
+        elders_group.setMinimumHeight(186)
+        elders_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        elders_layout = QVBoxLayout(elders_group)
+        elders_layout.setContentsMargins(18, 16, 18, 14)
+        elders_note = QLabel(
+            "Add contacts who should receive special respect or register guidance. "
+            "Only matching sender threads get this context."
+        )
+        elders_note.setWordWrap(True)
+        elders_note.setStyleSheet(self._muted_label_style())
+        elders_layout.addWidget(elders_note)
+        elders_layout.addWidget(self._build_elder_contacts_editor())
+        layout.addWidget(elders_group, 2, Qt.AlignmentFlag.AlignTop)
         return widget
 
     def _build_elder_contacts_editor(self) -> QWidget:
@@ -1221,8 +1830,8 @@ class MailAssistDesktopWindow(QMainWindow):
         actions.addStretch(1)
         self.elder_contacts_list = QListWidget()
         self.elder_contacts_list.setMinimumWidth(420)
-        self.elder_contacts_list.setMinimumHeight(104)
-        self.elder_contacts_list.setMaximumHeight(150)
+        self.elder_contacts_list.setMinimumHeight(78)
+        self.elder_contacts_list.setMaximumHeight(108)
         for contact in self.settings.elder_contacts:
             self._append_elder_contact_item(contact)
         if self.elder_contacts_list.count():
@@ -1233,25 +1842,32 @@ class MailAssistDesktopWindow(QMainWindow):
 
     def _build_wizard_signature_page(self) -> QWidget:
         widget = QWidget()
-        widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
-        layout = QVBoxLayout(widget)
-        layout.setSpacing(8)
+        widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        layout = QHBoxLayout(widget)
+        layout.setSpacing(10)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+
         signature_group = QGroupBox("Signature")
-        signature_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        signature_group.setMinimumHeight(430)
+        signature_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         signature_layout = QVBoxLayout(signature_group)
-        signature_layout.setSpacing(8)
+        signature_layout.setContentsMargins(18, 18, 18, 16)
+        signature_layout.setSpacing(10)
+
         self.signature_input = QTextEdit()
         if self.settings.user_signature_html.strip():
             self.signature_input.setHtml(self.settings.user_signature_html)
         else:
             self.signature_input.setPlainText(self.settings.user_signature)
         self.signature_input.setPlaceholderText("Best regards,\nYour Name")
-        self.signature_input.setMinimumHeight(110)
-        self.signature_input.setMaximumHeight(140)
+        self.signature_input.setMinimumHeight(260)
+        self.signature_input.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.signature_input.setAcceptRichText(True)
         self.signature_input.textChanged.connect(self._refresh_prompt_preview)
+
         signature_toolbar = QHBoxLayout()
         signature_toolbar.setSpacing(6)
+        self.signature_toolbar_buttons: list[QToolButton] = []
         for label, callback in (
             ("B", self._toggle_signature_bold),
             ("I", self._toggle_signature_italic),
@@ -1270,10 +1886,12 @@ class MailAssistDesktopWindow(QMainWindow):
             )
             button.setAutoRaise(True)
             button.clicked.connect(callback)
+            self.signature_toolbar_buttons.append(button)
             signature_toolbar.addWidget(button)
         signature_toolbar.addStretch(1)
         signature_layout.addLayout(signature_toolbar)
-        signature_layout.addWidget(self.signature_input)
+        signature_layout.addWidget(self.signature_input, 1)
+
         attribution_row = QHBoxLayout()
         attribution_label = QLabel("Attribution")
         self.attribution_placement_combo = QComboBox()
@@ -1293,12 +1911,7 @@ class MailAssistDesktopWindow(QMainWindow):
         attribution_row.addWidget(self.attribution_placement_combo)
         attribution_row.addStretch(1)
         signature_layout.addLayout(attribution_row)
-        self.signature_attribution_preview = QTextEdit()
-        self.signature_attribution_preview.setReadOnly(True)
-        self.signature_attribution_preview.setAcceptRichText(True)
-        self.signature_attribution_preview.setMinimumHeight(110)
-        self.signature_attribution_preview.setMaximumHeight(150)
-        signature_layout.addWidget(self.signature_attribution_preview)
+
         signature_actions = QHBoxLayout()
         import_button = QPushButton("Import from Gmail")
         import_button.clicked.connect(lambda _checked=False: self._import_gmail_signature(force=True))
@@ -1306,13 +1919,30 @@ class MailAssistDesktopWindow(QMainWindow):
         signature_actions.addStretch(1)
         signature_layout.addLayout(signature_actions)
         self.gmail_signature_status = QLabel(
-            "MailAssist can start from your Gmail signature if Gmail exposes one."
+            "Import from Gmail can replace this signature."
         )
         self.gmail_signature_status.setWordWrap(True)
-        self.gmail_signature_status.setStyleSheet("color: #5e6978; font-size: 13px;")
+        self.gmail_signature_status.setMinimumHeight(34)
+        self.gmail_signature_status.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.gmail_signature_status.setStyleSheet(self._muted_label_style())
         signature_layout.addWidget(self.gmail_signature_status)
+
+        preview_group = QGroupBox("Preview")
+        preview_group.setMinimumHeight(430)
+        preview_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        preview_layout = QVBoxLayout(preview_group)
+        preview_layout.setContentsMargins(18, 18, 18, 16)
+        preview_layout.setSpacing(10)
+        self.signature_attribution_preview = QTextEdit()
+        self.signature_attribution_preview.setReadOnly(True)
+        self.signature_attribution_preview.setAcceptRichText(True)
+        self.signature_attribution_preview.setMinimumHeight(260)
+        self.signature_attribution_preview.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        preview_layout.addWidget(self.signature_attribution_preview, 1)
+
         self._refresh_prompt_preview()
-        layout.addWidget(signature_group, 0, Qt.AlignmentFlag.AlignTop)
+        layout.addWidget(signature_group, 1)
+        layout.addWidget(preview_group, 1)
         return widget
 
     def _build_wizard_advanced_choice_page(self) -> QWidget:
@@ -1331,43 +1961,77 @@ class MailAssistDesktopWindow(QMainWindow):
         widget = QWidget()
         widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         layout = QVBoxLayout(widget)
-        layout.setSpacing(8)
+        layout.setSpacing(10)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        advanced_group = QGroupBox("Advanced Settings")
-        advanced_layout = _configure_form(QFormLayout(advanced_group))
+        top_row = QHBoxLayout()
+        top_row.setSpacing(10)
+
+        local_group = QGroupBox("Local Model Connection")
+        local_layout = _configure_form(QFormLayout(local_group))
         self.ollama_url_input = _wide_line_edit(self.settings.ollama_url)
-        self.gmail_credentials_input = _wide_line_edit(str(self.settings.gmail_credentials_file), min_width=620)
-        self.gmail_token_input = _wide_line_edit(str(self.settings.gmail_token_file), min_width=620)
-        advanced_layout.addRow("Ollama URL", self.ollama_url_input)
-        advanced_layout.addRow("Client secret", self.gmail_credentials_input)
-        advanced_layout.addRow("Local token", self.gmail_token_input)
+        local_layout.addRow("Ollama URL", self.ollama_url_input)
+        refresh_button = QPushButton("Check connection and refresh models")
+        refresh_button.clicked.connect(self.refresh_models)
+        local_layout.addRow("", refresh_button)
+
+        watcher_group = QGroupBox("Watcher")
+        watcher_group.setMinimumHeight(186)
+        watcher_layout = _configure_form(QFormLayout(watcher_group))
         self.bot_poll_seconds_input = QSpinBox()
+        self._style_number_input(self.bot_poll_seconds_input)
         self.bot_poll_seconds_input.setRange(5, 3600)
         self.bot_poll_seconds_input.setSingleStep(5)
         self.bot_poll_seconds_input.setMinimumHeight(max(34, self.ollama_url_input.sizeHint().height()))
         self.bot_poll_seconds_input.setValue(max(5, int(self.settings.bot_poll_seconds or 30)))
-        advanced_layout.addRow("Check frequency (default 30 seconds)", self.bot_poll_seconds_input)
-        layout.addWidget(advanced_group)
+        watcher_layout.addRow("Check frequency", self.bot_poll_seconds_input)
+        self.watcher_note = QLabel("Default is 30 seconds. Higher values reduce background activity.")
+        self.watcher_note.setWordWrap(True)
+        self.watcher_note.setMinimumHeight(72)
+        self.watcher_note.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.watcher_note.setStyleSheet(self._muted_label_style())
+        watcher_layout.addRow("", self.watcher_note)
+        top_row.addWidget(local_group, 2)
+        top_row.addWidget(watcher_group, 1)
+        layout.addLayout(top_row)
 
-        refresh_button = QPushButton("Check connection and refresh models")
-        refresh_button.clicked.connect(self.refresh_models)
-        layout.addWidget(refresh_button)
+        gmail_group = QGroupBox("Gmail Files")
+        gmail_layout = _configure_form(QFormLayout(gmail_group))
+        self.gmail_credentials_input = _wide_line_edit(str(self.settings.gmail_credentials_file), min_width=420)
+        self.gmail_token_input = _wide_line_edit(str(self.settings.gmail_token_file), min_width=420)
+        gmail_layout.addRow("Client secret", self.gmail_credentials_input)
+        gmail_layout.addRow("Local token", self.gmail_token_input)
+        layout.addWidget(gmail_group)
         return widget
 
     def _build_wizard_summary_page(self) -> QWidget:
         widget = QWidget()
         widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        layout = QVBoxLayout(widget)
-        layout.setSpacing(0)
+        layout = QHBoxLayout(widget)
+        layout.setSpacing(10)
+        overview_group = QGroupBox("Current Settings")
+        overview_layout = QVBoxLayout(overview_group)
+        overview_layout.setContentsMargins(14, 14, 14, 14)
+        self.settings_overview = QPlainTextEdit()
+        self.settings_overview.setReadOnly(True)
+        self.settings_overview.setMinimumWidth(300)
+        self.settings_overview.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        overview_layout.addWidget(self.settings_overview)
+        layout.addWidget(overview_group, 1)
+
+        prompt_group = QGroupBox("Prompt Preview")
+        prompt_layout = QVBoxLayout(prompt_group)
+        prompt_layout.setContentsMargins(14, 14, 14, 14)
         self.settings_summary = QPlainTextEdit()
         self.settings_summary.setReadOnly(True)
-        self.settings_summary.setMinimumHeight(240)
+        self.settings_summary.setMinimumHeight(160)
         self.settings_summary.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         font = QFont("Menlo")
         font.setStyleHint(QFont.StyleHint.Monospace)
         self.settings_summary.setFont(font)
-        layout.addWidget(self.settings_summary, 1)
+        self.settings_overview.setFont(font)
+        prompt_layout.addWidget(self.settings_summary, 1)
+        layout.addWidget(prompt_group, 2)
         return widget
 
     def _show_settings_step(self, index: int) -> None:
@@ -1380,13 +2044,16 @@ class MailAssistDesktopWindow(QMainWindow):
         self.settings_step_title.setText(title)
         if help_text.strip():
             self.settings_step_help.setText(help_text)
+            self.settings_step_help.setStyleSheet(self._info_panel_style())
+            self.settings_step_help.show()
         else:
             self.settings_step_help.setText(" ")
+            self.settings_step_help.hide()
         self.settings_back_button.setEnabled(self.settings_step_index > 0)
         is_last = self._next_visible_settings_index(self.settings_step_index) == self.settings_step_index
-        self.settings_next_button.setVisible(not is_last)
-        self.settings_done_button.setVisible(True)
-        self.settings_advanced_button.setVisible(self.settings_step_index == 3)
+        self.settings_next_button.setVisible(False)
+        self.settings_done_button.setVisible(False)
+        self.settings_advanced_button.setVisible(False)
         self._refresh_settings_progress_line()
         if title == "Review Choices":
             self._refresh_prompt_preview()
@@ -1399,10 +2066,10 @@ class MailAssistDesktopWindow(QMainWindow):
         if not hasattr(self, "signature_input") or not hasattr(self, "gmail_signature_status"):
             return
         if not self.gmail_enabled.isChecked():
-            self.gmail_signature_status.setText("Enable Gmail first, then MailAssist can try importing its saved signature.")
+            self.gmail_signature_status.setText("Enable Gmail first to import its saved signature.")
             return
         if not force and self.signature_input.toPlainText().strip():
-            self.gmail_signature_status.setText("Using your saved MailAssist signature. Use Import from Gmail to replace it.")
+            self.gmail_signature_status.setText("Using saved MailAssist signature.")
             return
         self.gmail_signature_status.setText("Checking Gmail for a saved signature...")
         provider = GmailProvider(
@@ -1415,7 +2082,7 @@ class MailAssistDesktopWindow(QMainWindow):
             self.gmail_signature_status.setText(str(exc))
             return
         if result is None:
-            self.gmail_signature_status.setText("No Gmail signature was found. You can type one here.")
+            self.gmail_signature_status.setText("No Gmail signature was found.")
             return
         if result.signature_html:
             self.signature_input.setHtml(result.signature_html)
@@ -1423,7 +2090,7 @@ class MailAssistDesktopWindow(QMainWindow):
             self.signature_input.setPlainText(result.signature)
         source = f" from {result.send_as_email}" if result.send_as_email else ""
         self.gmail_signature_status.setText(
-            f"Imported Gmail signature{source}. You can edit it before continuing."
+            f"Imported Gmail signature{source}."
         )
 
     def _refresh_settings_progress_line(self) -> None:
@@ -1462,7 +2129,6 @@ class MailAssistDesktopWindow(QMainWindow):
     def _refresh_setup_visibility(self) -> None:
         if not hasattr(self, "control_group"):
             return
-        self.settings_button.setVisible(True)
         self.control_group.setVisible(True)
         self.activity_group.setVisible(True)
 
@@ -1543,7 +2209,11 @@ class MailAssistDesktopWindow(QMainWindow):
             "",
             self._prompt_preview_text(),
         ]
-        self.settings_summary.setPlainText("\n".join(lines))
+        overview_lines = lines[: lines.index("Prompt preview (read-only)") - 1]
+        prompt_lines = lines[lines.index("Prompt preview (read-only)") :]
+        if hasattr(self, "settings_overview"):
+            self.settings_overview.setPlainText("\n".join(overview_lines))
+        self.settings_summary.setPlainText("\n".join(prompt_lines))
 
     def _refresh_ollama_model_hint(self) -> None:
         if not hasattr(self, "ollama_model_hint"):
@@ -1705,12 +2375,9 @@ class MailAssistDesktopWindow(QMainWindow):
         if not contacts:
             return
         contact = contacts[0]
-        confirmation = QMessageBox.question(
-            self,
+        confirmation = self._confirm_action(
             "Remove Elder",
             f"Remove {contact.email} from the Elders list?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
         )
         if confirmation != QMessageBox.StandardButton.Yes:
             return
@@ -1799,11 +2466,11 @@ class MailAssistDesktopWindow(QMainWindow):
             self._refresh_status_overlay_visibility()
             return
         style = (
-            "padding: 10px 12px; border-radius: 12px; "
+            "padding: 10px 12px; border-radius: 8px; "
             + (
-                "background: rgba(33,95,74,0.12); color: #215f4a;"
+                f"background: {self._theme_colors()['accent_soft']}; color: {self._theme_colors()['accent']};"
                 if level == "info"
-                else "background: rgba(140,64,41,0.12); color: #8c4029;"
+                else f"background: {self._theme_colors()['error_bg']}; color: {self._theme_colors()['error_text']};"
             )
         )
         self.banner.setStyleSheet(style)
@@ -1844,19 +2511,61 @@ class MailAssistDesktopWindow(QMainWindow):
     }
 
     def _paint_status_pill(self, widget: QLabel, level: str) -> None:
-        base = self._PILL_STYLES.get(level, self._PILL_STYLES["idle"])
+        colors = self._theme_colors()
+        dynamic_styles = {
+            "ok": (
+                f"background: {colors['success_bg']}; color: {colors['success_text']}; "
+                f"border: 1px solid {colors['success_border']};"
+            ),
+            "running": (
+                f"background: {colors['warn_bg']}; color: {colors['warn_text']}; "
+                f"border: 1px solid {colors['warn_border']};"
+            ),
+            "warn": (
+                f"background: {colors['warn_bg']}; color: {colors['warn_text']}; "
+                f"border: 1px solid {colors['warn_border']};"
+            ),
+            "error": (
+                f"background: {colors['error_bg']}; color: {colors['error_text']}; "
+                f"border: 1px solid {colors['error_border']};"
+            ),
+            "idle": (
+                f"background: {colors['idle_bg']}; color: {colors['idle_text']}; "
+                f"border: 1px solid {colors['idle_border']};"
+            ),
+        }
+        base = dynamic_styles.get(level, dynamic_styles["idle"])
         widget.setStyleSheet(
-            f"{base} border-radius: 10px; padding: 3px 10px; font-size: 13px; font-weight: 600;"
+            f"{base} border-radius: 9px; padding: 3px 10px; font-size: 13px; font-weight: 600;"
         )
 
     def _set_bot_state(self, state: str, text: str | None = None) -> None:
         labels = {"idle": "Idle", "running": "Running", "error": "Error"}
-        display = text if text is not None else labels.get(state, state.title())
+        if state == "error":
+            if text:
+                self.last_bot_error_label = text
+            display = text or self.last_bot_error_label or labels["error"]
+        else:
+            self.last_bot_error_label = ""
+            display = text if text is not None else labels.get(state, state.title())
         self.bot_status_label.setText(display)
         self._paint_status_pill(self.bot_status_label, "running" if state == "running" else state)
         self.last_bot_state = state
 
-    def _bot_start_controls(self) -> list[QWidget]:
+    def _short_bot_error_label(self, failure: str, *, provider: str = "") -> str:
+        normalized = " ".join(failure.split()).lower()
+        provider_key = provider.strip().lower()
+        if "invalid_grant" in normalized or "outlook sign-in expired" in normalized:
+            return "Outlook sign-in expired"
+        if provider_key == "outlook" and ("sign-in expired" in normalized or "sign in expired" in normalized):
+            return "Outlook sign-in expired"
+        if "gmail sign-in expired" in normalized:
+            return "Gmail sign-in expired"
+        if provider_key == "gmail" and ("sign-in expired" in normalized or "sign in expired" in normalized):
+            return "Gmail sign-in expired"
+        return "Error"
+
+    def _main_bot_start_controls(self) -> list[QWidget]:
         controls: list[QWidget] = []
         for name in (
             "gmail_draft_preview_button",
@@ -1864,7 +2573,6 @@ class MailAssistDesktopWindow(QMainWindow):
             "gmail_label_rescan_button",
             "outlook_category_rescan_button",
             "start_watch_loop_button",
-            "test_ollama_button",
         ):
             control = getattr(self, name, None)
             if isinstance(control, QWidget):
@@ -1873,6 +2581,13 @@ class MailAssistDesktopWindow(QMainWindow):
             control = getattr(self, name, None)
             if isinstance(control, QWidget):
                 controls.append(control)
+        return controls
+
+    def _bot_start_controls(self) -> list[QWidget]:
+        controls = self._main_bot_start_controls()
+        control = getattr(self, "test_ollama_button", None)
+        if isinstance(control, QWidget):
+            controls.append(control)
         return controls
 
     def _set_bot_busy_cursor(self, busy: bool) -> None:
@@ -1888,6 +2603,9 @@ class MailAssistDesktopWindow(QMainWindow):
         busy = self.bot_process is not None
         for control in self._bot_start_controls():
             control.setEnabled(not busy)
+        if not busy:
+            for control in self._main_bot_start_controls():
+                control.setEnabled(not self.settings_open)
         if hasattr(self, "stop_bot_button"):
             self.stop_bot_button.setEnabled(busy)
         self._set_bot_busy_cursor(busy)
@@ -1898,6 +2616,16 @@ class MailAssistDesktopWindow(QMainWindow):
         self._set_banner("A bot action is already running.", level="error")
         self._refresh_bot_action_controls()
         return True
+
+    def _bot_action_blocked_by_settings(self) -> bool:
+        if not self.settings_open:
+            return False
+        self._set_banner("Return to Dashboard before starting a bot action.", level="info")
+        self._refresh_bot_action_controls()
+        return True
+
+    def _main_bot_action_unavailable(self) -> bool:
+        return self._bot_action_already_running() or self._bot_action_blocked_by_settings()
 
     def _current_bot_ollama_settings(self) -> tuple[str, str]:
         base_url = self.ollama_url_input.text().strip() or self.settings.ollama_url
@@ -2090,7 +2818,9 @@ class MailAssistDesktopWindow(QMainWindow):
         elif self.current_bot_action == "watch-loop":
             if self.current_bot_phase == "waiting":
                 summary = self.last_live_progress_summary or self._bot_progress_summary()
-                message = f"{provider} auto-check waiting for the next check after {elapsed}. Last pass: {summary}."
+                message = f"{provider} auto-check idle for {elapsed}. Last pass: {summary}."
+                self._set_banner(message, level="info")
+                return
             else:
                 message = f"{provider} auto-check checking after {elapsed}. {self._bot_progress_summary()}."
         else:
@@ -2238,17 +2968,14 @@ class MailAssistDesktopWindow(QMainWindow):
         self.ollama_model_picker.blockSignals(False)
         if models:
             self.ollama_connection_status.setText(f"Connected, {len(models)} installed")
-            self.ollama_connection_status.setStyleSheet("color: #215f4a; font-size: 13px;")
             self.ollama_models_hint.setText(f"Found {len(models)} installed model(s).")
             self.ollama_health = (f"connected ({len(models)})", "ok")
         else:
             self.ollama_connection_status.setText("No models found")
-            self.ollama_connection_status.setStyleSheet("color: #8c4029; font-size: 13px;")
             self.ollama_models_hint.setText("No installed Ollama models were detected.")
             self.ollama_health = ("no models", "warn")
         if model_error:
             self.ollama_connection_status.setText("Not reachable")
-            self.ollama_connection_status.setStyleSheet("color: #8c4029; font-size: 13px;")
             self.ollama_health = ("not reachable", "error")
             if (
                 not silent
@@ -2257,6 +2984,7 @@ class MailAssistDesktopWindow(QMainWindow):
                 self._set_ollama_result_text(model_error)
         elif not silent and not models and not self.ollama_result.toPlainText().strip():
             self.ollama_result.clear()
+        self._style_ollama_connection_status()
         self._refresh_ollama_model_hint()
         if hasattr(self, "provider_status_label"):
             ollama_text, ollama_level = self.ollama_health
@@ -2335,6 +3063,7 @@ class MailAssistDesktopWindow(QMainWindow):
                 "MAILASSIST_USER_SIGNATURE": self.signature_input.toPlainText().strip().replace("\n", "\\n"),
                 "MAILASSIST_USER_SIGNATURE_HTML": self.signature_input.toHtml().strip().replace("\n", "\\n"),
                 "MAILASSIST_USER_TONE": str(self.tone_combo.currentData() or "direct_concise"),
+                "MAILASSIST_APPEARANCE": self.appearance,
                 "MAILASSIST_BOT_POLL_SECONDS": str(self.bot_poll_seconds_input.value()),
                 "MAILASSIST_DEFAULT_PROVIDER": provider,
                 "MAILASSIST_GMAIL_ENABLED": "true" if self.gmail_enabled.isChecked() else "false",
@@ -2370,6 +3099,8 @@ class MailAssistDesktopWindow(QMainWindow):
         if mark_complete:
             self.setup_finished = True
             self.settings_open = False
+            self.main_stack.setCurrentWidget(self.dashboard_page)
+            self._select_nav_item("Dashboard")
         self.refresh_models()
         self.refresh_dashboard()
         self._refresh_prompt_preview()
@@ -2396,10 +3127,12 @@ class MailAssistDesktopWindow(QMainWindow):
         self.run_bot_action("ollama-check", prompt=prompt)
 
     def run_mock_watch_once(self) -> None:
+        if self._main_bot_action_unavailable():
+            return
         self.run_bot_action("watch-once", provider="mock")
 
     def start_watch_loop(self) -> None:
-        if self._bot_action_already_running():
+        if self._main_bot_action_unavailable():
             return
         self._announce_long_action(
             "Starting auto-check. MailAssist will keep checking in the background; "
@@ -2416,16 +3149,13 @@ class MailAssistDesktopWindow(QMainWindow):
             self.bot_process.kill()
 
     def stop_ollama_action(self) -> None:
-        confirmation = QMessageBox.question(
-            self,
+        confirmation = self._confirm_action(
             "Stop Ollama",
             (
                 "MailAssist will force quit the local Ollama process. This can interrupt any model work "
                 "currently running, and draft previews or auto-checks will fail until Ollama starts again.\n\n"
                 "Continue?"
             ),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
         )
         if confirmation != QMessageBox.StandardButton.Yes:
             self._set_banner("Stop Ollama canceled.", level="info")
@@ -2520,7 +3250,7 @@ class MailAssistDesktopWindow(QMainWindow):
         return False, "Could not stop Ollama automatically because no stop command was available."
 
     def run_gmail_draft_test(self) -> None:
-        if self._bot_action_already_running():
+        if self._main_bot_action_unavailable():
             return
         self._announce_long_action(
             "Previewing Gmail draft. Dry run only; no Gmail draft will be created. "
@@ -2535,17 +3265,14 @@ class MailAssistDesktopWindow(QMainWindow):
         )
 
     def run_controlled_gmail_draft(self) -> None:
-        if self._bot_action_already_running():
+        if self._main_bot_action_unavailable():
             return
-        confirmation = QMessageBox.question(
-            self,
+        confirmation = self._confirm_action(
             "Create Controlled Gmail Draft",
             (
                 "MailAssist will create one real Gmail draft addressed to your own Gmail account "
                 "using sanitized mock content. Nothing will be sent. Continue?"
             ),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
         )
         if confirmation != QMessageBox.StandardButton.Yes:
             self._set_banner("Controlled Gmail draft canceled.", level="info")
@@ -2556,7 +3283,7 @@ class MailAssistDesktopWindow(QMainWindow):
         self.run_bot_action("gmail-controlled-draft", provider="gmail", thread_id="thread-008")
 
     def run_outlook_draft_preview(self) -> None:
-        if self._bot_action_already_running():
+        if self._main_bot_action_unavailable():
             return
         self.save_settings(announce=False)
         self._announce_long_action(
@@ -2572,11 +3299,10 @@ class MailAssistDesktopWindow(QMainWindow):
         )
 
     def run_gmail_label_rescan(self) -> None:
-        if self._bot_action_already_running():
+        if self._main_bot_action_unavailable():
             return
         days = int(self.gmail_label_days_input.value()) if hasattr(self, "gmail_label_days_input") else 7
-        confirmation = QMessageBox.question(
-            self,
+        confirmation = self._confirm_action(
             "Organize Gmail",
             (
                 f"MailAssist will reclassify Gmail threads from the last {days} day"
@@ -2585,8 +3311,6 @@ class MailAssistDesktopWindow(QMainWindow):
                 "This can take a few minutes, but you can keep working while it runs. "
                 "Continue?"
             ),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
         )
         if confirmation != QMessageBox.StandardButton.Yes:
             self._set_banner("Gmail label rescan canceled.", level="info")
@@ -2605,15 +3329,14 @@ class MailAssistDesktopWindow(QMainWindow):
         )
 
     def run_outlook_category_rescan(self) -> None:
-        if self._bot_action_already_running():
+        if self._main_bot_action_unavailable():
             return
         days = (
             int(self.outlook_category_days_input.value())
             if hasattr(self, "outlook_category_days_input")
             else 25
         )
-        confirmation = QMessageBox.question(
-            self,
+        confirmation = self._confirm_action(
             "Organize Outlook",
             (
                 f"MailAssist will classify Outlook messages from the last {days} day"
@@ -2622,8 +3345,6 @@ class MailAssistDesktopWindow(QMainWindow):
                 "This can take a few minutes, but you can keep working while it runs. "
                 "Continue?"
             ),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
         )
         if confirmation != QMessageBox.StandardButton.Yes:
             self._set_banner("Outlook category rescan canceled.", level="info")
@@ -2655,6 +3376,8 @@ class MailAssistDesktopWindow(QMainWindow):
         apply_categories: bool = False,
     ) -> None:
         if self._bot_action_already_running():
+            return
+        if action != "ollama-check" and self._bot_action_blocked_by_settings():
             return
 
         base_url, selected_model = self._current_bot_ollama_settings()
@@ -2796,7 +3519,8 @@ class MailAssistDesktopWindow(QMainWindow):
             self.last_live_progress_summary = self._bot_progress_summary()
             provider = str(event.get("provider") or self.current_bot_provider or "provider").title()
             self._append_recent_activity(
-                f"{provider} auto-check pass completed: {self.last_live_progress_summary}. Waiting for next check."
+                f"{provider} auto-check pass completed: {self.last_live_progress_summary}. "
+                "Idle until next check; Ollama is not drafting."
             )
         elif event_type == "failed_pass":
             self._append_recent_activity(f"Watch pass failed: {event.get('message', 'Unknown error')}")
@@ -2887,7 +3611,7 @@ class MailAssistDesktopWindow(QMainWindow):
                 )
             self.last_failure_summary = failure
             self._set_banner(failure, level="error")
-            self._set_bot_state("error")
+            self._set_bot_state("error", self._short_bot_error_label(failure, provider=provider))
         elif event_type == "info":
             if "thread_count" in event:
                 self.bot_progress["total"] = int(event.get("thread_count") or 0)

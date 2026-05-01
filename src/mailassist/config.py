@@ -29,6 +29,10 @@ DEFAULT_MAILASSIST_CATEGORIES = (
     "FYI",
     "Suspicious",
 )
+APPEARANCE_SYSTEM = "system"
+APPEARANCE_DAY = "day"
+APPEARANCE_NIGHT = "night"
+APPEARANCES = {APPEARANCE_SYSTEM, APPEARANCE_DAY, APPEARANCE_NIGHT}
 
 
 @dataclass(frozen=True)
@@ -66,6 +70,7 @@ class Settings:
     mailassist_categories: tuple[str, ...]
     elder_contacts_file: Path
     elder_contacts: tuple[ElderContact, ...]
+    appearance: str
 
 
 def parse_bool(value: str | None, default: bool = False) -> bool:
@@ -109,6 +114,13 @@ def parse_mailassist_categories(value: str | None) -> tuple[str, ...]:
         if cleaned.lower() not in {category.lower() for category in categories}:
             categories.append(cleaned)
     return tuple(categories)
+
+
+def parse_appearance(value: str | None) -> str:
+    cleaned = (value or "").strip().lower()
+    if cleaned in APPEARANCES:
+        return cleaned
+    return APPEARANCE_SYSTEM
 
 
 def path_from_env(value: str | None, default: Path, *, root_dir: Path) -> Path:
@@ -312,4 +324,5 @@ def load_settings() -> Settings:
                 root_dir=root_dir,
             )
         ),
+        appearance=parse_appearance(env("MAILASSIST_APPEARANCE", APPEARANCE_SYSTEM)),
     )

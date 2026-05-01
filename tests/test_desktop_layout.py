@@ -3,8 +3,17 @@ import json
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QTextOption
-from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QPlainTextEdit, QSizePolicy
+from PySide6.QtWidgets import (
+    QAbstractSpinBox,
+    QApplication,
+    QLabel,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QSizePolicy,
+)
 
 from mailassist.config import read_env_file, write_env_file
 from mailassist.gui import desktop as desktop_module
@@ -16,101 +25,49 @@ def _app() -> QApplication:
     return QApplication.instance() or QApplication([])
 
 
-def _button_metrics(window: MailAssistDesktopWindow) -> tuple[str, int, int, int, int, int]:
-    app = _app()
-    app.processEvents()
-    button = window.settings_next_button if window.settings_next_button.isVisible() else window.settings_done_button
-    container = window.settings_dialog or window
-    position = button.mapTo(container, button.rect().topLeft())
-    geometry = container.geometry()
-    return (
-        button.text(),
-        position.x(),
-        position.y(),
-        geometry.width(),
-        geometry.height(),
-        window.settings_stack.geometry().height(),
-    )
-
-
-def test_settings_dialog_navigation_stays_stable() -> None:
+def test_settings_pages_are_embedded_without_footer_navigation() -> None:
     app = _app()
     window = MailAssistDesktopWindow()
-    window.settings_dialog.resize(1120, 680)
     window.setup_finished = False
     window.open_settings_wizard()
     app.processEvents()
 
-    records = []
-    for index in range(window.settings_stack.count()):
-        window._show_settings_step(index)
-        records.append(_button_metrics(window))
+    assert window.main_stack.currentWidget() is window.settings_wizard
+    assert window.settings_step_index == 5
+    assert window.nav_buttons["Review"].isChecked()
+    assert not window.settings_back_button.isVisible()
+    assert not window.settings_next_button.isVisible()
+    assert not window.settings_done_button.isVisible()
+    assert not window.settings_advanced_button.isVisible()
 
-    window._show_settings_step(1)
-    window._set_ollama_result_text(
-        "Prompt: Reply with one short sentence confirming MailAssist can use this model.\n\n"
-        "Response: MailAssist can use this model."
-    )
-    records.append(_button_metrics(window))
+    window.nav_buttons["Dashboard"].click()
+    app.processEvents()
 
-    window._show_settings_step(3)
-    window.gmail_signature_status.setText(
-        "Imported Gmail signature from example@example.com. You can edit it before continuing."
-    )
-    records.append(_button_metrics(window))
-
-    next_records = [record for record in records if record[0] == "Next"]
-    assert {record[1] for record in next_records} == {next_records[0][1]}
-    assert {record[2] for record in next_records} == {next_records[0][2]}
-    assert {record[3] for record in records} == {records[0][3]}
-    assert {record[4] for record in records} == {records[0][4]}
-    assert {record[5] for record in records} == {records[0][5]}
-
-    window.settings_dialog.close()
+    assert window.main_stack.currentWidget() is window.dashboard_page
+    assert window.nav_buttons["Dashboard"].isChecked()
     window.close()
 
 
-def test_settings_dialog_navigation_sits_near_bottom_in_tall_window() -> None:
-    app = _app()
+def test_embedded_settings_pages_are_compact() -> None:
     window = MailAssistDesktopWindow()
-    window.settings_dialog.resize(1120, 860)
-    window.setup_finished = False
-    window.open_settings_wizard()
-    app.processEvents()
 
-    window._show_settings_step(0)
-    text, _x, y, _width, height, scroll_height = _button_metrics(window)
-    assert text == "Next"
-    assert height - y < 80
-    assert scroll_height > 560
+    assert window.settings_stack.minimumHeight() <= 320
+    assert window.settings_step_help.minimumHeight() <= 34
 
-    window.settings_dialog.close()
     window.close()
 
 
-def test_review_summary_expands_to_available_space_in_tall_window() -> None:
+def test_embedded_review_summary_expands_in_main_window() -> None:
     app = _app()
     window = MailAssistDesktopWindow()
-    window.settings_dialog.resize(1120, 860)
-    window.setup_finished = False
-    window.open_settings_wizard()
+    window.resize(1120, 860)
+    window.nav_buttons["Review"].click()
     app.processEvents()
 
-    window._show_settings_step(window.settings_stack.count() - 1)
-    app.processEvents()
+    assert window.main_stack.currentWidget() is window.settings_wizard
+    assert window.settings_summary.height() > 420
+    assert window.settings_overview.height() > 420
 
-    text, _x, button_y, _width, _height, scroll_height = _button_metrics(window)
-    summary_bottom = window.settings_summary.mapTo(
-        window.settings_dialog,
-        window.settings_summary.rect().bottomLeft(),
-    ).y()
-
-    assert text == "Done"
-    assert window.settings_summary.height() > 520
-    assert scroll_height > 560
-    assert button_y - summary_bottom < 100
-
-    window.settings_dialog.close()
     window.close()
 
 
@@ -124,7 +81,196 @@ def test_bot_control_is_main_page_when_setup_is_incomplete() -> None:
 
     assert window.control_group.isVisible()
     assert window.activity_group.isVisible()
-    assert window.settings_button.isVisible()
+    assert "Review" in window.nav_buttons
+    assert not hasattr(window, "settings_button")
+    assert not hasattr(window, "logs_button")
+
+    window.close()
+
+
+def test_embedded_settings_disable_main_bot_starters_until_dashboard_returns() -> None:
+    app = _app()
+    window = MailAssistDesktopWindow()
+    window.open_settings_wizard()
+    app.processEvents()
+
+    assert window.gmail_draft_preview_button.isEnabled() is False
+    assert window.outlook_draft_preview_button.isEnabled() is False
+    assert window.gmail_label_rescan_button.isEnabled() is False
+    assert window.outlook_category_rescan_button.isEnabled() is False
+    assert window.start_watch_loop_button.isEnabled() is False
+    assert window.gmail_label_days_input.isEnabled() is False
+    assert window.outlook_category_days_input.isEnabled() is False
+    assert window.test_ollama_button.isEnabled() is True
+
+    window.nav_buttons["Dashboard"].click()
+    app.processEvents()
+
+    assert window.gmail_draft_preview_button.isEnabled() is True
+    assert window.outlook_draft_preview_button.isEnabled() is True
+    assert window.gmail_label_rescan_button.isEnabled() is True
+    assert window.outlook_category_rescan_button.isEnabled() is True
+    assert window.start_watch_loop_button.isEnabled() is True
+    assert window.gmail_label_days_input.isEnabled() is True
+    assert window.outlook_category_days_input.isEnabled() is True
+
+    window.close()
+
+
+def test_appearance_toggle_defaults_to_system_and_persists_override(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    app = _app()
+    window = MailAssistDesktopWindow()
+    app.processEvents()
+
+    assert window.appearance == "system"
+    assert window.system_toggle_button.isChecked()
+
+    window.set_appearance("night")
+    app.processEvents()
+
+    assert window.night_toggle_button.isChecked()
+    assert read_env_file(tmp_path / ".env")["MAILASSIST_APPEARANCE"] == "night"
+
+    window.set_appearance("system")
+    app.processEvents()
+
+    assert window.system_toggle_button.isChecked()
+    assert read_env_file(tmp_path / ".env")["MAILASSIST_APPEARANCE"] == "system"
+    window.close()
+
+
+def test_appearance_toggle_is_single_three_way_switch() -> None:
+    window = MailAssistDesktopWindow()
+
+    assert window.appearance_toggle.objectName() == "appearanceToggle"
+    assert window.appearance_button_group.exclusive() is True
+    assert window.appearance_toggle.layout().spacing() == 0
+    assert window.system_toggle_button.parent() is window.appearance_toggle
+    assert window.day_toggle_button.parent() is window.appearance_toggle
+    assert window.night_toggle_button.parent() is window.appearance_toggle
+    assert "border-left" not in window.system_toggle_button.styleSheet()
+    assert "border-left" not in window.day_toggle_button.styleSheet()
+    assert "border-left" not in window.night_toggle_button.styleSheet()
+    assert "border-radius: 8px" in window.system_toggle_button.styleSheet()
+    assert "border-radius: 8px" in window.day_toggle_button.styleSheet()
+    assert "border-radius: 8px" in window.night_toggle_button.styleSheet()
+
+    window.close()
+
+
+def test_night_mode_controls_own_popup_and_toolbar_contrast() -> None:
+    app = _app()
+    window = MailAssistDesktopWindow()
+    window.set_appearance("night", persist=False)
+    app.processEvents()
+
+    for combo in (window.tone_combo, window.attribution_placement_combo, window.bot_log_selector):
+        assert combo.view().objectName() == "comboPopup"
+        assert "#1c2530" in combo.view().styleSheet()
+        assert "#eef3f7" in combo.view().styleSheet()
+    assert "#34a6a5" in combo.view().styleSheet()
+
+    assert window.signature_toolbar_buttons
+    assert all("#eef3f7" in button.styleSheet() for button in window.signature_toolbar_buttons)
+    assert "QDialog" in window.styleSheet()
+    assert "QCheckBox" in window.styleSheet()
+
+    window.close()
+
+
+def test_confirmation_dialog_uses_themed_contrast_without_native_question_icon() -> None:
+    app = _app()
+    window = MailAssistDesktopWindow()
+    window.set_appearance("night", persist=False)
+    observed: dict[str, object] = {}
+
+    def inspect_and_close() -> None:
+        dialog = QApplication.activeModalWidget()
+        assert dialog is not None
+        observed["object_name"] = dialog.objectName()
+        observed["frameless"] = bool(dialog.windowFlags() & Qt.WindowType.FramelessWindowHint)
+        observed["style"] = dialog.styleSheet()
+        observed["labels"] = [label.text() for label in dialog.findChildren(QLabel)]
+        for button in dialog.findChildren(QPushButton):
+            if button.text() == "No":
+                button.click()
+                return
+
+    QTimer.singleShot(0, inspect_and_close)
+    result = window._confirm_action("Organize Outlook", "High-contrast confirmation copy.")
+
+    assert result == QMessageBox.StandardButton.No
+    assert observed["object_name"] == "confirmDialog"
+    assert observed["frameless"] is True
+    assert "#26313f" in str(observed["style"])
+    assert "#eef3f7" in str(observed["style"])
+    assert "Organize Outlook" in observed["labels"]
+    assert "High-contrast confirmation copy." in observed["labels"]
+    assert not any(label.strip() == "?" for label in observed["labels"])
+    window.close()
+
+
+def test_settings_pages_leave_room_for_wrapped_status_text() -> None:
+    window = MailAssistDesktopWindow()
+
+    assert window.ollama_model_group.minimumHeight() >= 400
+    assert window.ollama_result_group.minimumHeight() >= window.ollama_model_group.minimumHeight()
+    assert window.ollama_model_hint.minimumHeight() >= 180
+    assert window.signature_input.minimumHeight() >= 260
+    assert window.signature_attribution_preview.minimumHeight() >= 260
+    assert window.writing_style_group.minimumHeight() == window.relationship_guidance_group.minimumHeight()
+    assert window.watcher_note.minimumHeight() >= 70
+
+    window.close()
+
+
+def test_side_nav_items_open_matching_surfaces() -> None:
+    app = _app()
+    window = MailAssistDesktopWindow()
+
+    window.nav_buttons["Providers"].click()
+    app.processEvents()
+
+    assert window.main_stack.currentWidget() is window.settings_wizard
+    assert window.settings_step_index == 0
+    assert window.nav_buttons["Providers"].isChecked()
+
+    window.nav_buttons["Model"].click()
+    app.processEvents()
+    assert window.settings_step_index == 1
+    assert window.nav_buttons["Model"].isChecked()
+
+    window.nav_buttons["Tone"].click()
+    app.processEvents()
+    assert window.settings_step_index == 2
+    assert window.nav_buttons["Tone"].isChecked()
+
+    window.nav_buttons["Signature"].click()
+    app.processEvents()
+    assert window.settings_step_index == 3
+    assert window.nav_buttons["Signature"].isChecked()
+
+    window.nav_buttons["Advanced"].click()
+    app.processEvents()
+    assert window.settings_step_index == 4
+    assert window.nav_buttons["Advanced"].isChecked()
+
+    window.nav_buttons["Review"].click()
+    app.processEvents()
+    assert window.settings_step_index == 5
+    assert window.nav_buttons["Review"].isChecked()
+
+    window.nav_buttons["Activity"].click()
+    app.processEvents()
+    assert window.main_stack.currentWidget() is window.activity_page
+    assert window.nav_buttons["Activity"].isChecked()
+    assert window.bot_logs_dialog is None
+
+    window.nav_buttons["Dashboard"].click()
+    app.processEvents()
+    assert window.main_stack.currentWidget() is window.dashboard_page
+    assert window.nav_buttons["Dashboard"].isChecked()
 
     window.close()
 
@@ -305,6 +451,7 @@ def test_watcher_filter_controls_persist_and_show_on_dashboard(monkeypatch, tmp_
     window.save_settings(announce=False)
 
     env_values = read_env_file(tmp_path / ".env")
+    assert env_values["MAILASSIST_APPEARANCE"] == "system"
     assert env_values["MAILASSIST_BOT_POLL_SECONDS"] == "45"
     assert env_values["MAILASSIST_WATCHER_UNREAD_ONLY"] == "true"
     assert env_values["MAILASSIST_WATCHER_TIME_WINDOW"] == "7d"
@@ -320,9 +467,9 @@ def test_watcher_filter_controls_persist_and_show_on_dashboard(monkeypatch, tmp_
         {"email": "agnes@example.com", "comment": "Family elder"}
     ]
     assert window.watcher_filter_status_label.text() == "unread only, last 7 days"
-    assert "Watcher filter: unread only, last 7 days" in window.settings_summary.toPlainText()
-    assert "Elders: 1" in window.settings_summary.toPlainText()
-    assert "Attribution: Above Signature" in window.settings_summary.toPlainText()
+    assert "Watcher filter: unread only, last 7 days" in window.settings_overview.toPlainText()
+    assert "Elders: 1" in window.settings_overview.toPlainText()
+    assert "Attribution: Above Signature" in window.settings_overview.toPlainText()
     assert "Draft prepared by MailAssist" in window.signature_attribution_preview.toPlainText()
     assert window.bot_poll_seconds_input.minimumHeight() >= window.ollama_url_input.sizeHint().height()
 
@@ -332,6 +479,7 @@ def test_watcher_filter_controls_persist_and_show_on_dashboard(monkeypatch, tmp_
         "MAILASSIST_OLLAMA_MODEL",
         "MAILASSIST_USER_SIGNATURE",
         "MAILASSIST_USER_TONE",
+        "MAILASSIST_APPEARANCE",
         "MAILASSIST_BOT_POLL_SECONDS",
         "MAILASSIST_DEFAULT_PROVIDER",
         "MAILASSIST_GMAIL_ENABLED",
@@ -392,19 +540,11 @@ def test_elder_editor_adds_updates_and_removes_contacts(tmp_path, monkeypatch) -
     assert window._upsert_elder_contact("agnes@example.com", "Use vous") is True
     assert window.elder_contacts_list.count() == 1
     assert window.elder_contacts_list.currentItem().text() == "agnes@example.com | Use vous"
-    monkeypatch.setattr(
-        QMessageBox,
-        "question",
-        lambda *args, **kwargs: QMessageBox.StandardButton.No,
-    )
+    monkeypatch.setattr(window, "_confirm_action", lambda *args, **kwargs: QMessageBox.StandardButton.No)
     window._remove_selected_elder_contact()
     assert window.elder_contacts_list.count() == 1
     assert not window.elder_contacts_undo_button.isEnabled()
-    monkeypatch.setattr(
-        QMessageBox,
-        "question",
-        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
-    )
+    monkeypatch.setattr(window, "_confirm_action", lambda *args, **kwargs: QMessageBox.StandardButton.Yes)
     window._remove_selected_elder_contact()
     assert window.elder_contacts_list.count() == 0
     assert window.elder_contacts_undo_button.isEnabled()
@@ -435,20 +575,12 @@ def test_category_editor_confirms_remove_and_can_undo(tmp_path, monkeypatch) -> 
     travel_index = window.mailassist_category_list.count() - 1
     window.mailassist_category_list.setCurrentRow(travel_index)
 
-    monkeypatch.setattr(
-        QMessageBox,
-        "question",
-        lambda *args, **kwargs: QMessageBox.StandardButton.No,
-    )
+    monkeypatch.setattr(window, "_confirm_action", lambda *args, **kwargs: QMessageBox.StandardButton.No)
     window._remove_selected_mailassist_category()
     assert "Travel" in window._mailassist_category_values()
     assert not window.mailassist_category_undo_button.isEnabled()
 
-    monkeypatch.setattr(
-        QMessageBox,
-        "question",
-        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
-    )
+    monkeypatch.setattr(window, "_confirm_action", lambda *args, **kwargs: QMessageBox.StandardButton.Yes)
     window._remove_selected_mailassist_category()
     assert "Travel" not in window._mailassist_category_values()
     assert window.mailassist_category_undo_button.isEnabled()
@@ -688,8 +820,10 @@ def test_watch_loop_heartbeat_reports_waiting_after_completed_pass(monkeypatch) 
     window._append_bot_heartbeat()
 
     activity = window.recent_activity.toPlainText()
-    assert "Gmail auto-check pass completed: 25 scanned / 0 drafts. Waiting for next check." in activity
-    assert "Gmail auto-check waiting for the next check after 20 seconds. Last pass: 25 scanned / 0 drafts." in activity
+    assert "Gmail auto-check pass completed: 25 scanned / 0 drafts. Idle until next check" in activity
+    assert "Ollama is not drafting" in activity
+    assert "Gmail auto-check idle for 20 seconds. Last pass: 25 scanned / 0 drafts." not in activity
+    assert "Gmail auto-check idle for 20 seconds. Last pass: 25 scanned / 0 drafts." in window.banner.text()
     assert "auto-check still running" not in activity
     window.bot_process = None
     window.close()
@@ -948,6 +1082,9 @@ def test_watch_preview_error_is_visible_in_recent_activity() -> None:
     assert "Outlook preview failed" in window.recent_activity.toPlainText()
     assert "invalid_grant" in window.recent_activity.toPlainText()
     assert "invalid_grant" in window.banner.text()
+    assert window.bot_status_label.text() == "Outlook sign-in expired"
+    window.refresh_dashboard()
+    assert window.bot_status_label.text() == "Outlook sign-in expired"
     assert stopped == [True]
     window.close()
 
@@ -970,6 +1107,7 @@ def test_invalid_grant_error_is_expanded_in_recent_activity() -> None:
     activity = window.recent_activity.toPlainText()
     assert "Outlook sign-in expired or was revoked (invalid_grant)" in activity
     assert "Run Outlook setup/auth again" in window.last_failure_summary
+    assert window.bot_status_label.text() == "Outlook sign-in expired"
     window.close()
 
 
@@ -995,11 +1133,7 @@ def test_controlled_gmail_draft_runs_after_confirmation(monkeypatch) -> None:
     window = MailAssistDesktopWindow()
     called: list[tuple[str, str, str, bool, bool]] = []
 
-    monkeypatch.setattr(
-        QMessageBox,
-        "question",
-        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
-    )
+    monkeypatch.setattr(window, "_confirm_action", lambda *args, **kwargs: QMessageBox.StandardButton.Yes)
     monkeypatch.setattr(
         window,
         "run_bot_action",
@@ -1018,11 +1152,7 @@ def test_gmail_label_rescan_requires_confirmation(monkeypatch) -> None:
     window = MailAssistDesktopWindow()
     called = []
 
-    monkeypatch.setattr(
-        QMessageBox,
-        "question",
-        lambda *args, **kwargs: QMessageBox.StandardButton.No,
-    )
+    monkeypatch.setattr(window, "_confirm_action", lambda *args, **kwargs: QMessageBox.StandardButton.No)
     monkeypatch.setattr(window, "save_settings", lambda *args, **kwargs: called.append(("save",)))
     monkeypatch.setattr(window, "run_bot_action", lambda *args, **kwargs: called.append(("run",)))
 
@@ -1033,21 +1163,36 @@ def test_gmail_label_rescan_requires_confirmation(monkeypatch) -> None:
     window.close()
 
 
+def test_embedded_settings_blocks_bot_confirmation(monkeypatch) -> None:
+    window = MailAssistDesktopWindow()
+    called = []
+
+    monkeypatch.setattr(
+        window,
+        "_confirm_action",
+        lambda *args, **kwargs: called.append(("question",)) or QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr(window, "run_bot_action", lambda *args, **kwargs: called.append(("run",)))
+
+    window.settings_open = True
+    window.run_gmail_label_rescan()
+
+    assert called == []
+    assert window.banner.text() == "Return to Dashboard before starting a bot action."
+    window.close()
+
+
 def test_gmail_label_rescan_runs_with_limited_horizon(monkeypatch) -> None:
     window = MailAssistDesktopWindow()
     called = []
     confirmation_messages = []
     window.gmail_label_days_input.setValue(3)
 
-    def fake_question(_parent, title, message, *args, **kwargs):
+    def fake_confirmation(title, message):
         confirmation_messages.append((title, message))
         return QMessageBox.StandardButton.Yes
 
-    monkeypatch.setattr(
-        QMessageBox,
-        "question",
-        fake_question,
-    )
+    monkeypatch.setattr(window, "_confirm_action", fake_confirmation)
     monkeypatch.setattr(window, "save_settings", lambda *args, **kwargs: called.append(("save", kwargs)))
     monkeypatch.setattr(
         window,
@@ -1085,8 +1230,8 @@ def test_organizer_buttons_do_not_prompt_when_bot_action_is_running(monkeypatch)
 
     window.bot_process = FakeProcess()
     monkeypatch.setattr(
-        QMessageBox,
-        "question",
+        window,
+        "_confirm_action",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("confirmation should not open")),
     )
 
@@ -1103,11 +1248,7 @@ def test_outlook_category_rescan_requires_confirmation(monkeypatch) -> None:
     window = MailAssistDesktopWindow()
     called = []
 
-    monkeypatch.setattr(
-        QMessageBox,
-        "question",
-        lambda *args, **kwargs: QMessageBox.StandardButton.No,
-    )
+    monkeypatch.setattr(window, "_confirm_action", lambda *args, **kwargs: QMessageBox.StandardButton.No)
     monkeypatch.setattr(window, "save_settings", lambda *args, **kwargs: called.append(("save",)))
     monkeypatch.setattr(window, "run_bot_action", lambda *args, **kwargs: called.append(("run",)))
 
@@ -1124,15 +1265,11 @@ def test_outlook_category_rescan_runs_with_day_horizon(monkeypatch) -> None:
     confirmation_messages = []
     window.outlook_category_days_input.setValue(12)
 
-    def fake_question(_parent, title, message, *args, **kwargs):
+    def fake_confirmation(title, message):
         confirmation_messages.append((title, message))
         return QMessageBox.StandardButton.Yes
 
-    monkeypatch.setattr(
-        QMessageBox,
-        "question",
-        fake_question,
-    )
+    monkeypatch.setattr(window, "_confirm_action", fake_confirmation)
     monkeypatch.setattr(window, "save_settings", lambda *args, **kwargs: called.append(("save", kwargs)))
     monkeypatch.setattr(
         window,
@@ -1216,16 +1353,18 @@ def test_clear_recent_activity_button_sits_left_of_activity_text() -> None:
     window.close()
 
 
-def test_recent_activity_wraps_and_has_report_button(monkeypatch) -> None:
+def test_recent_activity_wraps_and_has_report_button() -> None:
+    app = _app()
     window = MailAssistDesktopWindow()
-    opened = []
 
-    monkeypatch.setattr(window, "open_bot_logs_dialog", lambda: opened.append(True))
     window.activity_report_button.clicked.emit()
+    app.processEvents()
 
     assert window.activity_report_button.text() == "Report"
     assert "detailed activity report" in window.activity_report_button.toolTip()
-    assert opened == [True]
+    assert window.main_stack.currentWidget() is window.activity_page
+    assert window.nav_buttons["Activity"].isChecked()
+    assert window.bot_logs_dialog is None
     assert window.recent_activity.lineWrapMode() == QPlainTextEdit.LineWrapMode.WidgetWidth
     assert window.recent_activity.wordWrapMode() == QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere
     assert window.recent_activity.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Ignored
@@ -1251,11 +1390,7 @@ def test_stop_ollama_requires_confirmation(monkeypatch) -> None:
     window = MailAssistDesktopWindow()
     called = []
 
-    monkeypatch.setattr(
-        QMessageBox,
-        "question",
-        lambda *args, **kwargs: QMessageBox.StandardButton.No,
-    )
+    monkeypatch.setattr(window, "_confirm_action", lambda *args, **kwargs: QMessageBox.StandardButton.No)
     monkeypatch.setattr(window, "_stop_ollama_process", lambda model: called.append(model))
 
     window.stop_ollama_action()
@@ -1269,11 +1404,7 @@ def test_stop_ollama_runs_force_stop_after_confirmation(monkeypatch) -> None:
     window = MailAssistDesktopWindow()
     called = []
 
-    monkeypatch.setattr(
-        QMessageBox,
-        "question",
-        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
-    )
+    monkeypatch.setattr(window, "_confirm_action", lambda *args, **kwargs: QMessageBox.StandardButton.Yes)
     monkeypatch.setattr(
         window,
         "_stop_ollama_process",
@@ -1387,6 +1518,10 @@ def test_bot_control_actions_use_user_centered_labels_tooltips_and_compact_days_
     assert window.outlook_category_days_input.maximumWidth() <= 104
     assert window.gmail_label_days_input.height() == window.gmail_label_rescan_button.height()
     assert window.outlook_category_days_input.height() == window.outlook_category_rescan_button.height()
+    assert window.gmail_label_days_input.buttonSymbols() == QAbstractSpinBox.ButtonSymbols.NoButtons
+    assert window.outlook_category_days_input.buttonSymbols() == QAbstractSpinBox.ButtonSymbols.NoButtons
+    assert window.bot_poll_seconds_input.buttonSymbols() == QAbstractSpinBox.ButtonSymbols.NoButtons
+    assert "QSpinBox::up-button" not in window.styleSheet()
     window.close()
 
 

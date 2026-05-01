@@ -48,6 +48,7 @@ The bot watches provider inboxes, uses a local Ollama model to classify new thre
 - Long-running GUI preview/watch actions emit heartbeat lines in Recent Activity so the user can see MailAssist is still working and no email is being sent.
 - Gmail and Outlook preview actions now share the same warning/heartbeat behavior and auto-stop after 2 minutes if the preview has not finished.
 - Outlook preview diagnostics now distinguish auth failure from model work: preview errors are visible in Recent Activity, `invalid_grant` tells the user to refresh Outlook sign-in, and dry-run preview model calls use a shorter Ollama timeout.
+- The dashboard Bot status now preserves a short actionable auth label for Outlook sign-in expiry instead of collapsing that state to a generic `Error`.
 - Dry-run Gmail and Outlook draft previews run without confirmation modals; preview heartbeats stop immediately on completion or failure.
 - Recent Activity heartbeat/final summaries include progress counts for previews, watch passes, and Gmail/Outlook organizer runs.
 - Recent Activity now has a local `Report` button that opens the detailed run report/log window, wraps long lines inside the visible panel, and expands terse Outlook `invalid_grant` failures into re-auth guidance.
@@ -172,8 +173,9 @@ These were useful experiments, but the lighter product should not build on them 
 
 ## Latest Verified State
 
-- Latest visible version: `v61.10`.
-- Latest test run: 191 passing tests on April 30, 2026.
+- Latest visible version: `v62.12`.
+- Latest test run: 202 passing tests on May 1, 2026.
+- Latest pre-Zoom local check: passed on May 1, 2026 after installing `mailassist==62.12.0`; `tests/test_cli_main.py` passed 8 tests.
 - Current visible GUI surface is the compact bot control panel and setup wizard.
 - Gmail provider dependencies are installed by plain `uv sync`.
 - Local Gmail setup has been proven for draft creation and readonly inbox preview.
@@ -185,6 +187,14 @@ These were useful experiments, but the lighter product should not build on them 
 - Gmail dry-run and controlled-draft paths are now distinct: dry-run validates watcher flow without provider writes, while controlled draft creation proves Gmail write/rendering behavior with sanitized mock content.
 - Personal Outlook.com Graph behavior is proven; Magali Outlook discovery is now resolved as Microsoft 365 / Exchange Online with admin center access.
 - Magali's target hardware should be capable of running a medium local model; the unknowns are MailAssist-path model performance with `think: false` and the tenant authorization experience, not baseline RAM.
+- Main desktop bot-starting controls now disable while Settings is open so provider actions cannot start against half-edited settings; the Settings local-model test remains available.
+- The first Mailroom Command visual shell is in place: left rail, command bar, refreshed operational panels, and a system-default appearance selector with Day/Night overrides.
+- The left navigation rail is now functional, with entries opening the dashboard, activity logs, or the matching settings wizard pages.
+- The Settings popup now opens much smaller by default and uses tighter internal spacing so it feels like a compact control dialog instead of a second full app window.
+- The appearance selector is now a single three-way segmented switch rather than separate adjacent buttons.
+- Settings now live inside the main desktop surface, navigated from the left rail, with the old wizard footer controls hidden.
+- Embedded settings pages now use denser two-column layouts where appropriate, and Night mode contrast is improved for info panels, scrollbars, muted copy, and review surfaces.
+- The dashboard Bot status now names Outlook sign-in expiry directly while the longer recovery guidance remains in activity text.
 
 ## Conclusion
 

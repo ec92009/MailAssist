@@ -2,7 +2,16 @@ import json
 from pathlib import Path
 
 from mailassist.contacts import ElderContact
-from mailassist.config import default_root_dir, load_settings, parse_bool, parse_int, read_env_file, write_env_file
+from mailassist.config import (
+    APPEARANCE_NIGHT,
+    APPEARANCE_SYSTEM,
+    default_root_dir,
+    load_settings,
+    parse_bool,
+    parse_int,
+    read_env_file,
+    write_env_file,
+)
 from mailassist.review_state import (
     OPTION_A_SEPARATOR,
     OPTION_B_SEPARATOR,
@@ -440,6 +449,7 @@ def test_load_settings_reads_new_gui_polish_env_vars(monkeypatch, tmp_path: Path
             "MAILASSIST_DRAFT_ATTRIBUTION_PLACEMENT": "above_signature",
             "MAILASSIST_CATEGORIES": '["Needs Action", "Licenses & Accounts"]',
             "MAILASSIST_ELDERS_FILE": "data/elders.json",
+            "MAILASSIST_APPEARANCE": "night",
         },
     )
 
@@ -464,6 +474,7 @@ def test_load_settings_reads_new_gui_polish_env_vars(monkeypatch, tmp_path: Path
     assert settings.elder_contacts == (
         ElderContact(email="agnes@example.com", comment="Use respectful French."),
     )
+    assert settings.appearance == APPEARANCE_NIGHT
 
 
 def test_load_settings_defaults_for_new_gui_polish_env_vars(monkeypatch, tmp_path: Path) -> None:
@@ -481,6 +492,7 @@ def test_load_settings_defaults_for_new_gui_polish_env_vars(monkeypatch, tmp_pat
         "MAILASSIST_DRAFT_ATTRIBUTION_PLACEMENT",
         "MAILASSIST_CATEGORIES",
         "MAILASSIST_ELDERS_FILE",
+        "MAILASSIST_APPEARANCE",
     ):
         monkeypatch.delenv(var, raising=False)
 
@@ -499,6 +511,7 @@ def test_load_settings_defaults_for_new_gui_polish_env_vars(monkeypatch, tmp_pat
     assert settings.mailassist_categories[:2] == ("Needs Reply", "Needs Action")
     assert settings.elder_contacts_file == tmp_path / "data" / "elders.json"
     assert settings.elder_contacts == ()
+    assert settings.appearance == APPEARANCE_SYSTEM
 
 
 def test_load_settings_maps_legacy_attribution_boolean_to_below_signature(
