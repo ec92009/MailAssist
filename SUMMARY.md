@@ -95,16 +95,17 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 - Read Claude's April 30 critique as advisory input. Accepted the immediate CLI/support suggestions by adding `mailassist --version` and a no-send `mailassist doctor` readiness report that combines the MailAssist-path Ollama check with provider readiness/account validation. Deferred larger GUI/engine modularization items because they are useful but not the highest-risk Magali setup blocker. Bumped visible version to `v61.11`; full local test suite passed with 194 tests on April 30, 2026.
 - Merged the refreshed scoped Claude critiques into `2026.04.30_Claude_Critique_2.md`, removed the confusing `CLAUDE_*_CRITIQUE.md` files, and updated `AGENTS.md`, `PICKUP_WHERE_LEFT_OFF_SOP.md`, and `TODO.md` so critiques are treated as pointers with accepted/deferred/rejected triage rather than marching orders.
 - Built a Windows 11 Enterprise Evaluation x64 VM named `Wendy` on the Intel iMac and enabled RDP. The VM logged in as local user `wendy\mailassist`, downloaded the pushed `main` bootstrap, installed/synced MailAssist, reached Microsoft device-code auth with the work/school Entra app, and correctly rejected personal accounts (`eceset@live.com` / `ec92009@gmail.com`) because the Magali path uses tenant `organizations`. A mock `review-bot --action watch-once --provider mock --dry-run --force` run completed on Windows, proving the pushed bootstrap/runtime path works through JSONL bot execution. The VM also showed that pushed `main` did not yet include local `v61.11`/`doctor`, so pushing this commit is required before the next rehearsal.
+- Re-ran the Wendy bootstrap after `9a3a703` was pushed. The VM pulled `v61.11`, `mailassist --version` returned `61.11.0`, and `mailassist doctor --skip-model --provider mock` passed. Local `./tools/prezoom-check.sh` also passed after ignored `.env` was switched back to the Magali work/school app registration.
 - During the inactivity handoff sweep, refreshed this summary so the current MailAssist work can be safely committed and pushed without relying on local context. The repo is on `main`, current with `origin/main`, and contains source/docs/test changes for native provider reply drafts, Outlook unread preservation, quoted reply handling, alias handling, and language/register mirroring.
 
 ## Current Verified State
 
 - Visible version: `v61.11`.
 - Full test suite: 194 passing tests on April 30, 2026.
-- Windows VM smoke: pushed `main` bootstrap and mock dry-run completed on Wendy on May 1, 2026; Outlook personal-account rejection is expected with the work/school app.
+- Windows VM smoke: pushed `main` bootstrap, mock dry-run, `mailassist --version`, and `mailassist doctor --skip-model --provider mock` completed on Wendy on May 1, 2026; Outlook personal-account rejection is expected with the work/school app.
 - Native desktop app is the active GUI surface; it has no localhost or LAN URL.
-- Latest synchronized commit before the handoff commit: `4389fbf`.
-- Latest pushed setup/bootstrap commit before the current UI polish/doc refresh: `4389fbf`.
+- Latest synchronized commit before the handoff commit: `9a3a703`.
+- Latest pushed setup/bootstrap commit before the current handoff refresh: `9a3a703`.
 - Installed app path: `/Applications/MailAssist.app`.
 - Gmail provider dependencies are default dependencies and are installed by plain `uv sync`.
 - Gmail read-only probing, Gmail dry-run watching, controlled Gmail provider-write draft creation, and Gmail multipart draft validation have all been exercised locally.
@@ -119,14 +120,13 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 - Live batch LLM output no longer asks for a separate `SHOULD_DRAFT` report flag.
 - Live watcher state lives in `data/live-state.json` with provider-scoped slots, account email discovery, recent activity, and migration from the older `data/bot-state.json`.
 - Magali's Outlook account discovery is resolved enough to proceed: her main business mailbox is Microsoft 365 / Exchange Online, she can access the Microsoft 365 admin center, and Outlook Desktop uses Microsoft Exchange.
-- Resume point: on the Magali Zoom call, run the one-command Windows bootstrap from `docs/magali-zoom-operator-script.md`, validate read-only Outlook Graph readiness and `qwen3:8b` through MailAssist's own Ollama setup check or `mailassist doctor --provider outlook --expected-email <mailbox>`, and attempt any controlled Outlook draft write only after those checks succeed.
+- Resume point: on the Magali Zoom call, run the one-command Windows bootstrap from `docs/magali-zoom-operator-script.md`, validate read-only Outlook Graph readiness and `qwen3:8b` through MailAssist's own Ollama setup check or `mailassist doctor --provider outlook --expected-email <mailbox> --authorize`, and attempt any controlled Outlook draft write only after those checks succeed.
 
 ## Remaining Backlog
 
 - On the Zoom call, paste the bootstrap command from `docs/magali-zoom-operator-script.md`; it downloads `tools/magali-bootstrap.ps1`, installs `uv` and Python 3.12 if needed, syncs MailAssist, and runs read-only Outlook setup plus the MailAssist-path `qwen3:8b` Ollama check with verified client id `2b2639c3-605c-466d-ae89-63ef8ffff5c8`. Run any controlled draft write only after read-only readiness and model readiness succeed.
 - Run `mailassist ollama-setup-check --model qwen3:8b` on her setup; hardware RAM is likely sufficient, but raw terminal Ollama thinking was slow.
 - Use `docs/outlook-m365-admin-consent.md` as the packaged tenant/admin-consent guidance before attempting Magali's Microsoft 365 account.
-- Before the Zoom, rerun the Windows VM bootstrap after this commit is pushed so Wendy verifies the `v61.11` `doctor` path from GitHub `main`.
 - Continue triaging daily Claude critique files during morning sync, starting from `2026.04.30_Claude_Critique_2.md` until a newer dated successor exists. Treat them as pointers: accept small safety/support wins, defer larger refactors until they are the best next step, and reject anything that conflicts with provider-write safety or repo SOPs.
 - Decide the next Outlook GUI exposure for drafting. Current GUI exposes `Organize Outlook`; targeted Outlook draft creation remains available through explicit CLI/smoke-test commands.
 - Continue product safety and trust hardening around explicit provider writes and ignored runtime artifacts.
