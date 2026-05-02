@@ -2,11 +2,26 @@ from __future__ import annotations
 
 import json
 import textwrap
-from collections import Counter
 from pathlib import Path
 from typing import Any, Optional
 
 from mailassist.config import migrate_legacy_runtime_layout
+from mailassist.drafting import (
+    CANDIDATE_BLUEPRINTS,
+    CLASSIFICATION_PRIORITY,
+    COMMON_DRAFTING_RULES,
+    OPTION_A_SEPARATOR,
+    OPTION_B_SEPARATOR,
+    SET_ASIDE_CLASSIFICATIONS,
+    append_signature_to_body,
+    candidate_display_label,
+    fallback_classification_for_thread,
+    format_thread_context,
+    merge_classification,
+    normalize_classification,
+    resolve_thread_classification,
+    signature_prompt_block,
+)
 from mailassist.fixtures.mock_threads import build_mock_threads
 from mailassist.llm.ollama import OllamaClient
 from mailassist.models import EmailThread, utc_now_iso
@@ -14,23 +29,6 @@ from mailassist.version import load_visible_version
 
 REVIEW_STATE_SCHEMA_VERSION = 2
 REVIEW_STATE_FILENAME = "review-inbox.json"
-CLASSIFICATION_OPTIONS = (
-    "urgent",
-    "reply_needed",
-    "automated",
-    "no_response",
-    "spam",
-    "unclassified",
-)
-SET_ASIDE_CLASSIFICATIONS = {"automated", "no_response", "spam"}
-CLASSIFICATION_PRIORITY = {
-    "urgent": 0,
-    "reply_needed": 1,
-    "automated": 2,
-    "no_response": 3,
-    "spam": 4,
-    "unclassified": 5,
-}
 STATUS_PRIORITY = {
     "pending_review": 0,
     "use_draft": 1,
@@ -59,67 +57,6 @@ SORT_LABELS = {
     "received_at": "Received date",
     "sender": "Sender",
 }
-CANDIDATE_BLUEPRINTS = [
-    (
-        "option-a",
-        "Option A",
-        "direct and executive",
-        "Keep it concise, confident, and practical. Confirm what can be done now and name one next step.",
-    ),
-    (
-        "option-b",
-        "Option B",
-        "warm and collaborative",
-        "Sound thoughtful and calm. Acknowledge the ask, explain any nuance briefly, and keep the tone encouraging.",
-    ),
-]
-OPTION_A_SEPARATOR = "-- END OPTION A --"
-OPTION_B_SEPARATOR = "-- END OPTION B --"
-COMMON_DRAFTING_RULES = """- If a reply is appropriate, write as the recipient of the thread.
-- Stay grounded in the thread. Do not invent status updates, dates, approvals, pricing, timelines, or deliverables.
-- Match the language and register of the thread. If the sender writes in French, reply in French. If the sender uses informal French with `tu`, reply informally with `tu`; do not switch to formal `vous` unless the thread uses `vous` or a formal business register.
-- If thread-specific relationship guidance says the sender is on the user's Elders list, that guidance overrides the mirror-register rule: in French, use respectful `vous` for that sender even if the sender used `tu`.
-- Mirror the sender's level of formality without becoming sloppy. A short informal question should get a short informal answer.
-- Do not turn email domains into company names unless that company name appears explicitly in the thread.
-- If the email asks the user to approve, choose, confirm attendance, accept terms, authorize access, call someone, contact someone, check with another party, or make a business decision, do not invent the user's decision or promise the user will do the requested action. Draft a safe holding response that says the user is reviewing it, asks for missing detail, or leaves the action for the user to complete.
-- Do not invent teams, reviewers, calendars, availability, internal processes, vendors, companies, or people that are not explicitly named in the thread.
-- For choice requests like `Would you like us to hold an open house Saturday or Sunday?`, do not say the user will check with a team, decide availability, or confirm a future preference. Say the user is reviewing the options and leave the final choice for the user to add.
-- Avoid promise-shaped phrases like `I will follow up`, `I will let you know`, `I'll let you know`, `I will call`, `I will check`, `I will contact`, `I will update`, or `I will confirm` unless the user already made that exact commitment in the thread. Prefer current-state language like `I am reviewing this` or `I am looking over the details`.
-- If the thread uses relative timing like `today`, `tomorrow`, `this morning`, or `in the morning`, do not repeat that timing as a future promise.
-- If information is missing, say so plainly instead of guessing."""
-
-
-def candidate_display_label(tone: str) -> str:
-    cleaned = tone.strip()
-    if not cleaned:
-        return "Draft"
-    return cleaned[0].upper() + cleaned[1:]
-
-
-def signature_prompt_block(signature: str) -> str:
-    cleaned = signature.strip()
-    if not cleaned:
-        return (
-            "- Do not include a sign-off, sender name, email address, placeholder, or signature block.\n"
-            "- MailAssist will leave the response unsigned unless the user configures a signature."
-        )
-    return (
-        "- Do not include a sign-off, sender name, email address, placeholder, or signature block.\n"
-        "- MailAssist will append the user's saved signature after your response.\n"
-        "- The saved signature is configured, but it is intentionally not shown to you."
-    )
-
-
-def append_signature_to_body(body: str, *, signature: str = "") -> str:
-    cleaned = body.strip()
-    cleaned_signature = signature.strip()
-    if cleaned_signature and cleaned.lower().endswith(cleaned_signature.lower()):
-        cleaned = cleaned[: -len(cleaned_signature)].rstrip()
-    if cleaned and cleaned_signature:
-        return f"{cleaned}\n\n{cleaned_signature}"
-    return cleaned
-
-
 def thread_to_payload(thread: EmailThread) -> dict[str, Any]:
     return {
         "thread_id": thread.thread_id,
@@ -140,28 +77,6 @@ def thread_to_payload(thread: EmailThread) -> dict[str, Any]:
 
 def payload_to_thread(payload: dict[str, Any]) -> EmailThread:
     return EmailThread.from_dict(payload)
-
-
-def format_thread_context(thread: EmailThread) -> str:
-    lines = [
-        f"Thread subject: {thread.subject}",
-        f"Participants: {', '.join(thread.participants)}",
-        "",
-        "Messages:",
-    ]
-    for index, message in enumerate(thread.messages, start=1):
-        lines.extend(
-            [
-                f"Message {index}",
-                f"From: {message.sender}",
-                f"To: {', '.join(message.to)}",
-                f"Sent: {message.sent_at}",
-                "Body:",
-                message.text,
-                "",
-            ]
-        )
-    return "\n".join(lines).strip()
 
 
 def build_review_candidates_prompt(
@@ -323,19 +238,6 @@ def review_state_path(root_dir: Path) -> Path:
     return root_dir / "data" / "legacy" / REVIEW_STATE_FILENAME
 
 
-def normalize_classification(value: str | None) -> str:
-    cleaned = (value or "").strip().lower().replace("-", "_").replace(" ", "_")
-    if cleaned in CLASSIFICATION_OPTIONS:
-        return cleaned
-    if cleaned in {"normal", "reply", "respond", "needs_reply"}:
-        return "reply_needed"
-    if cleaned in {"auto", "auto_generated", "newsletter"}:
-        return "automated"
-    if cleaned in {"ignore", "skip"}:
-        return "no_response"
-    return "unclassified"
-
-
 def normalize_review_status(value: str | None) -> str:
     cleaned = (value or "").strip().lower().replace("-", "_").replace(" ", "_")
     if cleaned in {"use_draft", "ready", "green_lit", "approved", "done"}:
@@ -345,50 +247,6 @@ def normalize_review_status(value: str | None) -> str:
     if cleaned == "user_replied":
         return "user_replied"
     return "pending_review"
-
-
-def fallback_classification_for_thread(thread: EmailThread) -> str:
-    haystack = " ".join(
-        [thread.subject, *thread.participants, *(message.text for message in thread.messages)]
-    ).lower()
-    if any(
-        token in haystack
-        for token in (
-            "unsubscribe",
-            "no-reply",
-            "automated email",
-            "automated notification",
-            "digest",
-        )
-    ):
-        return "automated"
-    if any(token in haystack for token in ("lottery", "crypto", "wire money", "act now")):
-        return "spam"
-    if any(
-        token in haystack
-        for token in (
-            "action needed",
-            "end of day",
-            "urgent",
-            "asap",
-            "friday morning",
-            "before 3pm",
-            "before tomorrow",
-            "this afternoon",
-        )
-    ):
-        return "urgent"
-    return "reply_needed"
-
-
-def merge_classification(model_classification: str, heuristic_classification: str) -> str:
-    model_classification = normalize_classification(model_classification)
-    heuristic_classification = normalize_classification(heuristic_classification)
-    if heuristic_classification in SET_ASIDE_CLASSIFICATIONS and model_classification not in {"urgent", "spam"}:
-        return heuristic_classification
-    if model_classification == "unclassified":
-        return heuristic_classification
-    return model_classification
 
 
 def extract_classification_and_body(response: str) -> tuple[str, str]:
@@ -428,21 +286,6 @@ def extract_classification_and_bodies(response: str) -> tuple[str, list[str]]:
     if trailing.strip():
         raise ValueError("Unexpected trailing content after the final option separator.")
     return classification, [option_one.strip(), option_two.strip()]
-
-
-def resolve_thread_classification(candidates: list[dict[str, Any]], thread: EmailThread) -> str:
-    classifications = [
-        normalize_classification(candidate.get("classification")) for candidate in candidates
-    ]
-    classifications = [item for item in classifications if item != "unclassified"]
-    if not classifications:
-        return fallback_classification_for_thread(thread)
-
-    counts = Counter(classifications)
-    return min(
-        counts,
-        key=lambda item: (-counts[item], CLASSIFICATION_PRIORITY.get(item, 99)),
-    )
 
 
 def default_review_state() -> dict[str, Any]:

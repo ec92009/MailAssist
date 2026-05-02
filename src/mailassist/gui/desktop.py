@@ -63,6 +63,7 @@ from mailassist.version import load_visible_version
 from mailassist.models import utc_now_iso
 from mailassist.llm.ollama import OllamaClient
 from mailassist.providers.gmail import GmailProvider
+from mailassist.gui.recent_activity import EMPTY_ACTIVITY_TEXT, RecentActivityPanel
 from mailassist.rich_text import attribution_html, html_to_plain_text, sanitize_html_fragment
 from mailassist.system_resources import (
     format_size,
@@ -1205,42 +1206,13 @@ class MailAssistDesktopWindow(QMainWindow):
         control_layout.addLayout(bot_actions)
         dashboard_layout.addWidget(self.control_group)
 
-        self.activity_group = QGroupBox("Recent Activity")
-        activity_layout = QVBoxLayout(self.activity_group)
-        activity_layout.setContentsMargins(10, 10, 10, 10)
-        activity_body = QHBoxLayout()
-        activity_body.setSpacing(8)
-        activity_controls = QVBoxLayout()
-        activity_controls.setSpacing(6)
-        self.activity_report_button = QPushButton("Report")
-        self.activity_report_button.setMaximumWidth(96)
-        self.activity_report_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        self.activity_report_button.setToolTip(_wrapped_tooltip(
-            "Open the detailed activity report with the selected run summary and timeline."
-        ))
-        self.activity_report_button.clicked.connect(lambda: self.open_bot_logs_dialog())
-        activity_controls.addWidget(self.activity_report_button)
-        self.clear_recent_activity_button = QPushButton("Clear")
-        self.clear_recent_activity_button.setMaximumWidth(96)
-        self.clear_recent_activity_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        self.clear_recent_activity_button.setToolTip(_wrapped_tooltip(
-            "Clear the visible Recent Activity list. Saved run logs are not deleted."
-        ))
-        self.clear_recent_activity_button.clicked.connect(self.clear_recent_activity)
-        activity_controls.addWidget(self.clear_recent_activity_button)
-        activity_controls.addStretch(1)
-        activity_body.addLayout(activity_controls)
-        self.recent_activity = QPlainTextEdit()
-        self.recent_activity.setReadOnly(True)
-        self.recent_activity.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
-        self.recent_activity.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
-        self.recent_activity.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.recent_activity.setMinimumWidth(0)
-        self.recent_activity.setMinimumHeight(80)
-        self.recent_activity.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
-        self.recent_activity.setPlainText("No bot activity yet.")
-        activity_body.addWidget(self.recent_activity, 1)
-        activity_layout.addLayout(activity_body, 1)
+        self.activity_group = RecentActivityPanel(
+            on_report=self.open_bot_logs_dialog,
+            on_clear=self.clear_recent_activity,
+        )
+        self.activity_report_button = self.activity_group.report_button
+        self.clear_recent_activity_button = self.activity_group.clear_button
+        self.recent_activity = self.activity_group.text_edit
         dashboard_layout.addWidget(self.activity_group, 1)
 
         self.activity_page = self._build_activity_page()
@@ -2737,14 +2709,20 @@ class MailAssistDesktopWindow(QMainWindow):
     def _append_recent_activity(self, message: str) -> None:
         if not hasattr(self, "recent_activity"):
             return
-        if self.recent_activity.toPlainText().strip() == "No bot activity yet.":
-            self.recent_activity.clear()
-        self.recent_activity.appendPlainText(message)
+        if isinstance(self.activity_group, RecentActivityPanel):
+            self.activity_group.append_message(message)
+        else:
+            if self.recent_activity.toPlainText().strip() == EMPTY_ACTIVITY_TEXT:
+                self.recent_activity.clear()
+            self.recent_activity.appendPlainText(message)
         self.last_activity_summary = message
         self.refresh_dashboard()
 
     def clear_recent_activity(self) -> None:
-        self.recent_activity.setPlainText("No bot activity yet.")
+        if isinstance(self.activity_group, RecentActivityPanel):
+            self.activity_group.clear_messages()
+        else:
+            self.recent_activity.setPlainText(EMPTY_ACTIVITY_TEXT)
         self.last_activity_summary = "Idle"
         self.refresh_dashboard()
         self._set_banner("Recent Activity cleared.", level="info")

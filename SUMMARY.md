@@ -116,11 +116,12 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 - Folded the useful May 2 Claude review items into `TODO.md`: GUI decomposition, `review_state.py` retirement, basic CI, README shortcut drift, `you@example.com` leakage, signature reconciliation, batch retry granularity, confirmation helper cleanup, dev-mode `load_settings()` warning, live-state schema versioning, 7-day activity history, earlier Ollama liveness checks, Python support tightening, root-doc cleanup, and Windows icon fallback.
 - Magali's Zoom call is now delayed by about a week while she is on vacation. `TODO.md` was reordered so the immediate next work is larger architecture/support cleanup instead of the call bootstrap, while keeping the Magali Outlook setup path call-ready.
 - The Mac/Gmail path was moved up in priority because the user may want MailAssist for their own Gmail workflow; it is now treated as a real local-use path, not only a regression sandbox.
+- Started backlog items 1 and 2: extracted Recent Activity construction into `src/mailassist/gui/recent_activity.py` while preserving `MailAssistDesktopWindow` compatibility attributes, and reduced legacy `review_state.py` by reusing shared drafting constants/classification/signature helpers. Focused tests (`test_desktop_layout.py`, `test_review_state.py`, `test_config.py`) passed with 101 tests, then the full suite passed with 202 tests on May 2, 2026.
 
 ## Current Verified State
 
 - Visible version: `v62.12`.
-- Full test suite: 202 passing tests on May 1, 2026.
+- Full test suite: 202 passing tests on May 2, 2026.
 - Pre-Zoom local check: passed on May 1, 2026 after installing `mailassist==62.12.0`; `tests/test_cli_main.py` passed 8 tests.
 - Latest synced commit before the May 2 doc refresh commit: `da17ecd`.
 - Windows VM smoke: pushed `main` bootstrap, mock dry-run, `mailassist --version`, and `mailassist doctor --skip-model --provider mock` completed on Wendy on May 1, 2026; Outlook personal-account rejection is expected with the work/school app.
