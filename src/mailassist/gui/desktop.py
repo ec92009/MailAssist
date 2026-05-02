@@ -11,7 +11,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QProcess, QProcessEnvironment, Qt, QTimer
+from PySide6.QtCore import QProcess, Qt, QTimer
 from PySide6.QtGui import QFont, QIcon, QKeySequence, QShortcut, QTextCharFormat, QTextCursor, QTextOption
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
@@ -63,7 +63,19 @@ from mailassist.version import load_visible_version
 from mailassist.models import utc_now_iso
 from mailassist.llm.ollama import OllamaClient
 from mailassist.providers.gmail import GmailProvider
+from mailassist.gui.bot_process import (
+    BotActionRequest,
+    build_bot_action_args,
+    build_bot_process_environment,
+)
 from mailassist.gui.recent_activity import EMPTY_ACTIVITY_TEXT, RecentActivityPanel
+from mailassist.gui.theme import (
+    app_stylesheet,
+    combo_popup_style,
+    resolved_appearance,
+    theme_colors,
+    tool_button_style,
+)
 from mailassist.rich_text import attribution_html, html_to_plain_text, sanitize_html_fragment
 from mailassist.system_resources import (
     format_size,
@@ -374,281 +386,20 @@ class MailAssistDesktopWindow(QMainWindow):
             shortcut.activated.connect(slot)
 
     def _resolved_appearance(self) -> str:
-        if self.appearance != APPEARANCE_SYSTEM:
-            return self.appearance
-        try:
-            color_scheme = QApplication.styleHints().colorScheme()
-            if color_scheme == Qt.ColorScheme.Dark:
-                return APPEARANCE_NIGHT
-            if color_scheme == Qt.ColorScheme.Light:
-                return APPEARANCE_DAY
-        except Exception:
-            pass
-        palette = QApplication.palette()
-        return APPEARANCE_NIGHT if palette.window().color().lightness() < 128 else APPEARANCE_DAY
+        return resolved_appearance(self.appearance)
 
     def _theme_colors(self) -> dict[str, str]:
-        if self._resolved_appearance() == APPEARANCE_NIGHT:
-            return {
-                "root_bg": "#18202a",
-                "workspace_bg": "#202a36",
-                "nav_bg": "#111821",
-                "nav_border": "#2f3b49",
-                "panel_bg": "#26313f",
-                "panel_border": "#3d4b5b",
-                "card_bg": "#202b39",
-                "card_border": "#4a5b70",
-                "field_bg": "#1c2530",
-                "field_border": "#4a596b",
-                "text": "#eef3f7",
-                "muted": "#a9b5c2",
-                "button_bg": "#273342",
-                "button_hover": "#314156",
-                "button_border": "#536274",
-                "disabled_bg": "#252d37",
-                "disabled_text": "#7b8795",
-                "accent": "#34a6a5",
-                "accent_hover": "#2b908f",
-                "accent_soft": "rgba(52,166,165,0.18)",
-                "info_bg": "#223041",
-                "info_text": "#c7d2df",
-                "info_border": "#43566d",
-                "success_bg": "#153a34",
-                "success_text": "#7ee2c9",
-                "success_border": "#327e70",
-                "warn_bg": "#3d321e",
-                "warn_text": "#f3c87a",
-                "warn_border": "#806334",
-                "error_bg": "#472b28",
-                "error_text": "#f1aaa0",
-                "error_border": "#8e5149",
-                "idle_bg": "#2e3846",
-                "idle_text": "#b8c3ce",
-                "idle_border": "#566373",
-            }
-        return {
-            "root_bg": "#dfe4ea",
-                "workspace_bg": "#e8eff4",
-                "nav_bg": "#182230",
-                "nav_border": "#223044",
-                "panel_bg": "#ffffff",
-                "panel_border": "#b8c7d5",
-                "card_bg": "#f6f9fc",
-                "card_border": "#b2c1d0",
-                "field_bg": "#ffffff",
-                "field_border": "#aebdcc",
-            "text": "#172233",
-            "muted": "#5d6b7c",
-            "button_bg": "#ffffff",
-            "button_hover": "#eef6fb",
-            "button_border": "#b9c4cf",
-            "disabled_bg": "#edf0f2",
-            "disabled_text": "#9aa4af",
-            "accent": "#137c8b",
-            "accent_hover": "#0f6976",
-            "accent_soft": "rgba(19,124,139,0.12)",
-            "info_bg": "#fff4df",
-            "info_text": "#536273",
-            "info_border": "#e3c47c",
-            "success_bg": "#e5f5ef",
-            "success_text": "#04765c",
-            "success_border": "#9bd4c4",
-            "warn_bg": "#fff4df",
-            "warn_text": "#94661b",
-            "warn_border": "#e3c47c",
-            "error_bg": "#fae8e4",
-            "error_text": "#9a4036",
-            "error_border": "#e0aaa3",
-            "idle_bg": "#eef2f6",
-            "idle_text": "#536273",
-            "idle_border": "#c7d0da",
-        }
+        return theme_colors(self.appearance)
 
     def _apply_app_theme(self) -> None:
-        colors = self._theme_colors()
-        self.setStyleSheet(
-            f"""
-            QMainWindow, QWidget#appRoot {{
-                background: {colors["root_bg"]};
-                color: {colors["text"]};
-            }}
-            QFrame#navRail {{
-                background: {colors["nav_bg"]};
-                border-right: 1px solid {colors["nav_border"]};
-            }}
-            QFrame#dashboardCard {{
-                background: {colors["card_bg"]};
-                border: 1px solid {colors["card_border"]};
-                border-radius: 8px;
-            }}
-            QWidget#mainWorkspace {{
-                background: {colors["workspace_bg"]};
-            }}
-            QGroupBox {{
-                background: {colors["panel_bg"]};
-                border: 1px solid {colors["panel_border"]};
-                border-radius: 8px;
-                margin-top: 10px;
-                padding: 10px;
-                color: {colors["text"]};
-            }}
-            QGroupBox::title {{
-                subcontrol-origin: margin;
-                left: 12px;
-                padding: 0 6px;
-                color: {colors["muted"]};
-                font-weight: 700;
-            }}
-            QLabel {{
-                color: {colors["text"]};
-            }}
-            QPushButton {{
-                background: {colors["button_bg"]};
-                border: 1px solid {colors["button_border"]};
-                border-radius: 8px;
-                color: {colors["text"]};
-                padding: 6px 11px;
-            }}
-            QPushButton:hover {{
-                background: {colors["button_hover"]};
-            }}
-            QPushButton:checked {{
-                background: {colors["accent"]};
-                border: 1px solid {colors["accent"]};
-                color: #ffffff;
-                font-weight: 700;
-            }}
-            QPushButton:disabled {{
-                background: {colors["disabled_bg"]};
-                color: {colors["disabled_text"]};
-            }}
-            QPushButton#navButton {{
-                background: transparent;
-                border: 0;
-                border-radius: 8px;
-                color: #bdc8d6;
-                font-weight: 650;
-                padding: 8px 10px;
-                text-align: left;
-            }}
-            QPushButton#navButton:hover {{
-                background: rgba(255,255,255,0.08);
-            }}
-            QPushButton#navButton:checked {{
-                background: {colors["accent"]};
-                color: #ffffff;
-            }}
-            QLineEdit, QComboBox, QPlainTextEdit, QTextEdit, QListWidget, QSpinBox {{
-                background: {colors["field_bg"]};
-                border: 1px solid {colors["field_border"]};
-                border-radius: 8px;
-                color: {colors["text"]};
-                padding: 5px;
-                selection-background-color: {colors["accent"]};
-            }}
-            QComboBox {{
-                min-width: 260px;
-            }}
-            QComboBox QAbstractItemView, QListView#comboPopup {{
-                background: {colors["field_bg"]};
-                border: 1px solid {colors["field_border"]};
-                color: {colors["text"]};
-                selection-background-color: {colors["accent"]};
-                selection-color: #ffffff;
-                outline: 0;
-            }}
-            QComboBox QAbstractItemView::item, QListView#comboPopup::item {{
-                min-height: 28px;
-                padding: 4px 10px;
-            }}
-            QComboBox QAbstractItemView::item:hover, QListView#comboPopup::item:hover {{
-                background: {colors["button_hover"]};
-                color: {colors["text"]};
-            }}
-            QComboBox QAbstractItemView::item:selected, QListView#comboPopup::item:selected {{
-                background: {colors["accent"]};
-                color: #ffffff;
-            }}
-            QComboBox::drop-down {{
-                border: 0;
-                width: 30px;
-            }}
-            QToolButton {{
-                background: {colors["button_bg"]};
-                border: 1px solid {colors["button_border"]};
-                border-radius: 8px;
-                color: {colors["text"]};
-                padding: 5px 9px;
-            }}
-            QToolButton:hover {{
-                background: {colors["button_hover"]};
-            }}
-            QToolButton:disabled {{
-                background: {colors["disabled_bg"]};
-                color: {colors["disabled_text"]};
-            }}
-            QCheckBox {{
-                color: {colors["text"]};
-                spacing: 8px;
-            }}
-            QCheckBox:disabled {{
-                color: {colors["disabled_text"]};
-            }}
-            QDialog {{
-                background: {colors["workspace_bg"]};
-                color: {colors["text"]};
-            }}
-            QScrollBar:vertical {{
-                background: {colors["field_bg"]};
-                border: 0;
-                width: 12px;
-                margin: 2px;
-            }}
-            QScrollBar::handle:vertical {{
-                background: {colors["button_border"]};
-                border-radius: 5px;
-                min-height: 28px;
-            }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-                height: 0;
-            }}
-            QScrollBar:horizontal {{
-                background: {colors["field_bg"]};
-                border: 0;
-                height: 12px;
-                margin: 2px;
-            }}
-            QScrollBar::handle:horizontal {{
-                background: {colors["button_border"]};
-                border-radius: 5px;
-                min-width: 28px;
-            }}
-            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
-                width: 0;
-            }}
-            """
-        )
+        self.setStyleSheet(app_stylesheet(self._theme_colors()))
         self._refresh_theme_dependent_widgets()
 
     def _combo_popup_style(self) -> str:
-        colors = self._theme_colors()
-        return (
-            f"QListView#comboPopup {{ background: {colors['field_bg']}; "
-            f"border: 1px solid {colors['field_border']}; color: {colors['text']}; "
-            f"selection-background-color: {colors['accent']}; selection-color: #ffffff; outline: 0; }}"
-            f"QListView#comboPopup::item {{ min-height: 28px; padding: 4px 10px; }}"
-            f"QListView#comboPopup::item:hover {{ background: {colors['button_hover']}; color: {colors['text']}; }}"
-            f"QListView#comboPopup::item:selected {{ background: {colors['accent']}; color: #ffffff; }}"
-        )
+        return combo_popup_style(self._theme_colors())
 
     def _tool_button_style(self) -> str:
-        colors = self._theme_colors()
-        return (
-            f"QToolButton {{ background: {colors['button_bg']}; border: 1px solid {colors['button_border']}; "
-            f"border-radius: 8px; color: {colors['text']}; padding: 5px 9px; }}"
-            f"QToolButton:hover {{ background: {colors['button_hover']}; }}"
-            f"QToolButton:disabled {{ background: {colors['disabled_bg']}; color: {colors['disabled_text']}; }}"
-        )
+        return tool_button_style(self._theme_colors())
 
     def _refresh_theme_dependent_widgets(self) -> None:
         popup_style = self._combo_popup_style()
@@ -3364,46 +3115,28 @@ class MailAssistDesktopWindow(QMainWindow):
         self.current_bot_provider = provider
         self.current_bot_dry_run = dry_run
         self._reset_bot_progress()
+        request = BotActionRequest(
+            action=action,
+            base_url=base_url,
+            selected_model=selected_model,
+            thread_id=thread_id,
+            prompt=prompt,
+            provider=provider,
+            force=force,
+            dry_run=dry_run,
+            apply_labels=apply_labels,
+            apply_categories=apply_categories,
+            days=days,
+            limit=limit,
+        )
+        args = build_bot_action_args(request)
+
         self.bot_process = QProcess(self)
         self.bot_process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         self.bot_process.setWorkingDirectory(str(self.settings.root_dir))
-        process_env = QProcessEnvironment.systemEnvironment()
-        if action == "watch-once" and dry_run:
-            process_env.insert("MAILASSIST_OLLAMA_GENERATE_TIMEOUT_SECONDS", "110")
-        self.bot_process.setProcessEnvironment(process_env)
+        self.bot_process.setProcessEnvironment(build_bot_process_environment(request))
         self.bot_process.readyReadStandardOutput.connect(self._handle_bot_stdout)
         self.bot_process.finished.connect(self._handle_bot_finished)
-
-        args = [
-            "-u",
-            "-m",
-            "mailassist.cli.main",
-            "review-bot",
-            "--action",
-            action,
-            "--base-url",
-            base_url,
-            "--selected-model",
-            selected_model,
-        ]
-        if thread_id:
-            args.extend(["--thread-id", thread_id])
-        if prompt:
-            args.extend(["--prompt", prompt])
-        if provider:
-            args.extend(["--provider", provider])
-        if force:
-            args.append("--force")
-        if dry_run:
-            args.append("--dry-run")
-        if days is not None:
-            args.extend(["--days", str(max(1, int(days)))])
-        if limit is not None:
-            args.extend(["--limit", str(max(1, int(limit)))])
-        if apply_labels:
-            args.append("--apply-labels")
-        if apply_categories:
-            args.append("--apply-categories")
 
         self._append_bot_console(f"$ {sys.executable} {' '.join(args)}")
         self._set_banner(

@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 from mailassist.contacts import ElderContact
@@ -12,25 +11,19 @@ from mailassist.config import (
     read_env_file,
     write_env_file,
 )
-from mailassist.review_state import (
+from mailassist.drafting import (
     OPTION_A_SEPARATOR,
     OPTION_B_SEPARATOR,
     build_single_review_candidate_prompt,
     build_review_candidates_prompt,
-    candidate_display_label,
-    default_review_state,
     extract_classification_and_bodies,
     extract_classification_and_body,
     extract_streaming_candidate_body,
     fallback_classification_for_thread,
-    filtered_and_sorted_threads,
-    load_review_state,
     merge_classification,
-    payload_to_thread,
-    save_review_state,
     stream_candidate_for_tone,
-    update_candidate,
 )
+from mailassist.fixtures.mock_threads import build_mock_threads
 
 
 def test_load_settings_migrates_legacy_runtime_artifacts(monkeypatch, tmp_path: Path) -> None:
@@ -55,69 +48,8 @@ def test_load_settings_migrates_legacy_runtime_artifacts(monkeypatch, tmp_path: 
     assert not (data_dir / "review-inbox.json").exists()
 
 
-def populated_state() -> dict:
-    state = default_review_state()
-    state["threads"][0]["classification"] = "urgent"
-    state["threads"][0]["candidate_generation_model"] = "mistral:latest"
-    state["threads"][0]["candidates"] = [
-        {
-            "candidate_id": "option-a",
-            "label": "Option A",
-            "tone": "direct and executive",
-            "classification": "urgent",
-            "body": "Hello Alex",
-            "original_body": "Hello Alex",
-            "status": "pending_review",
-            "generated_by": "mistral:latest",
-            "generated_at": "2026-04-24T10:00:00+00:00",
-            "edited_at": None,
-        },
-        {
-            "candidate_id": "option-b",
-            "label": "Option B",
-            "tone": "warm and collaborative",
-            "classification": "urgent",
-            "body": "Hi Alex",
-            "original_body": "Hi Alex",
-            "status": "pending_review",
-            "generated_by": "mistral:latest",
-            "generated_at": "2026-04-24T10:00:00+00:00",
-            "edited_at": None,
-        },
-    ]
-    state["threads"][1]["classification"] = "reply_needed"
-    state["threads"][1]["candidate_generation_model"] = "mistral:latest"
-    state["threads"][1]["candidates"] = [
-        {
-            "candidate_id": "option-a",
-            "label": "Option A",
-            "tone": "direct and executive",
-            "classification": "reply_needed",
-            "body": "Hello Maria",
-            "original_body": "Hello Maria",
-            "status": "pending_review",
-            "generated_by": "mistral:latest",
-            "generated_at": "2026-04-24T10:00:00+00:00",
-            "edited_at": None,
-        }
-    ]
-    state["threads"][2]["classification"] = "automated"
-    state["threads"][2]["candidate_generation_model"] = "mistral:latest"
-    state["threads"][2]["candidates"] = [
-        {
-            "candidate_id": "option-a",
-            "label": "Option A",
-            "tone": "direct and executive",
-            "classification": "automated",
-            "body": "",
-            "original_body": "",
-            "status": "pending_review",
-            "generated_by": "mistral:latest",
-            "generated_at": "2026-04-24T10:00:00+00:00",
-            "edited_at": None,
-        }
-    ]
-    return state
+def mock_thread(thread_id: str):
+    return next(thread for thread in build_mock_threads() if thread.thread_id == thread_id)
 
 
 def test_parse_bool_handles_common_values() -> None:
@@ -220,21 +152,16 @@ def test_merge_classification_prefers_set_aside_heuristics_for_obvious_automatio
 
 
 def test_fallback_classification_marks_action_needed_deadline_as_urgent() -> None:
-    thread = next(item for item in default_review_state()["threads"] if item["thread_id"] == "thread-008")
-
-    assert fallback_classification_for_thread(payload_to_thread(thread["thread"])) == "urgent"
+    assert fallback_classification_for_thread(mock_thread("thread-008")) == "urgent"
 
 
 def test_fallback_classification_marks_automated_notifications_as_automated() -> None:
-    thread = next(item for item in default_review_state()["threads"] if item["thread_id"] == "thread-006")
-
-    assert fallback_classification_for_thread(payload_to_thread(thread["thread"])) == "automated"
+    assert fallback_classification_for_thread(mock_thread("thread-006")) == "automated"
 
 
 def test_build_review_candidates_prompt_includes_full_contract() -> None:
-    thread = populated_state()["threads"][0]["thread"]
     prompt = build_review_candidates_prompt(
-        payload_to_thread(thread),
+        mock_thread("thread-001"),
         signature="Best regards,\nEthan",
     )
 
@@ -262,9 +189,8 @@ def test_build_review_candidates_prompt_includes_full_contract() -> None:
 
 
 def test_build_single_review_candidate_prompt_requests_one_alternative() -> None:
-    thread = populated_state()["threads"][0]["thread"]
     prompt = build_single_review_candidate_prompt(
-        payload_to_thread(thread),
+        mock_thread("thread-001"),
         tone="direct and executive",
         guidance="Keep it concise and practical",
         existing_body="Please send the notes today.",
@@ -290,100 +216,6 @@ def test_build_single_review_candidate_prompt_requests_one_alternative() -> None
     assert OPTION_B_SEPARATOR not in prompt
 
 
-def test_load_review_state_normalizes_tone_labels(tmp_path: Path) -> None:
-    state = default_review_state()
-    state["threads"][0]["candidates"] = [
-        {
-            "candidate_id": "option-a",
-            "label": "Option A",
-            "tone": "direct and executive",
-            "classification": "urgent",
-            "body": "Hello Alex",
-            "original_body": "Hello Alex",
-            "status": "pending_review",
-            "generated_by": "mistral:latest",
-            "generated_at": "2026-04-24T10:00:00+00:00",
-            "edited_at": None,
-        }
-    ]
-    (tmp_path / "data").mkdir()
-    legacy_dir = tmp_path / "data" / "legacy"
-    legacy_dir.mkdir(parents=True)
-    (legacy_dir / "review-inbox.json").write_text(json.dumps(state), encoding="utf-8")
-    loaded = load_review_state(tmp_path)
-
-    assert loaded["threads"][0]["candidates"][0]["label"] == candidate_display_label(
-        "direct and executive"
-    )
-
-
-def test_save_review_state_writes_atomic_json_with_trailing_newline(tmp_path: Path) -> None:
-    state = default_review_state()
-
-    save_review_state(tmp_path, state)
-
-    path = tmp_path / "data" / "legacy" / "review-inbox.json"
-    assert path.exists()
-    assert not path.with_suffix(".json.tmp").exists()
-    text = path.read_text(encoding="utf-8")
-    assert text.endswith("\n")
-    assert json.loads(text)["schema_version"] == state["schema_version"]
-
-
-def test_filtered_and_sorted_threads_can_sort_by_received_date() -> None:
-    state = populated_state()
-    threads = state["threads"][:3]
-
-    ordered = filtered_and_sorted_threads(
-        threads,
-        filter_classification="all",
-        filter_status="all",
-        sort_order="received_at",
-    )
-
-    assert [item["thread_id"] for item in ordered[:3]] == ["thread-001", "thread-002", "thread-003"]
-
-
-def test_filtered_and_sorted_threads_can_sort_by_sender() -> None:
-    state = populated_state()
-    threads = state["threads"][:3]
-
-    ordered = filtered_and_sorted_threads(
-        threads,
-        filter_classification="all",
-        filter_status="all",
-        sort_order="sender",
-    )
-
-    assert [item["thread_id"] for item in ordered[:3]] == ["thread-001", "thread-002", "thread-003"]
-
-
-def test_update_candidate_green_lights_selected_draft() -> None:
-    state = populated_state()
-    thread = state["threads"][0]
-
-    update_candidate(thread, "option-b", "Edited second draft", "green_light")
-
-    assert thread["selected_candidate_id"] == "option-b"
-    assert thread["status"] == "use_draft"
-    assert thread["candidates"][1]["status"] == "use_draft"
-    assert thread["candidates"][1]["body"] == "Edited second draft"
-    assert thread["candidates"][0]["status"] == "pending_review"
-    assert thread["archive_selected"] is True
-
-
-def test_update_candidate_red_lights_map_to_ignored_thread_state() -> None:
-    state = populated_state()
-    thread = state["threads"][0]
-
-    update_candidate(thread, "option-a", "First draft", "red_light")
-
-    assert thread["status"] == "ignored"
-    assert thread["selected_candidate_id"] is None
-    assert thread["archive_selected"] is True
-    assert [item["status"] for item in thread["candidates"]] == ["ignored", "pending_review"]
-
-
 def test_stream_candidate_for_tone_emits_incremental_chunks(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
 
@@ -398,18 +230,18 @@ def test_stream_candidate_for_tone_emits_incremental_chunks(monkeypatch, tmp_pat
             yield " there"
 
     monkeypatch.setattr(
-        "mailassist.review_state.list_available_models",
+        "mailassist.drafting.list_available_models",
         lambda base_url, selected_model: (["mistral:latest"], ""),
     )
     monkeypatch.setattr(
-        "mailassist.review_state.resolve_generation_model",
+        "mailassist.drafting.resolve_generation_model",
         lambda selected_model, models: "mistral:latest",
     )
-    monkeypatch.setattr("mailassist.review_state.OllamaClient", FakeOllamaClient)
+    monkeypatch.setattr("mailassist.drafting.OllamaClient", FakeOllamaClient)
 
     updates: list[str] = []
     candidate, generation_model, generation_error, classification = stream_candidate_for_tone(
-        payload_to_thread(populated_state()["threads"][0]["thread"]),
+        mock_thread("thread-001"),
         candidate_id="option-a",
         tone="direct and executive",
         guidance="Keep it concise and practical.",
