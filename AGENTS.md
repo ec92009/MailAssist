@@ -2,32 +2,39 @@
 
 Working preferences for `~/Dev/MailAssist`.
 
+## Response Style
+
+- In final status updates after implementation work, put the high-signal outcome first under `Result`, because the Codex app may append file cards and changed-file panels after the message.
+- Keep `Result` short and concrete, such as version, completed scope, and test status.
+- Put supporting details, changed files, and caveats below `Result`.
+- Avoid clickable file links in final status updates unless the user specifically asks for them, because they create extra file cards that push the useful summary away from the top.
+
 ## Environment
 
-- Full procedure lives in [ENVIRONMENT_SOP.md](~/Dev/MailAssist/ENVIRONMENT_SOP.md).
-- Apply `ENVIRONMENT_SOP.md` for Python commands, tests, and package installs in this workspace.
+- Full procedure lives in [docs/sops/ENVIRONMENT_SOP.md](~/Dev/MailAssist/docs/sops/ENVIRONMENT_SOP.md).
+- Apply `docs/sops/ENVIRONMENT_SOP.md` for Python commands, tests, and package installs in this workspace.
 
 ## Versioning
 
-- Full procedure lives in [VERSIONING_SOP.md](~/Dev/MailAssist/VERSIONING_SOP.md).
-- Apply `VERSIONING_SOP.md` whenever MailAssist-visible version numbers or release badges change.
+- Full procedure lives in [docs/sops/VERSIONING_SOP.md](~/Dev/MailAssist/docs/sops/VERSIONING_SOP.md).
+- Apply `docs/sops/VERSIONING_SOP.md` whenever MailAssist-visible version numbers or release badges change.
 
 ## "Show Me" SOP
 
-- Full procedure lives in [SHOW_ME_SOP.md](~/Dev/MailAssist/SHOW_ME_SOP.md).
-- Apply `SHOW_ME_SOP.md` whenever the user asks to see the local UI.
+- Full procedure lives in [docs/sops/SHOW_ME_SOP.md](~/Dev/MailAssist/docs/sops/SHOW_ME_SOP.md).
+- Apply `docs/sops/SHOW_ME_SOP.md` whenever the user asks to see the local UI.
 
 ## Handoff SOP
 
 - Trigger phrase: `prepare for handoff`.
-- Full procedure lives in [HANDOFF_SOP.md](~/Dev/MailAssist/HANDOFF_SOP.md).
-- When that phrase appears, execute `HANDOFF_SOP.md` exactly.
+- Full procedure lives in [docs/sops/HANDOFF_SOP.md](~/Dev/MailAssist/docs/sops/HANDOFF_SOP.md).
+- When that phrase appears, execute `docs/sops/HANDOFF_SOP.md` exactly.
 
 ## Pick Up Where We Left Off SOP
 
 - Trigger phrase: `pick up where we left off`.
-- Full procedure lives in [PICKUP_WHERE_LEFT_OFF_SOP.md](~/Dev/MailAssist/PICKUP_WHERE_LEFT_OFF_SOP.md).
-- When that phrase appears, execute `PICKUP_WHERE_LEFT_OFF_SOP.md` exactly.
+- Full procedure lives in [docs/sops/PICKUP_WHERE_LEFT_OFF_SOP.md](~/Dev/MailAssist/docs/sops/PICKUP_WHERE_LEFT_OFF_SOP.md).
+- When that phrase appears, execute `docs/sops/PICKUP_WHERE_LEFT_OFF_SOP.md` exactly.
 
 ## Claude Critiques
 

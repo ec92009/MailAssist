@@ -1,5 +1,6 @@
 import os
 import json
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -636,6 +637,45 @@ def test_bot_log_formatter_shows_summary_and_timeline() -> None:
     assert 'Created draft for "Action needed: approve vendor access". Classification: Urgent.' in formatted
     assert '"type": "draft_created"' not in formatted
 
+    window.close()
+
+
+def test_dashboard_shows_seven_day_activity_history(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    window = MailAssistDesktopWindow()
+    log_path = window.settings.bot_logs_dir / "bot-watch-once-sample.jsonl"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(
+        "\n".join(
+            json.dumps(event)
+            for event in (
+                {
+                    "type": "started",
+                    "action": "watch-once",
+                    "timestamp": "2026-05-02T10:00:00+00:00",
+                },
+                {
+                    "type": "completed",
+                    "action": "watch-once",
+                    "timestamp": "2026-05-02T10:00:02+00:00",
+                    "provider": "gmail",
+                    "draft_count": 2,
+                    "draft_ready_count": 1,
+                    "skipped_count": 3,
+                    "already_handled_count": 0,
+                },
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    window.refresh_bot_logs()
+    window.refresh_dashboard()
+
+    assert "2 drafts" in window.activity_history_label.text()
+    assert "1 previews" in window.activity_history_label.text()
+    assert "3 skipped" in window.activity_history_label.text()
     window.close()
 
 
@@ -1607,6 +1647,7 @@ def test_silent_model_refresh_does_not_overwrite_test_result(monkeypatch) -> Non
     window.refresh_models(silent=True)
 
     assert window.ollama_connection_status.text() == "Not reachable"
+    assert "Use Start Ollama" in window.ollama_models_hint.text()
     assert window.ollama_result.toPlainText() == "Keep this result visible."
     window.close()
 

@@ -73,6 +73,46 @@ def test_read_and_write_env_file_round_trip(tmp_path: Path) -> None:
     assert read_env_file(env_file) == {"A": "1", "B": "2"}
 
 
+def test_env_file_supports_quotes_export_and_comments(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "export MAILASSIST_OUTLOOK_REDIRECT_URI=\"http://localhost:8765/callback?x=1#fragment\"",
+                "MAILASSIST_USER_SIGNATURE='Best regards, Ethan' # local comment",
+                "MAILASSIST_WINDOWS_PATH=\"C:\\\\Users\\\\Mail Assist\\\\token.json\"",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert read_env_file(env_file) == {
+        "MAILASSIST_OUTLOOK_REDIRECT_URI": "http://localhost:8765/callback?x=1#fragment",
+        "MAILASSIST_USER_SIGNATURE": "Best regards, Ethan",
+        "MAILASSIST_WINDOWS_PATH": "C:\\Users\\Mail Assist\\token.json",
+    }
+
+
+def test_write_env_file_quotes_values_that_need_it(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+
+    write_env_file(
+        env_file,
+        {
+            "A": "simple",
+            "B": "two words",
+            "C": "value#with-hash",
+        },
+    )
+
+    text = env_file.read_text(encoding="utf-8")
+    assert "A=simple\n" in text
+    assert 'B="two words"\n' in text
+    assert 'C="value#with-hash"\n' in text
+    assert read_env_file(env_file)["B"] == "two words"
+
+
 def test_load_settings_decodes_multiline_signature(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
     write_env_file(
@@ -89,6 +129,30 @@ def test_load_settings_decodes_multiline_signature(monkeypatch, tmp_path: Path) 
     assert settings.user_signature == "Best regards,\nEthan"
     assert settings.user_tone == "formal_polished"
     assert settings.bot_poll_seconds == 120
+
+
+def test_load_settings_derives_plain_signature_from_html(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_env_file(
+        tmp_path / ".env",
+        {
+            "MAILASSIST_USER_SIGNATURE_HTML": "<b>Best,</b><br>Ethan",
+        },
+    )
+
+    settings = load_settings()
+
+    assert settings.user_signature == "Best,\nEthan"
+    assert settings.user_signature_html == "<b>Best,</b><br>Ethan"
+
+
+def test_load_settings_warns_when_using_cwd_root(monkeypatch, tmp_path: Path, caplog) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("MAILASSIST_ROOT_DIR", raising=False)
+
+    load_settings()
+
+    assert "using the current working directory as the MailAssist root" in caplog.text
 
 
 def test_load_settings_defaults_poll_seconds_to_30(monkeypatch, tmp_path: Path) -> None:

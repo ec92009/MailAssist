@@ -25,6 +25,16 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("gmail-auth", help="Run Gmail OAuth setup and save the token.")
+    gmail_setup = subparsers.add_parser(
+        "gmail-setup-check",
+        help="Run a read-only Gmail readiness check and inbox preview.",
+    )
+    gmail_setup.add_argument(
+        "--limit",
+        type=int,
+        default=5,
+        help="Maximum number of inbox message snippets to preview.",
+    )
     subparsers.add_parser(
         "outlook-auth",
         help="Run Outlook Microsoft Graph OAuth setup and save the token.",
@@ -119,6 +129,38 @@ def command_gmail_auth() -> int:
         )
     )
     print("Authentication succeeded and a temporary Gmail draft was created.")
+    return 0
+
+
+def command_gmail_setup_check(args: argparse.Namespace) -> int:
+    settings = load_settings()
+    provider = GmailProvider(settings.gmail_credentials_file, settings.gmail_token_file)
+    limit = max(1, int(getattr(args, "limit", 5) or 5))
+
+    print("MailAssist Gmail setup check")
+    print("This is read-only. It will not create drafts or send email.")
+    print()
+
+    readiness = provider.readiness_check()
+    _print_provider_readiness(readiness)
+    if not readiness.ready:
+        return 1
+
+    try:
+        messages = provider.list_recent_inbox_messages(limit=limit)
+    except Exception as exc:
+        print()
+        print(f"Gmail inbox preview failed: {exc}")
+        return 1
+
+    print()
+    print(f"Inbox preview: {len(messages)} message{'s' if len(messages) != 1 else ''}")
+    for index, message in enumerate(messages, start=1):
+        subject = _safe_subject(str(message.get("subject") or "(no subject)"))
+        sender = str(message.get("from") or "(unknown sender)").strip()
+        print(f"{index}. {subject} - {sender}")
+    print()
+    print("Setup check completed. No drafts were created and no email was sent.")
     return 0
 
 
@@ -316,6 +358,8 @@ def main() -> int:
 
     if args.command == "gmail-auth":
         return command_gmail_auth()
+    if args.command == "gmail-setup-check":
+        return command_gmail_setup_check(args)
     if args.command == "outlook-auth":
         return command_outlook_auth()
     if args.command == "outlook-setup-check":
@@ -374,11 +418,16 @@ def _print_provider_readiness(readiness: ProviderReadiness) -> None:
 
 
 def _safe_thread_subject(thread: EmailThread) -> str:
-    subject = " ".join(thread.subject.split()) or "(no subject)"
-    if len(subject) > 80:
-        subject = f"{subject[:77]}..."
+    subject = _safe_subject(thread.subject)
     unread = "unread" if thread.unread else "read"
     return f"{subject} ({unread}, {len(thread.messages)} message{'s' if len(thread.messages) != 1 else ''})"
+
+
+def _safe_subject(value: str) -> str:
+    subject = " ".join(str(value or "").split()) or "(no subject)"
+    if len(subject) > 80:
+        return f"{subject[:77]}..."
+    return subject
 
 
 def _looks_like_thinking_output(response: str) -> bool:

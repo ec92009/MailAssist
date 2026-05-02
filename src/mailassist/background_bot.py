@@ -5,6 +5,7 @@ import locale
 import platform
 import re
 import subprocess
+from dataclasses import replace
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -35,7 +36,7 @@ from mailassist.drafting import (
 )
 from mailassist.contacts import ElderContact
 from mailassist.llm.ollama import OllamaClient
-from mailassist.models import DraftRecord, EmailThread, utc_now_iso
+from mailassist.models import DraftRecord, EmailMessage, EmailThread, utc_now_iso
 from mailassist.providers.base import DraftProvider
 from mailassist.rich_text import (
     attribution_html,
@@ -451,10 +452,32 @@ def generate_batch_candidates_for_tone(
     parsed = parse_batch_candidate_response(
         response,
         expected_thread_ids=[thread.thread_id for thread in threads],
+        allow_partial=True,
     )
     results = {}
     for thread in threads:
-        item = parsed[thread.thread_id]
+        item = parsed.get(thread.thread_id)
+        if item is None or item.get("error"):
+            candidate, fallback_model, fallback_error, fallback_classification = generate_candidate_for_tone(
+                thread,
+                candidate_id="option-a",
+                tone=tone,
+                guidance=guidance,
+                base_url=base_url,
+                selected_model=selected_model,
+                signature=signature,
+                elder_contacts=elder_contacts,
+            )
+            results[thread.thread_id] = {
+                "body": str(candidate.get("body", "")).strip(),
+                "classification": fallback_classification,
+                "generation_model": fallback_model or candidate.get("generated_by", generation_model),
+                "generation_error": _combine_generation_errors(
+                    item.get("error") if item else "Batch generation did not include this thread.",
+                    fallback_error,
+                ),
+            }
+            continue
         heuristic_classification = fallback_classification_for_thread(thread)
         classification = merge_classification(item["classification"], heuristic_classification)
         body = item["body"].strip() if classification not in SET_ASIDE_CLASSIFICATIONS else ""
@@ -541,6 +564,7 @@ def parse_batch_candidate_response(
     response: str,
     *,
     expected_thread_ids: list[str],
+    allow_partial: bool = False,
 ) -> dict[str, dict[str, Any]]:
     text = response.replace("\r\n", "\n").strip()
     parsed: dict[str, dict[str, Any]] = {}
@@ -550,10 +574,43 @@ def parse_batch_candidate_response(
         start = text.find(start_marker)
         end = text.find(end_marker, start + len(start_marker))
         if start < 0 or end < 0:
+            if allow_partial:
+                parsed[thread_id] = {"error": f"Missing packed response block for {thread_id}."}
+                continue
             raise ValueError(f"Missing packed response block for {thread_id}.")
         block = text[start + len(start_marker) : end].strip()
-        parsed[thread_id] = _parse_batch_block(block, thread_id)
+        try:
+            parsed[thread_id] = _parse_batch_block(block, thread_id)
+        except ValueError as exc:
+            if not allow_partial:
+                raise
+            parsed[thread_id] = {"error": str(exc)}
     return parsed
+
+
+def sanitized_controlled_thread(thread: EmailThread, *, account_email: str = "") -> EmailThread:
+    replacement = account_email.strip() or "mailassist-test-user"
+
+    def sanitize_address(value: str) -> str:
+        cleaned = str(value or "").strip()
+        if cleaned.lower() == "you@example.com":
+            return replacement
+        return cleaned
+
+    messages: list[EmailMessage] = []
+    for message in thread.messages:
+        messages.append(
+            replace(
+                message,
+                sender=sanitize_address(message.sender),
+                to=[sanitize_address(item) for item in message.to],
+            )
+        )
+    return replace(
+        thread,
+        participants=[sanitize_address(item) for item in thread.participants],
+        messages=messages,
+    )
 
 
 def _parse_batch_block(block: str, thread_id: str) -> dict[str, Any]:

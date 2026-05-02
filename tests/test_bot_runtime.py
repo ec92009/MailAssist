@@ -99,6 +99,77 @@ def test_review_bot_gmail_inbox_preview_emits_message_metadata(
     assert lines[-1]["message_count"] == 1
 
 
+def test_review_bot_gmail_prompt_lab_saves_private_prompt_without_printing_bodies(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_env_file(
+        tmp_path / ".env",
+        {
+            "MAILASSIST_GMAIL_ENABLED": "true",
+            "MAILASSIST_USER_SIGNATURE": "Best,\\nEthan",
+            "MAILASSIST_USER_TONE": "brief_casual",
+        },
+    )
+
+    private_body = "PRIVATE BODY: please refine this prompt locally"
+    thread = EmailThread(
+        thread_id="thread-private",
+        subject="Prompt sample",
+        participants=["sender@example.com", "me@example.com"],
+        messages=[
+            EmailMessage(
+                message_id="msg-private",
+                sender="sender@example.com",
+                to=["me@example.com"],
+                sent_at="2026-05-02T08:00:00+00:00",
+                text=private_body,
+            )
+        ],
+        unread=True,
+    )
+
+    class FakeProvider:
+        def list_candidate_threads(self):
+            return [thread]
+
+    monkeypatch.setattr(
+        "mailassist.bot_runtime.get_provider_for_settings",
+        lambda settings, provider_name: FakeProvider(),
+    )
+
+    args = argparse.Namespace(
+        command="review-bot",
+        action="gmail-prompt-lab",
+        thread_id=None,
+        prompt=None,
+        base_url=None,
+        selected_model=None,
+        provider="gmail",
+        batch_size=1,
+        limit=3,
+        force=False,
+        dry_run=False,
+        poll_seconds=0,
+        max_passes=0,
+    )
+
+    exit_code = command_review_bot(args)
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert private_body not in output
+    lines = [json.loads(line) for line in output.splitlines() if line.strip()]
+    saved = next(line for line in lines if line["type"] == "gmail_prompt_lab_saved")
+    prompt_path = Path(saved["path"])
+    assert prompt_path.parent == tmp_path / "data" / "prompt-lab"
+    prompt_text = prompt_path.read_text(encoding="utf-8")
+    assert private_body in prompt_text
+    assert "INPUT THREAD thread-private" in prompt_text
+    assert lines[-1]["type"] == "completed"
+    assert lines[-1]["thread_count"] == 1
+
+
 def test_review_bot_gmail_controlled_draft_creates_one_safe_draft(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:

@@ -1,5 +1,7 @@
 # MailAssist
 
+[![Tests](https://github.com/ec92009/MailAssist/actions/workflows/test.yml/badge.svg)](https://github.com/ec92009/MailAssist/actions/workflows/test.yml)
+
 MailAssist is a local background email drafting assistant. It watches connected inboxes, uses a local Ollama model to decide whether a message needs a reply, and creates a provider-native draft when useful.
 
 The user reviews, edits, sends, or deletes drafts in the normal mail client. MailAssist does not send email.
@@ -31,11 +33,12 @@ The user reviews, edits, sends, or deletes drafts in the normal mail client. Mai
 - [docs/magali-zoom-operator-script.md](~/Dev/MailAssist/docs/magali-zoom-operator-script.md): Magali call-time script
 - [docs/magali-windows-readiness-runbook.md](~/Dev/MailAssist/docs/magali-windows-readiness-runbook.md): Windows Outlook/Ollama readiness flow
 - [docs/mailassist-outlook-entra-portal-steps.md](~/Dev/MailAssist/docs/mailassist-outlook-entra-portal-steps.md): Entra app registration steps
-- [ENVIRONMENT_SOP.md](~/Dev/MailAssist/ENVIRONMENT_SOP.md): local Python workflow
-- [VERSIONING_SOP.md](~/Dev/MailAssist/VERSIONING_SOP.md): visible version rules
-- [SHOW_ME_SOP.md](~/Dev/MailAssist/SHOW_ME_SOP.md): local UI launch workflow
-- [HANDOFF_SOP.md](~/Dev/MailAssist/HANDOFF_SOP.md): cross-machine handoff procedure
-- [PICKUP_WHERE_LEFT_OFF_SOP.md](~/Dev/MailAssist/PICKUP_WHERE_LEFT_OFF_SOP.md): resume procedure after syncing
+- [docs/sops/README.md](~/Dev/MailAssist/docs/sops/README.md): process docs index
+- [docs/sops/ENVIRONMENT_SOP.md](~/Dev/MailAssist/docs/sops/ENVIRONMENT_SOP.md): local Python workflow
+- [docs/sops/VERSIONING_SOP.md](~/Dev/MailAssist/docs/sops/VERSIONING_SOP.md): visible version rules
+- [docs/sops/SHOW_ME_SOP.md](~/Dev/MailAssist/docs/sops/SHOW_ME_SOP.md): local UI launch workflow
+- [docs/sops/HANDOFF_SOP.md](~/Dev/MailAssist/docs/sops/HANDOFF_SOP.md): cross-machine handoff procedure
+- [docs/sops/PICKUP_WHERE_LEFT_OFF_SOP.md](~/Dev/MailAssist/docs/sops/PICKUP_WHERE_LEFT_OFF_SOP.md): resume procedure after syncing
 
 Historical docs from the heavier review-queue direction are archived under:
 
@@ -149,9 +152,11 @@ Apple references:
 
 ## Developer Setup
 
+MailAssist development targets Python 3.12. Let `uv` create and manage the repo virtualenv:
+
 ```bash
 cd ~/Dev/MailAssist
-uv venv .venv
+uv venv --python 3.12 .venv
 source .venv/bin/activate
 uv sync
 ```
@@ -182,7 +187,6 @@ The desktop app is now a compact bot control panel with settings, bot controls, 
 Keyboard shortcuts:
 
 - `⌘,` open settings wizard
-- `⌘R` run a mock pass
 - `⌘L` open the bot logs window
 - `Esc` dismiss the status banner
 
@@ -250,6 +254,22 @@ Preview the latest 10 Gmail inbox messages without creating drafts:
 ```bash
 ./.venv/bin/mailassist review-bot --action gmail-inbox-preview --limit 10
 ```
+
+Save a private local prompt sample from recent Gmail threads for Ollama prompt refinement:
+
+```bash
+./.venv/bin/mailassist review-bot --action gmail-prompt-lab --provider gmail --limit 3
+```
+
+This is read-only. It creates no drafts, sends no email, prints only thread metadata, and writes the prompt sample under ignored `data/prompt-lab/`.
+
+Run a read-only Gmail setup check without creating drafts:
+
+```bash
+./.venv/bin/mailassist gmail-setup-check --limit 5
+```
+
+This verifies Gmail readiness and prints only safe message metadata such as subject and sender.
 
 Run a read-only Outlook/Microsoft 365 setup check after setting the Outlook client and tenant values in `.env`:
 
@@ -325,8 +345,8 @@ When running the packaged Mac app, the same runtime data lives under:
 
 ## Current Verified Baseline
 
-- Visible version: `v62.12`.
-- Test suite: 202 passing tests on May 1, 2026.
+- Visible version: `v62.14`.
+- Test suite: 201 passing tests on May 2, 2026 after Python/SOP cleanup and Gmail prompt lab. GitHub Actions runs `uv sync --frozen` and the full suite on push and pull requests.
 - Pre-Zoom local check: passed on May 1, 2026 for the Magali setup docs/scripts, work/school Outlook `.env`, Azure CLI state, `uv sync`, and CLI smoke tests.
 - `gemma4:31b` works locally after MailAssist sends `think: false` to Ollama.
 - Controlled mock-to-Gmail draft creation has been tested with batch sizes 1, 5, and 10.

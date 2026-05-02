@@ -78,6 +78,7 @@ def log_action_label(action: str) -> str:
     labels = {
         "gmail-controlled-draft": "Controlled Gmail draft",
         "gmail-inbox-preview": "Gmail inbox preview",
+        "gmail-prompt-lab": "Gmail prompt lab",
         "ollama-check": "Ollama check",
         "watch-once": "Watch pass",
         "watch-loop": "Watch loop",

@@ -27,6 +27,7 @@ data/user_reviewed/*.json
 data/provider_drafted/*.json
 data/user_replied/*.json
 data/previews/
+data/prompt-lab/
 data/legacy/logs/*.json
 data/legacy/logs/*.txt
 data/legacy/drafts/*.json

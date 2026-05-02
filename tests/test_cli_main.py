@@ -56,6 +56,33 @@ class FakeOutlookProvider:
         ]
 
 
+class FakeGmailProvider:
+    def __init__(self, *args, **kwargs) -> None:
+        pass
+
+    def readiness_check(self) -> ProviderReadiness:
+        return ProviderReadiness(
+            provider="gmail",
+            status="ready",
+            message="Gmail provider is ready.",
+            account_email="ec92009@gmail.com",
+            can_authenticate=True,
+            can_read=True,
+            can_create_drafts=True,
+        )
+
+    def list_recent_inbox_messages(self, limit: int = 5) -> list[dict[str, str]]:
+        return [
+            {
+                "id": "msg-1",
+                "thread_id": "thread-1",
+                "from": "client@example.com",
+                "subject": "Gmail client question",
+                "snippet": "Private body should not print.",
+            }
+        ][:limit]
+
+
 class AdminBlockedOutlookProvider(FakeOutlookProvider):
     def authenticate(self) -> str:
         raise OutlookGraphAuthError(
@@ -130,6 +157,24 @@ def test_outlook_setup_check_is_read_only_and_prints_mailbox_summary(
     assert "MailAssist does not request Mail.Send" in output
     assert "Mailbox: magalidomingue@goldenyearstaxstrategy.com" in output
     assert "Client follow-up" in output
+    assert "Private body should not print" not in output
+    assert "No drafts were created and no email was sent" in output
+
+
+def test_gmail_setup_check_is_read_only_and_prints_safe_preview(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli_main, "GmailProvider", FakeGmailProvider)
+
+    exit_code = cli_main.command_gmail_setup_check(argparse.Namespace(limit=5))
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "This is read-only" in output
+    assert "Gmail readiness: ready" in output
+    assert "Account: ec92009@gmail.com" in output
+    assert "Gmail client question" in output
     assert "Private body should not print" not in output
     assert "No drafts were created and no email was sent" in output
 

@@ -173,12 +173,15 @@ These were useful experiments, but the lighter product should not build on them 
 
 ## Latest Verified State
 
-- Latest visible version: `v62.12`.
-- Latest test run: 202 passing tests on May 1, 2026.
+- Latest visible version: `v62.14`.
+- Latest test run: 201 passing tests on May 2, 2026.
+- GitHub Actions now runs `uv sync --frozen` and the full test suite on push to `main` and pull requests across Ubuntu and macOS; the README badge surfaces that status outside local machines.
 - Latest pre-Zoom local check: passed on May 1, 2026 after installing `mailassist==62.12.0`; `tests/test_cli_main.py` passed 8 tests.
 - Current visible GUI surface is the compact bot control panel and setup wizard.
 - Gmail provider dependencies are installed by plain `uv sync`.
 - Local Gmail setup has been proven for draft creation and readonly inbox preview.
+- Local Gmail prompt lab can now save a private read-only Ollama prompt sample under ignored `data/prompt-lab/` without creating drafts, sending mail, or printing bodies to stdout.
+- Developer/runtime support is now explicitly Python 3.12, matching CI and the Windows bootstrap path; SOPs now live under `docs/sops/`.
 - Mac/Gmail DMG artifact was published as a GitHub release asset.
 - The next implementation phase should run the Magali-ready Windows bootstrap during the Zoom call, validate read-only Outlook Graph readiness with `outlook-setup-check`, validate model readiness with `ollama-setup-check`, and only then consider an explicit controlled draft write.
 - The latest cleanup slices moved old review/runtime artifacts into a legacy subtree, removed the unused queue-phase lifecycle, deleted the old web review GUI path, removed the dead legacy local draft pipeline, and introduced a dedicated live-state store for watcher runtime data.

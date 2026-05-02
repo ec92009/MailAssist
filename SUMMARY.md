@@ -119,12 +119,15 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 - Started backlog items 1 and 2: extracted Recent Activity construction into `src/mailassist/gui/recent_activity.py` while preserving `MailAssistDesktopWindow` compatibility attributes, and reduced legacy `review_state.py` by reusing shared drafting constants/classification/signature helpers. Focused tests (`test_desktop_layout.py`, `test_review_state.py`, `test_config.py`) passed with 101 tests, then the full suite passed with 202 tests on May 2, 2026.
 - Finished the first architecture/review-state cleanup wave: extracted theme palette/stylesheet helpers into `src/mailassist/gui/theme.py`, extracted bot action argument/environment construction into `src/mailassist/gui/bot_process.py`, deleted legacy `src/mailassist/review_state.py`, deleted `tests/test_review_state.py`, and moved useful prompt/parsing/generation coverage to `tests/test_config.py` against `mailassist.drafting` and mock fixtures. Focused tests (`test_config.py`, `test_desktop_layout.py`) passed with 90 tests; full suite passed with 191 tests on May 2, 2026.
 - Continued backlog item 1 by splitting bot activity/log formatting into `src/mailassist/gui/bot_activity.py`, bot control/event/log handling into `src/mailassist/gui/bot_controller.py`, and embedded settings pages into `src/mailassist/gui/settings_pages.py`. `desktop.py` is now roughly 1500 lines, which the user accepted as good enough for this wave; focused desktop tests passed with 69 tests and the full suite passed with 191 tests on May 2, 2026.
-- Prepared handoff after marking the 1500-line GUI split complete enough for Claude to review. The active next item is CI/support hygiene: add GitHub Actions for `uv sync` plus the test suite on push/PR, fix README/shortcut drift, and surface the 191-test invariant outside local machines.
+- Prepared handoff after marking the 1500-line GUI split complete enough for Claude to review, then resumed and completed the recorded CI/support hygiene slice. Added `.github/workflows/test.yml` so GitHub Actions runs `uv sync --frozen` and `uv run pytest` on push to `main` and pull requests across Ubuntu and macOS, added the README test badge, removed the stale `⌘R` mock-pass shortcut claim, and updated the verified baseline to 191 tests.
+- Completed backlog items 1-3 as a focused safety/support/trust pass: controlled Gmail draft bodies no longer leak `you@example.com`, signature HTML/plain text reconciliation is tighter, packed batch generation retries only missing/invalid blocks individually, confirmation dialog rendering is centralized, cwd-root settings fallback logs a dev warning, `.env` parsing supports quoted/export/commented values, Mac/Gmail has a read-only `gmail-setup-check`, the dashboard shows 7-day activity totals from JSONL logs, and Ollama empty/unreachable states point to `Start Ollama`. Bumped visible version to `v62.13`; full suite passed with 200 tests on May 2, 2026.
+- Completed the follow-on backlog 1-3 slice: project metadata and SOPs now make Python 3.12 the supported runtime, SOPs moved into `docs/sops/` with an index, and Mac/Gmail now has a read-only `gmail-prompt-lab` command that saves a private local Ollama prompt sample under ignored `data/prompt-lab/` without printing email bodies, creating drafts, or sending mail. Bumped visible version to `v62.14`; full suite passed with 201 tests on May 2, 2026.
 
 ## Current Verified State
 
-- Visible version: `v62.12`.
-- Full test suite: 191 passing tests on May 2, 2026 after retiring legacy review-state tests.
+- Visible version: `v62.14`.
+- Full test suite: 201 passing tests on May 2, 2026 after Python/SOP cleanup and Gmail prompt lab.
+- GitHub Actions test workflow: `.github/workflows/test.yml` runs the full suite on push to `main` and pull requests.
 - Pre-Zoom local check: passed on May 1, 2026 after installing `mailassist==62.12.0`; `tests/test_cli_main.py` passed 8 tests.
 - Latest synced commit before this handoff commit: `dca808b`.
 - Windows VM smoke: pushed `main` bootstrap, mock dry-run, `mailassist --version`, and `mailassist doctor --skip-model --provider mock` completed on Wendy on May 1, 2026; Outlook personal-account rejection is expected with the work/school app.
@@ -145,15 +148,13 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 - Live batch LLM output no longer asks for a separate `SHOULD_DRAFT` report flag.
 - Live watcher state lives in `data/live-state.json` with provider-scoped slots, account email discovery, recent activity, and migration from the older `data/bot-state.json`.
 - Magali's Outlook account discovery is resolved enough to proceed: her main business mailbox is Microsoft 365 / Exchange Online, she can access the Microsoft 365 admin center, and Outlook Desktop uses Microsoft Exchange.
-- Resume point: start CI/support hygiene. Add a simple GitHub Actions workflow for `uv sync` plus the full test suite on push/PR, then fix README/shortcut drift and make the current 191-test invariant visible outside local machines. Keep the Magali Windows bootstrap ready for the delayed Zoom call.
+- Resume point: continue the remaining maintainability/support backlog: provider/runtime duplication cleanup, packaging/distribution checks, and prompt-quality refinements from real local Gmail prompt-lab samples. Keep the Magali Windows bootstrap ready for the delayed Zoom call.
 
 ## Remaining Backlog
 
-- Add basic CI/support hygiene: GitHub Actions for `uv sync` plus full tests on push/PR, README/shortcut drift, and visible 191-test invariant.
-- Address smaller Claude follow-ups such as `you@example.com` synthetic leakage, settings warnings, live-state schema versioning, and signature/runtime cleanup.
 - Keep `review_state.py` retired unless a real production path needs the old two-candidate review state again.
-- Maintain and improve the Mac/Gmail path for real local use, not just sandbox regression.
-- Improve trust/onboarding polish with 7-day activity history and earlier Ollama liveness checks.
+- Maintain and improve the Mac/Gmail path for real local use, not just sandbox regression; use `gmail-prompt-lab` samples to refine the Ollama prompt safely.
+- Improve trust/onboarding polish based on real use of the new 7-day activity summary, prompt-lab workflow, and Ollama start guidance.
 - Keep the delayed Magali Outlook setup flow call-ready; on the Zoom call, paste the bootstrap command from `docs/magali-zoom-operator-script.md`, validate read-only Outlook readiness and model readiness, and create no draft unless Magali explicitly agrees.
 - Continue product safety and trust hardening around explicit provider writes and ignored runtime artifacts.
 - Continue Windows packaging once Parallels or another Windows build machine is available.

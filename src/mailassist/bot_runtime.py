@@ -9,10 +9,13 @@ from uuid import uuid4
 
 from mailassist.background_bot import (
     append_draft_attribution,
+    build_batch_candidate_prompt,
     body_with_review_context,
     build_draft_body_html,
     reply_metadata_for_thread,
     run_watch_pass,
+    sanitized_controlled_thread,
+    tone_guidance,
 )
 from mailassist.config import (
     ATTRIBUTION_BELOW_SIGNATURE,
@@ -90,6 +93,7 @@ def build_review_bot_parser(subparsers: argparse._SubParsersAction[argparse.Argu
             "watch-once",
             "watch-loop",
             "gmail-inbox-preview",
+            "gmail-prompt-lab",
             "gmail-controlled-draft",
             "gmail-label-cleanup",
             "gmail-unused-label-cleanup",
@@ -224,6 +228,78 @@ def command_review_bot(args: argparse.Namespace) -> int:
                 message="Gmail inbox preview completed.",
                 provider="gmail",
                 message_count=len(messages),
+            )
+            return 0
+
+        if args.action == "gmail-prompt-lab":
+            provider = get_provider_for_settings(settings, "gmail")
+            reader = getattr(provider, "list_candidate_threads", None)
+            if not callable(reader):
+                raise RuntimeError("The configured Gmail provider cannot list candidate threads.")
+            limit = max(1, int(getattr(args, "limit", 3) or 3))
+            reporter.emit(
+                "info",
+                message=(
+                    "Building a read-only Gmail prompt lab sample. "
+                    "No drafts will be created and no email will be sent."
+                ),
+                provider="gmail",
+                limit=limit,
+            )
+            threads = list(reader())[:limit]
+            tone, guidance = tone_guidance(settings.user_tone)
+            prompt = build_batch_candidate_prompt(
+                threads,
+                tone=tone,
+                guidance=guidance,
+                signature=settings.user_signature,
+                elder_contacts=settings.elder_contacts,
+            )
+            output_dir = settings.data_dir / "prompt-lab"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            output_path = output_dir / f"gmail-prompt-lab-{timestamp}.txt"
+            output_path.write_text(
+                "\n".join(
+                    [
+                        "MailAssist Gmail Prompt Lab",
+                        f"Created: {utc_now_iso()}",
+                        "Provider: gmail",
+                        f"Thread count: {len(threads)}",
+                        "",
+                        "This file is local-only and may contain private email content.",
+                        "It is meant for refining the Ollama drafting prompt without creating drafts.",
+                        "",
+                        prompt,
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            for thread in threads:
+                latest_sender = thread.messages[-1].sender if thread.messages else ""
+                reporter.emit(
+                    "gmail_prompt_lab_thread",
+                    provider="gmail",
+                    thread_id=thread.thread_id,
+                    subject=thread.subject,
+                    latest_sender=latest_sender,
+                    unread=thread.unread,
+                    message_count=len(thread.messages),
+                    classification=fallback_classification_for_thread(thread),
+                )
+            reporter.emit(
+                "gmail_prompt_lab_saved",
+                provider="gmail",
+                path=str(output_path),
+                thread_count=len(threads),
+            )
+            reporter.emit(
+                "completed",
+                message="Gmail prompt lab completed. No drafts were created and no email was sent.",
+                provider="gmail",
+                prompt_path=str(output_path),
+                thread_count=len(threads),
             )
             return 0
 
@@ -671,27 +747,32 @@ def command_review_bot(args: argparse.Namespace) -> int:
             )
             account_getter = getattr(provider, "get_account_email", None)
             account_email = account_getter() if callable(account_getter) else None
+            account_email_text = str(account_email or "").strip()
+            controlled_thread = sanitized_controlled_thread(
+                thread,
+                account_email=account_email_text,
+            )
             draft = DraftRecord(
-                draft_id=f"controlled-gmail-{thread.thread_id}",
-                thread_id=thread.thread_id,
+                draft_id=f"controlled-gmail-{controlled_thread.thread_id}",
+                thread_id=controlled_thread.thread_id,
                 provider="gmail",
-                subject=f"MailAssist controlled draft test - Re: {thread.subject}",
+                subject=f"MailAssist controlled draft test - Re: {controlled_thread.subject}",
                 body=body_with_review_context(
-                    thread,
+                    controlled_thread,
                     body,
-                    user_address="you@example.com",
+                    user_address=account_email_text,
                 ),
                 body_html=build_draft_body_html(
-                    thread,
+                    controlled_thread,
                     body,
                     signature=settings.user_signature,
                     signature_html=settings.user_signature_html,
                     model=generation_model,
                     attribution_placement=attribution_placement,
-                    user_address="you@example.com",
+                    user_address=account_email_text,
                 ),
                 model=generation_model,
-                to=[str(account_email).strip()] if str(account_email or "").strip() else [],
+                to=[account_email_text] if account_email_text else [],
             )
             reporter.emit(
                 "info",

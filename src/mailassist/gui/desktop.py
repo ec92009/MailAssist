@@ -65,6 +65,7 @@ from mailassist.llm.ollama import OllamaClient
 from mailassist.providers.gmail import GmailProvider
 from mailassist.gui.bot_activity import short_duration_label
 from mailassist.gui.bot_controller import BotControllerMixin
+from mailassist.gui.confirmations import confirm_action
 from mailassist.gui.recent_activity import RecentActivityPanel
 from mailassist.gui.settings_pages import SettingsPagesMixin
 from mailassist.gui.theme import (
@@ -242,6 +243,7 @@ class MailAssistDesktopWindow(SettingsPagesMixin, BotControllerMixin, QMainWindo
         self.last_activity_summary = "Idle"
         self.last_pass_summary = ""
         self.last_failure_summary = ""
+        self.activity_history_summary = "No recent runs"
         self.ollama_health: tuple[str, str] = ("Checking...", "warn")
         self.provider_health: tuple[str, str] = ("", "warn")
         self.ollama_model_details: dict[str, dict[str, Any]] = {}
@@ -344,65 +346,7 @@ class MailAssistDesktopWindow(SettingsPagesMixin, BotControllerMixin, QMainWindo
         spin_box.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
     def _confirm_action(self, title: str, message: str) -> QMessageBox.StandardButton:
-        colors = self._theme_colors()
-        dialog = QDialog(self)
-        dialog.setObjectName("confirmDialog")
-        dialog.setModal(True)
-        dialog.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
-        dialog.setStyleSheet(
-            f"""
-            QDialog#confirmDialog {{
-                background: {colors['panel_bg']};
-                border: 1px solid {colors['panel_border']};
-                border-radius: 10px;
-            }}
-            QLabel#confirmTitle {{
-                color: {colors['text']};
-                font-size: 18px;
-                font-weight: 800;
-            }}
-            QLabel#confirmMessage {{
-                color: {colors['text']};
-                font-size: 15px;
-                font-weight: 650;
-                line-height: 1.25;
-            }}
-            """
-        )
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(26, 24, 26, 24)
-        layout.setSpacing(18)
-
-        title_label = QLabel(title)
-        title_label.setObjectName("confirmTitle")
-        layout.addWidget(title_label)
-
-        message_label = QLabel(message)
-        message_label.setObjectName("confirmMessage")
-        message_label.setWordWrap(True)
-        message_label.setMinimumWidth(520)
-        layout.addWidget(message_label)
-
-        actions = QHBoxLayout()
-        actions.addStretch(1)
-        no_button = QPushButton("No")
-        yes_button = QPushButton("Yes")
-        no_button.setMinimumWidth(82)
-        yes_button.setMinimumWidth(82)
-        result = {"button": QMessageBox.StandardButton.No}
-
-        def choose(button: QMessageBox.StandardButton) -> None:
-            result["button"] = button
-            dialog.accept()
-
-        no_button.clicked.connect(lambda: choose(QMessageBox.StandardButton.No))
-        yes_button.clicked.connect(lambda: choose(QMessageBox.StandardButton.Yes))
-        actions.addWidget(no_button)
-        actions.addWidget(yes_button)
-        layout.addLayout(actions)
-        no_button.setDefault(True)
-        dialog.exec()
-        return result["button"]
+        return confirm_action(self, title=title, message=message, colors=self._theme_colors())
 
     def _info_panel_style(self) -> str:
         colors = self._theme_colors()
@@ -442,6 +386,7 @@ class MailAssistDesktopWindow(SettingsPagesMixin, BotControllerMixin, QMainWindo
             "last_activity_label",
             "last_pass_label",
             "last_failure_label",
+            "activity_history_label",
         ):
             widget = getattr(self, name, None)
             if isinstance(widget, QLabel):
@@ -745,6 +690,7 @@ class MailAssistDesktopWindow(SettingsPagesMixin, BotControllerMixin, QMainWindo
         self.last_activity_label = QLabel(self.last_activity_summary)
         self.last_pass_label = QLabel("No watch pass yet")
         self.last_failure_label = QLabel("None")
+        self.activity_history_label = QLabel(self.activity_history_summary)
         self._refresh_dashboard_contrast_styles()
         self._set_bot_state("idle")
         status_cards = QGridLayout()
@@ -760,9 +706,10 @@ class MailAssistDesktopWindow(SettingsPagesMixin, BotControllerMixin, QMainWindo
                 ("Last activity", self.last_activity_label),
                 ("Last pass", self.last_pass_label),
                 ("Last failure", self.last_failure_label),
+                ("7-day activity", self.activity_history_label),
             )
         ):
-            status_cards.addWidget(self._build_dashboard_card(label_text, widget), index // 3, index % 3)
+            status_cards.addWidget(self._build_dashboard_card(label_text, widget), index // 4, index % 4)
         control_layout.addLayout(status_cards)
 
         bot_actions = QHBoxLayout()
@@ -1159,6 +1106,7 @@ class MailAssistDesktopWindow(SettingsPagesMixin, BotControllerMixin, QMainWindo
         self.last_activity_label.setText(self.last_activity_summary)
         self.last_pass_label.setText(self.last_pass_summary or "No watch pass yet")
         self.last_failure_label.setText(self.last_failure_summary or "None")
+        self.activity_history_label.setText(self.activity_history_summary)
 
         if self.bot_process is not None:
             self._set_bot_state("running")
@@ -1272,11 +1220,16 @@ class MailAssistDesktopWindow(SettingsPagesMixin, BotControllerMixin, QMainWindo
             self.ollama_health = (f"connected ({len(models)})", "ok")
         else:
             self.ollama_connection_status.setText("No models found")
-            self.ollama_models_hint.setText("No installed Ollama models were detected.")
+            self.ollama_models_hint.setText(
+                "No installed Ollama models were detected. Start Ollama or install a model, then refresh."
+            )
             self.ollama_health = ("no models", "warn")
         if model_error:
             self.ollama_connection_status.setText("Not reachable")
             self.ollama_health = ("not reachable", "error")
+            self.ollama_models_hint.setText(
+                "Ollama is not reachable. Use Start Ollama, then refresh the model list."
+            )
             if (
                 not silent
                 and not self.ollama_result.toPlainText().startswith("Sending a tiny test prompt")

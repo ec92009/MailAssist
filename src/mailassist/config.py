@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import os
 import json
+import logging
+import shlex
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict
 
 from mailassist.contacts import ElderContact, load_elder_contacts
+from mailassist.rich_text import html_to_plain_text, sanitize_html_fragment
 
 
 ATTRIBUTION_HIDE = "hide"
@@ -33,6 +36,7 @@ APPEARANCE_SYSTEM = "system"
 APPEARANCE_DAY = "day"
 APPEARANCE_NIGHT = "night"
 APPEARANCES = {APPEARANCE_SYSTEM, APPEARANCE_DAY, APPEARANCE_NIGHT}
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -136,11 +140,11 @@ def load_dotenv(env_file: Path) -> None:
         return
 
     for line in env_file.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or "=" not in stripped:
+        parsed = _parse_env_assignment(line)
+        if parsed is None:
             continue
-        key, value = stripped.split("=", 1)
-        os.environ[key.strip()] = value.strip()
+        key, value = parsed
+        os.environ[key] = value
 
 
 def read_env_file(env_file: Path) -> Dict[str, str]:
@@ -149,18 +153,53 @@ def read_env_file(env_file: Path) -> Dict[str, str]:
         return data
 
     for line in env_file.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or "=" not in stripped:
+        parsed = _parse_env_assignment(line)
+        if parsed is None:
             continue
-        key, value = stripped.split("=", 1)
-        data[key.strip()] = value.strip()
+        key, value = parsed
+        data[key] = value
     return data
 
 
 def write_env_file(env_file: Path, values: Dict[str, str]) -> None:
     env_file.parent.mkdir(parents=True, exist_ok=True)
-    lines = [f"{key}={value}" for key, value in sorted(values.items())]
+    lines = [f"{key}={_format_env_value(value)}" for key, value in sorted(values.items())]
     env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _parse_env_assignment(line: str) -> tuple[str, str] | None:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#") or "=" not in stripped:
+        return None
+    if stripped.startswith("export "):
+        stripped = stripped[len("export ") :].lstrip()
+    key, value = stripped.split("=", 1)
+    key = key.strip()
+    if not key:
+        return None
+    return key, _parse_env_value(value)
+
+
+def _parse_env_value(value: str) -> str:
+    lexer = shlex.shlex(value, posix=True)
+    lexer.whitespace_split = False
+    lexer.commenters = "#"
+    lexer.whitespace = ""
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        return value.strip()
+    return "".join(tokens).strip()
+
+
+def _format_env_value(value: str) -> str:
+    text = str(value)
+    if not text:
+        return ""
+    if any(char.isspace() for char in text) or any(char in text for char in "\"'#$\\"):
+        escaped = text.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
+    return text
 
 
 def default_root_dir() -> Path:
@@ -169,6 +208,9 @@ def default_root_dir() -> Path:
         return Path(configured_root).expanduser()
     if getattr(sys, "frozen", False):
         return Path.home() / "Library" / "Application Support" / "MailAssist"
+    LOGGER.warning(
+        "MAILASSIST_ROOT_DIR is not set; using the current working directory as the MailAssist root."
+    )
     return Path.cwd()
 
 
@@ -266,6 +308,13 @@ def load_settings() -> Settings:
         fallback_enabled=draft_attribution,
     )
 
+    user_signature = env("MAILASSIST_USER_SIGNATURE").replace("\\n", "\n")
+    user_signature_html = sanitize_html_fragment(
+        env("MAILASSIST_USER_SIGNATURE_HTML").replace("\\n", "\n")
+    )
+    if user_signature_html and not user_signature.strip():
+        user_signature = html_to_plain_text(user_signature_html)
+
     return Settings(
         root_dir=root_dir,
         data_dir=data_dir,
@@ -276,8 +325,8 @@ def load_settings() -> Settings:
         mock_provider_drafts_dir=mock_provider_drafts_dir,
         ollama_url=env("MAILASSIST_OLLAMA_URL", "http://localhost:11434"),
         ollama_model=env("MAILASSIST_OLLAMA_MODEL", "llama3.1:8b"),
-        user_signature=env("MAILASSIST_USER_SIGNATURE").replace("\\n", "\n"),
-        user_signature_html=env("MAILASSIST_USER_SIGNATURE_HTML").replace("\\n", "\n"),
+        user_signature=user_signature,
+        user_signature_html=user_signature_html,
         user_tone=env("MAILASSIST_USER_TONE", "direct_concise"),
         bot_poll_seconds=parse_int(env("MAILASSIST_BOT_POLL_SECONDS"), 30),
         default_provider=default_provider,

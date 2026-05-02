@@ -18,6 +18,7 @@ from mailassist.background_bot import (
     reply_metadata_for_thread,
     reply_recipients_for_thread,
     run_watch_pass,
+    sanitized_controlled_thread,
 )
 from mailassist.contacts import ElderContact
 from mailassist.config import load_settings, write_env_file
@@ -424,6 +425,45 @@ BODY:
     assert parsed["thread-002"]["body"] == ""
 
 
+def test_parse_batch_candidate_response_can_return_partial_errors() -> None:
+    response = """
+BEGIN THREAD thread-001
+CLASSIFICATION: urgent
+BODY:
+Alex,
+
+I am reviewing this.
+-- END THREAD thread-001 --
+"""
+
+    parsed = parse_batch_candidate_response(
+        response,
+        expected_thread_ids=["thread-001", "thread-002"],
+        allow_partial=True,
+    )
+
+    assert parsed["thread-001"]["classification"] == "urgent"
+    assert parsed["thread-002"]["error"] == "Missing packed response block for thread-002."
+
+
+def test_sanitized_controlled_thread_replaces_synthetic_user_address() -> None:
+    thread = next(item for item in build_mock_threads() if item.thread_id == "thread-001")
+
+    sanitized = sanitized_controlled_thread(thread, account_email="owner@gmail.com")
+
+    payload = json.dumps(
+        {
+            "participants": sanitized.participants,
+            "messages": [
+                {"sender": message.sender, "to": message.to, "text": message.text}
+                for message in sanitized.messages
+            ],
+        }
+    )
+    assert "you@example.com" not in payload
+    assert "owner@gmail.com" in payload
+
+
 def test_build_batch_candidate_prompt_forbids_domain_company_names() -> None:
     threads = [item for item in build_mock_threads() if item.thread_id in {"thread-007", "thread-008"}]
 
@@ -561,6 +601,74 @@ def test_mock_watch_pass_batches_actionable_threads(monkeypatch, tmp_path: Path)
     assert state["providers"]["mock"]["threads"]["thread-002"]["generation_model"] == "batch-model"
     assert (tmp_path / "data" / "mock-provider-drafts" / "thread-001.json").exists()
     assert (tmp_path / "data" / "mock-provider-drafts" / "thread-002.json").exists()
+
+
+def test_mock_watch_pass_retries_only_missing_batch_blocks(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_env_file(
+        tmp_path / ".env",
+        {
+            "MAILASSIST_USER_TONE": "brief_casual",
+            "MAILASSIST_USER_SIGNATURE": "Best,\\nTest",
+        },
+    )
+    calls = {"single": []}
+
+    def fake_build_mock_threads():
+        return [item for item in build_mock_threads() if item.thread_id in {"thread-001", "thread-002"}]
+
+    class FakeClient:
+        def __init__(self, _base_url, _model):
+            pass
+
+        def compose_reply(self, _prompt):
+            return """
+BEGIN THREAD thread-001
+CLASSIFICATION: urgent
+BODY:
+Alex,
+
+I am reviewing this.
+-- END THREAD thread-001 --
+"""
+
+    def fake_list_available_models(_base_url, selected_model):
+        return [selected_model], None
+
+    def fake_generate_candidate_for_tone(thread, **_kwargs):
+        calls["single"].append(thread.thread_id)
+        return (
+            {
+                "body": "Maria,\n\nI am reviewing this.\n\nBest,\nTest",
+                "generated_by": "single-model",
+            },
+            "single-model",
+            None,
+            "urgent",
+        )
+
+    monkeypatch.setattr("mailassist.background_bot.build_mock_threads", fake_build_mock_threads)
+    monkeypatch.setattr("mailassist.background_bot.OllamaClient", FakeClient)
+    monkeypatch.setattr("mailassist.background_bot.list_available_models", fake_list_available_models)
+    monkeypatch.setattr(
+        "mailassist.background_bot.generate_candidate_for_tone",
+        fake_generate_candidate_for_tone,
+    )
+
+    settings = load_settings()
+    provider = MockProvider(settings.mock_provider_drafts_dir)
+
+    events = run_watch_pass(
+        settings=settings,
+        provider=provider,
+        base_url="http://localhost:11434",
+        selected_model="batch-model",
+        batch_size=2,
+    )
+
+    assert [event["type"] for event in events] == ["draft_created", "draft_created"]
+    assert calls["single"] == ["thread-002"]
+    assert events[1]["generation_error"] == "Missing packed response block for thread-002."
 
 
 def test_mock_watch_pass_persists_provider_account_email_and_uses_it(monkeypatch, tmp_path: Path) -> None:

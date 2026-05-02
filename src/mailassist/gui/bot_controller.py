@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -168,15 +169,36 @@ class BotControllerMixin:
     def _refresh_summary_from_logs(self, log_paths: list[Path]) -> None:
         latest_pass = ""
         latest_failure = ""
+        history = {
+            "drafts": 0,
+            "dry_runs": 0,
+            "skipped": 0,
+            "failed": 0,
+        }
+        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
         for path in log_paths:
             events = read_bot_log_events(path)
-            if not latest_pass:
-                completed = next(
-                    (event for event in reversed(events)
-                     if event.get("type") == "completed" and "draft_count" in event),
-                    None,
-                )
+            completed = next(
+                (event for event in reversed(events) if event.get("type") == "completed"),
+                None,
+            )
+            error = next(
+                (event for event in reversed(events) if event.get("type") == "error"),
+                None,
+            )
+            history_event = completed or error or (events[-1] if events else None)
+            if history_event and self._event_is_recent(history_event, cutoff):
+                if error:
+                    history["failed"] += 1
                 if completed:
+                    history["drafts"] += int(completed.get("draft_count") or 0)
+                    history["dry_runs"] += int(completed.get("draft_ready_count") or 0)
+                    history["skipped"] += int(completed.get("skipped_count") or 0)
+            if not latest_pass:
+                latest_completed_pass = (
+                    completed if completed and "draft_count" in completed else None
+                )
+                if latest_completed_pass:
                     when = event_day_time_label(completed.get("timestamp"))
                     latest_pass = (
                         f"{when} · {completed.get('draft_count', 0)} drafts · "
@@ -192,12 +214,26 @@ class BotControllerMixin:
                     when = event_day_time_label(err.get("timestamp"))
                     message = user_facing_failure_message(str(err.get("message") or "Bot error.").strip())
                     latest_failure = f"{when} · {message}"
-            if latest_pass and latest_failure:
-                break
         if latest_pass:
             self.last_pass_summary = latest_pass
         if latest_failure:
             self.last_failure_summary = latest_failure
+        self.activity_history_summary = (
+            f"{history['drafts']} drafts · {history['dry_runs']} previews · "
+            f"{history['skipped']} skipped · {history['failed']} failed"
+        )
+
+    def _event_is_recent(self, event: dict[str, Any], cutoff: datetime) -> bool:
+        raw = str(event.get("timestamp") or "").strip()
+        if not raw:
+            return False
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc) >= cutoff
 
     def _bot_log_selector_label(self, path: Path) -> str:
         events = read_bot_log_events(path)
