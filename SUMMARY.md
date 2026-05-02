@@ -111,12 +111,18 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 - Made the dashboard Bot status show the short actionable auth failure `Outlook sign-in expired` for Outlook `invalid_grant` errors, while keeping the longer re-auth guidance in Recent Activity and the banner.
 - Before the Zoom call, ran the local pre-Zoom checker after the `v62.12` update. It verified the Magali setup docs/scripts, Entra app JSON shape, work/school Outlook `.env` values, Azure CLI install/sign-in, `uv sync`, package install at `62.12.0`, and `tests/test_cli_main.py` with 8 passing tests.
 - User approved the current GUI polish as call-ready. Remaining advice before Zoom is to avoid further UI churn, commit/push the current work to GitHub `main`, paste the one-command Windows bootstrap during the call, validate read-only Outlook readiness and MailAssist-path `qwen3:8b`, and create no draft unless both checks pass and Magali explicitly agrees to a harmless test thread.
+- Picked up again on May 2, 2026 after David pushed `da17ecd`, synced `main`, ran `uv sync`, and confirmed the repo was clean at MailAssist `62.12.0`.
+- Found Claude's fresh May 2 `v62.12` review in `.claude/worktrees/optimistic-leakey-08d156/Claude.review.2026.05.02.08.md`, archived it under `archived/2026-05-02-claude-critiques-acknowledged/`, removed the worktree copy, and updated the archive README.
+- Folded the useful May 2 Claude review items into `TODO.md`: GUI decomposition, `review_state.py` retirement, basic CI, README shortcut drift, `you@example.com` leakage, signature reconciliation, batch retry granularity, confirmation helper cleanup, dev-mode `load_settings()` warning, live-state schema versioning, 7-day activity history, earlier Ollama liveness checks, Python support tightening, root-doc cleanup, and Windows icon fallback.
+- Magali's Zoom call is now delayed by about a week while she is on vacation. `TODO.md` was reordered so the immediate next work is larger architecture/support cleanup instead of the call bootstrap, while keeping the Magali Outlook setup path call-ready.
+- The Mac/Gmail path was moved up in priority because the user may want MailAssist for their own Gmail workflow; it is now treated as a real local-use path, not only a regression sandbox.
 
 ## Current Verified State
 
 - Visible version: `v62.12`.
 - Full test suite: 202 passing tests on May 1, 2026.
 - Pre-Zoom local check: passed on May 1, 2026 after installing `mailassist==62.12.0`; `tests/test_cli_main.py` passed 8 tests.
+- Latest synced commit before the May 2 doc refresh commit: `da17ecd`.
 - Windows VM smoke: pushed `main` bootstrap, mock dry-run, `mailassist --version`, and `mailassist doctor --skip-model --provider mock` completed on Wendy on May 1, 2026; Outlook personal-account rejection is expected with the work/school app.
 - Native desktop app is the active GUI surface; it has no localhost or LAN URL.
 - Latest synchronized commit before the handoff commit: `9a3a703`.
@@ -135,17 +141,16 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 - Live batch LLM output no longer asks for a separate `SHOULD_DRAFT` report flag.
 - Live watcher state lives in `data/live-state.json` with provider-scoped slots, account email discovery, recent activity, and migration from the older `data/bot-state.json`.
 - Magali's Outlook account discovery is resolved enough to proceed: her main business mailbox is Microsoft 365 / Exchange Online, she can access the Microsoft 365 admin center, and Outlook Desktop uses Microsoft Exchange.
-- Resume point: on the Magali Zoom call, run the one-command Windows bootstrap from `docs/magali-zoom-operator-script.md`, validate read-only Outlook Graph readiness and `qwen3:8b` through MailAssist's own Ollama setup check or `mailassist doctor --provider outlook --expected-email <mailbox> --authorize`, and attempt any controlled Outlook draft write only after those checks succeed and Magali explicitly agrees.
+- Resume point: start the architecture cleanup with a small, testable extraction from the 3800-line `MailAssistDesktopWindow`, preferably Recent Activity/Activity history or bot process control, while preserving current provider-write safety behavior. Keep the Magali Windows bootstrap ready for the delayed Zoom call.
 
 ## Remaining Backlog
 
-- On the Zoom call, paste the bootstrap command from `docs/magali-zoom-operator-script.md`; it downloads `tools/magali-bootstrap.ps1`, installs `uv` and Python 3.12 if needed, syncs MailAssist, and runs read-only Outlook setup plus the MailAssist-path `qwen3:8b` Ollama check with verified client id `2b2639c3-605c-466d-ae89-63ef8ffff5c8`. Run any controlled draft write only after read-only readiness and model readiness succeed.
-- Run `mailassist ollama-setup-check --model qwen3:8b` on her setup; hardware RAM is likely sufficient, but raw terminal Ollama thinking was slow.
-- Use `docs/outlook-m365-admin-consent.md` as the packaged tenant/admin-consent guidance before attempting Magali's Microsoft 365 account.
-- Continue triaging daily Claude critique files during morning sync, starting from `2026.04.30_Claude_Critique_2.md` until a newer dated successor exists. Treat them as pointers: accept small safety/support wins, defer larger refactors until they are the best next step, and reject anything that conflicts with provider-write safety or repo SOPs.
-- Decide the next Outlook GUI exposure for drafting. Current GUI exposes `Organize Outlook`; targeted Outlook draft creation remains available through explicit CLI/smoke-test commands.
+- Split `MailAssistDesktopWindow` into smaller widgets/controllers, then retire or sharply reduce legacy `review_state.py`.
+- Add basic CI/support hygiene and address smaller Claude follow-ups such as `you@example.com` synthetic leakage, settings warnings, live-state schema versioning, and README shortcut drift.
+- Maintain and improve the Mac/Gmail path for real local use, not just sandbox regression.
+- Improve trust/onboarding polish with 7-day activity history and earlier Ollama liveness checks.
+- Keep the delayed Magali Outlook setup flow call-ready; on the Zoom call, paste the bootstrap command from `docs/magali-zoom-operator-script.md`, validate read-only Outlook readiness and model readiness, and create no draft unless Magali explicitly agrees.
 - Continue product safety and trust hardening around explicit provider writes and ignored runtime artifacts.
-- Maintain the Mac/Gmail sandbox.
 - Continue Windows packaging once Parallels or another Windows build machine is available.
 
 ## Project Shorthand
