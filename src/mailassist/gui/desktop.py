@@ -214,6 +214,23 @@ def _detached_process_kwargs() -> dict[str, Any]:
     return kwargs
 
 
+def _app_icon_path(root_dir: Path, *, platform: str = sys.platform) -> Path | None:
+    icon_dir = root_dir / "assets" / "brand"
+    if platform == "win32":
+        candidates = (
+            icon_dir / "mailassist_icon.ico",
+            icon_dir / "mailassist_icon_256.png",
+            icon_dir / "mailassist_icon.svg",
+        )
+    else:
+        candidates = (
+            icon_dir / "mailassist_icon.svg",
+            icon_dir / "mailassist_icon_256.png",
+            icon_dir / "mailassist_icon.ico",
+        )
+    return next((path for path in candidates if path.exists()), None)
+
+
 def _model_display_label(model_detail: dict[str, Any]) -> str:
     name = str(model_detail.get("name", "")).strip()
     age = _format_model_age(model_detail.get("modified_at"))
@@ -284,8 +301,8 @@ class MailAssistDesktopWindow(SettingsPagesMixin, BotControllerMixin, QMainWindo
         self.ollama_test_countdown_timer.timeout.connect(self._refresh_ollama_test_countdown)
 
         self.setWindowTitle(f"MailAssist v{load_visible_version(self.settings.root_dir)}")
-        icon_path = self.settings.root_dir / "assets" / "brand" / "mailassist_icon.svg"
-        if icon_path.exists():
+        icon_path = _app_icon_path(self.settings.root_dir)
+        if icon_path is not None:
             self.setWindowIcon(QIcon(str(icon_path)))
         self.resize(*self._initial_window_size())
 

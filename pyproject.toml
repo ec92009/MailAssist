@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mailassist"
-version = "62.14.0"
+version = "62.15.0"
 description = "Local AI-assisted email drafting bot with Gmail-first provider support."
 readme = "README.md"
 requires-python = ">=3.12"

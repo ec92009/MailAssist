@@ -345,8 +345,8 @@ When running the packaged Mac app, the same runtime data lives under:
 
 ## Current Verified Baseline
 
-- Visible version: `v62.14`.
-- Test suite: 201 passing tests on May 2, 2026 after Python/SOP cleanup and Gmail prompt lab. GitHub Actions runs `uv sync --frozen` and the full suite on push and pull requests.
+- Visible version: `v62.15`.
+- Focused test slice: 80 passing tests on May 2, 2026 after Windows icon fallback prep. Latest full suite remains 201 passing tests on May 2, 2026 after Python/SOP cleanup and Gmail prompt lab. GitHub Actions runs `uv sync --frozen` and the full suite on push and pull requests.
 - Pre-Zoom local check: passed on May 1, 2026 for the Magali setup docs/scripts, work/school Outlook `.env`, Azure CLI state, `uv sync`, and CLI smoke tests.
 - `gemma4:31b` works locally after MailAssist sends `think: false` to Ollama.
 - Controlled mock-to-Gmail draft creation has been tested with batch sizes 1, 5, and 10.

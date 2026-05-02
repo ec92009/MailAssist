@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 
 from mailassist.config import read_env_file, write_env_file
 from mailassist.gui import desktop as desktop_module
-from mailassist.gui.desktop import MailAssistDesktopWindow
+from mailassist.gui.desktop import MailAssistDesktopWindow, _app_icon_path
 from mailassist.system_resources import memory_recommendation_message, recommended_model_names
 
 
@@ -47,6 +47,23 @@ def test_settings_pages_are_embedded_without_footer_navigation() -> None:
     assert window.main_stack.currentWidget() is window.dashboard_page
     assert window.nav_buttons["Dashboard"].isChecked()
     window.close()
+
+
+def test_windows_icon_prefers_ico_then_png_then_svg(tmp_path) -> None:
+    icon_dir = tmp_path / "assets" / "brand"
+    icon_dir.mkdir(parents=True)
+    svg = icon_dir / "mailassist_icon.svg"
+    png = icon_dir / "mailassist_icon_256.png"
+    ico = icon_dir / "mailassist_icon.ico"
+
+    svg.write_text("<svg />", encoding="utf-8")
+    assert _app_icon_path(tmp_path, platform="win32") == svg
+
+    png.write_bytes(b"png")
+    assert _app_icon_path(tmp_path, platform="win32") == png
+
+    ico.write_bytes(b"ico")
+    assert _app_icon_path(tmp_path, platform="win32") == ico
 
 
 def test_embedded_settings_pages_are_compact() -> None:
