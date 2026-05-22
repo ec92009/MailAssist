@@ -19,6 +19,14 @@ Working preferences for `~/Dev/MailAssist`.
 - Full procedure lives in [docs/sops/VERSIONING_SOP.md](~/Dev/MailAssist/docs/sops/VERSIONING_SOP.md).
 - Apply `docs/sops/VERSIONING_SOP.md` whenever MailAssist-visible version numbers or release badges change.
 
+## Timelog
+
+- Full procedure lives in [docs/sops/TIMELOG_SOP.md](~/Dev/MailAssist/docs/sops/TIMELOG_SOP.md).
+- Apply `docs/sops/TIMELOG_SOP.md` whenever active collaboration time tracking starts, pauses, resumes, stops, time remaining is requested, or a docs refresh, handoff, commit, or push is requested and countable time changed.
+- Count only the user's active project collaboration time, not Codex background work or idle gaps.
+- Use `TIMELOG.md` as the project-local timelog file if tracking is started unless the user specifies another file.
+- The MailAssist collaboration clock is paused unless the user explicitly starts or resumes it.
+
 ## "Show Me" SOP
 
 - Full procedure lives in [docs/sops/SHOW_ME_SOP.md](~/Dev/MailAssist/docs/sops/SHOW_ME_SOP.md).

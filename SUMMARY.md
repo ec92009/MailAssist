@@ -124,6 +124,7 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 - Completed the follow-on backlog 1-3 slice: project metadata and SOPs now make Python 3.12 the supported runtime, SOPs moved into `docs/sops/` with an index, and Mac/Gmail now has a read-only `gmail-prompt-lab` command that saves a private local Ollama prompt sample under ignored `data/prompt-lab/` without printing email bodies, creating drafts, or sending mail. Bumped visible version to `v62.14`; full suite passed with 201 tests on May 2, 2026.
 - Pushed `v62.14` to `main` as `2f3ffd5`, then refreshed Wendy, the Windows 11 Enterprise Evaluation VM on Curie. Git was awkward in the VM, so Wendy used the GitHub ZIP path, installed/synced with `uv sync --python 3.12`, reported `mailassist 62.14.0`, passed `doctor --skip-model --provider mock`, and completed `review-bot --action watch-once --provider mock --dry-run --force` with zero drafts. Codex Desktop crashed inside Wendy with `write EPIPE`, but Codex Desktop for macOS Intel installed and worked on Curie, which is the better control surface while Wendy remains the Windows packaging target.
 - Synced from GitHub `main` at `f3e52fd`, rebuilt the broken local `.venv` with a temporary `uv`, verified `mailassist 62.14.0`, mock doctor, and `tests/test_cli_main.py`, then completed the unblocked Windows icon prep item from packaging backlog #10. Added `packaging/windows/build_icons.py`, generated `assets/brand/mailassist_icon_256.png` and `assets/brand/mailassist_icon.ico` from the existing SVG, and made the desktop icon loader prefer ICO/PNG on Windows before falling back to SVG. Bumped visible version to `v62.15`; focused desktop/CLI tests passed with 80 tests on May 2, 2026.
+- During the hourly handoff sweep on May 22, 2026, added the active-collaboration timelog SOP under `docs/sops/`, linked it from `AGENTS.md` and the SOP index, and refreshed handoff docs. This is process documentation only, so the visible version remains `v62.15`.
 
 ## Current Verified State
 
@@ -131,11 +132,11 @@ MailAssist remains a local background draft creator. It watches connected mail, 
 - Focused local test slice: 80 passing tests on May 2, 2026 after Windows icon fallback prep. Latest full suite remains 201 passing tests on May 2, 2026 after Python/SOP cleanup and Gmail prompt lab.
 - GitHub Actions test workflow: `.github/workflows/test.yml` runs the full suite on push to `main` and pull requests.
 - Pre-Zoom local check: passed on May 1, 2026 after installing `mailassist==62.12.0`; `tests/test_cli_main.py` passed 8 tests.
-- Latest synced commit before this handoff commit: `f3e52fd`.
+- Latest synced commit before this handoff commit: `3ce585c`.
 - Windows VM smoke: Wendy downloaded the `2f3ffd5` GitHub ZIP, ran `uv sync --python 3.12`, reported `mailassist 62.14.0`, passed `doctor --skip-model --provider mock`, and completed mock `review-bot --action watch-once --provider mock --dry-run --force` on May 2, 2026. RDP remains flaky; VNC to Curie is the current access path.
 - Native desktop app is the active GUI surface; it has no localhost or LAN URL.
-- Latest synchronized commit before the handoff commit: `f3e52fd`.
-- Latest pushed setup/bootstrap commit before the current handoff refresh: `f3e52fd`.
+- Latest synchronized commit before the handoff commit: `3ce585c`.
+- Latest pushed setup/bootstrap commit before the current handoff refresh: `3ce585c`.
 - Installed app path: `/Applications/MailAssist.app`.
 - Gmail provider dependencies are default dependencies and are installed by plain `uv sync`.
 - Gmail read-only probing, Gmail dry-run watching, controlled Gmail provider-write draft creation, and Gmail multipart draft validation have all been exercised locally.

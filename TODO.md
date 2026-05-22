@@ -22,7 +22,7 @@ Mac/Gmail remains the proving ground because it is already working locally and e
     - `sed -n '1,220p' TODO.md`
     - `sed -n '1,180p' SUMMARY.md`
 - Current baseline at handoff:
-  - Last synchronized commit before this handoff commit: `f3e52fd`
+  - Last synchronized commit before this handoff commit: `3ce585c`
   - Handoff commit: reported in the final assistant response after commit/push
   - Current visible version: `v62.15`
   - Local app/dev entrypoint: `./.venv/bin/mailassist desktop-gui`
@@ -48,6 +48,7 @@ Mac/Gmail remains the proving ground because it is already working locally and e
 
 ## Recently Completed
 
+- Added `docs/sops/TIMELOG_SOP.md` and linked it from `AGENTS.md` plus the SOP index so future active-collaboration time tracking is explicit and excluded from background implementation time. (Managed by Codex)
 - Added a dedicated live watcher state store at `data/live-state.json` with migration from the older `data/bot-state.json` path. (Managed by Codex)
 - Persisted provider account email discovery for the live watcher and used it for reply recipients and quoted review context. (Managed by Codex)
 - Added manual `user_replied` detection when the latest visible message is already from the user account. (Managed by Codex)
