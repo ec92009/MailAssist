@@ -92,6 +92,8 @@ if ($Action -eq "Uninstall") {
 }
 
 $taskArgs = [System.Collections.Generic.List[string]]::new()
+$taskArgs.Add("-WindowStyle")
+$taskArgs.Add("Hidden")
 $taskArgs.Add("-NoProfile")
 $taskArgs.Add("-ExecutionPolicy")
 $taskArgs.Add("Bypass")
@@ -128,6 +130,7 @@ $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries `
     -ExecutionTimeLimit (New-TimeSpan -Seconds 0) `
+    -Hidden `
     -MultipleInstances IgnoreNew `
     -RestartCount 3 `
     -RestartInterval (New-TimeSpan -Minutes 1)

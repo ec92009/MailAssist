@@ -14,6 +14,7 @@ from mailassist.config import load_settings
 from mailassist.gui.bot_activity import (
     event_day_time_label,
     format_bot_log_for_humans,
+    humanize,
     is_organizer_action,
     log_action_label,
     organizer_stop_message,
@@ -104,12 +105,18 @@ def _add_outcome_count(
         "filtered_out",
     }:
         counts["scanned"] += 1
+    if count_scan and event_type in {
+        "draft_created",
+        "draft_ready",
+        "skipped_email",
+        "already_handled",
+        "user_replied",
+    }:
+        counts[_classification_bucket(event.get("classification"))] += 1
     if event_type == "draft_created":
         counts["drafts"] += 1
     elif event_type == "draft_ready":
         counts["draft_previews"] += 1
-    elif event_type == "skipped_email" and count_scan:
-        counts[_classification_bucket(event.get("classification"))] += 1
     elif event_type in {"already_handled", "user_replied"}:
         counts["already_handled"] += 1
     elif event_type == "filtered_out":
@@ -177,6 +184,59 @@ def _activity_counts_from_events(
 def _merge_activity_counts(target: dict[str, int], source: dict[str, int]) -> None:
     for key, value in source.items():
         target[key] = target.get(key, 0) + value
+
+
+def _latest_event(events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    latest: dict[str, Any] | None = None
+    latest_timestamp: datetime | None = None
+    for event in events:
+        timestamp = _event_timestamp(event)
+        if timestamp is None:
+            continue
+        if latest_timestamp is None or timestamp >= latest_timestamp:
+            latest = event
+            latest_timestamp = timestamp
+    return latest
+
+
+def _dashboard_event_message(event: dict[str, Any]) -> str:
+    event_type = str(event.get("type") or "")
+    provider = str(event.get("provider") or "").strip().title() or "MailAssist"
+    classification = str(event.get("classification") or "").strip()
+    classification_detail = f" as {humanize(classification)}" if classification else ""
+    pass_number = event.get("pass_number")
+    pass_detail = f" pass {pass_number}" if pass_number else ""
+    when = event_day_time_label(event.get("timestamp"))
+    if event_type == "watch_pass_started":
+        return f"{provider} background scan started{pass_detail} at {when}."
+    if event_type == "watch_pass_completed":
+        return f"{provider} background scan completed{pass_detail} at {when}."
+    if event_type == "sleeping":
+        poll_seconds = event.get("poll_seconds")
+        if poll_seconds:
+            return f"{provider} background scan waiting {poll_seconds} seconds after {when}."
+        return f"{provider} background scan waiting after {when}."
+    if event_type == "email_work_started":
+        return f"{provider} worked on email dated {event_day_time_label(event.get('message_timestamp'))}."
+    if event_type == "email_classified":
+        return f"{provider} classified an email{classification_detail} at {when}."
+    if event_type == "draft_created":
+        return f"{provider} drafted a reply{classification_detail} at {when}."
+    if event_type == "draft_ready":
+        return f"{provider} previewed a reply{classification_detail} at {when}."
+    if event_type == "already_handled":
+        return f"{provider} skipped an already-handled email{classification_detail} at {when}."
+    if event_type == "skipped_email":
+        return f"{provider} skipped an email{classification_detail} at {when}."
+    if event_type == "filtered_out":
+        return f"{provider} filtered an email at {when}."
+    if event_type == "error":
+        return f"{provider} background scan needs attention at {when}."
+    if event_type == "started":
+        return f"{provider} background scan started at {when}."
+    if event_type == "info":
+        return f"{provider} background scan reported status at {when}."
+    return f"{provider} background scan activity at {when}."
 
 
 def _event_timestamp(event: dict[str, Any]) -> datetime | None:
@@ -370,13 +430,44 @@ class BotControllerMixin:
         else:
             self.bot_log_viewer.clear()
 
+    def refresh_service_activity_summary(self) -> None:
+        log_paths = sorted(
+            self.settings.bot_logs_dir.glob("*.jsonl"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        self._refresh_summary_from_logs(log_paths)
+        self.refresh_dashboard()
+
     def _refresh_summary_from_logs(self, log_paths: list[Path]) -> None:
         latest_pass = ""
         latest_failure = ""
+        latest_dashboard_event: dict[str, Any] | None = None
+        latest_dashboard_timestamp: datetime | None = None
         boot_cutoff = system_boot_time_utc()
         session_counts = _empty_activity_counts()
         for path in log_paths:
             events = read_bot_log_events(path)
+            scoped_events = []
+            for event in events:
+                timestamp = _event_timestamp(event)
+                if boot_cutoff is not None and (timestamp is None or timestamp < boot_cutoff):
+                    continue
+                scoped_events.append(event)
+            candidate = _latest_event(
+                [event for event in scoped_events if event.get("type") != "log_file"]
+            )
+            if candidate is not None:
+                candidate_timestamp = _event_timestamp(candidate)
+                if (
+                    candidate_timestamp is not None
+                    and (
+                        latest_dashboard_timestamp is None
+                        or candidate_timestamp >= latest_dashboard_timestamp
+                    )
+                ):
+                    latest_dashboard_event = candidate
+                    latest_dashboard_timestamp = candidate_timestamp
             _merge_activity_counts(
                 session_counts,
                 _activity_counts_from_events(events, cutoff=boot_cutoff),
@@ -400,6 +491,21 @@ class BotControllerMixin:
                         f"{completed.get('skipped_count', 0)} skipped · "
                         f"{completed.get('already_handled_count', 0)} already handled"
                     )
+            if not latest_pass:
+                latest_watch_pass = next(
+                    (
+                        event
+                        for event in reversed(scoped_events)
+                        if event.get("type") == "watch_pass_completed"
+                    ),
+                    None,
+                )
+                if latest_watch_pass:
+                    when = event_day_time_label(latest_watch_pass.get("timestamp"))
+                    provider = str(latest_watch_pass.get("provider") or "").title()
+                    pass_number = latest_watch_pass.get("pass_number")
+                    pass_text = f"pass {pass_number}" if pass_number else "watch pass"
+                    latest_pass = f"{when} - {provider} {pass_text} completed"
             if not latest_failure:
                 err = next(
                     (event for event in reversed(events) if event.get("type") == "error"),
@@ -414,6 +520,8 @@ class BotControllerMixin:
         if latest_failure:
             self.last_failure_summary = latest_failure
         self.activity_history_summary = _activity_summary(session_counts)
+        if latest_dashboard_event is not None:
+            self.last_activity_summary = _dashboard_event_message(latest_dashboard_event)
 
     def _bot_log_selector_label(self, path: Path) -> str:
         events = read_bot_log_events(path)
@@ -663,6 +771,8 @@ class BotControllerMixin:
         elif event_type == "already_handled":
             self.bot_progress["checked"] = self.bot_progress.get("checked", 0) + 1
             self.bot_progress["already_handled"] = self.bot_progress.get("already_handled", 0) + 1
+            bucket = _classification_bucket(event.get("classification"))
+            self.bot_progress[bucket] = self.bot_progress.get(bucket, 0) + 1
         elif event_type == "filtered_out":
             self.bot_progress["checked"] = self.bot_progress.get("checked", 0) + 1
             self.bot_progress["filtered"] = self.bot_progress.get("filtered", 0) + 1

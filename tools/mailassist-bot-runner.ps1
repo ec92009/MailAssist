@@ -38,6 +38,7 @@ function Get-EnvValueFromFile {
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $repoRoot
+$env:MAILASSIST_ROOT_DIR = $repoRoot
 
 $envFile = Join-Path $repoRoot ".env"
 $resolvedProvider = $Provider.Trim()
