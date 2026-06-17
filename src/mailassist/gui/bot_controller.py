@@ -29,6 +29,181 @@ from mailassist.gui.bot_process import (
 from mailassist.gui.recent_activity import EMPTY_ACTIVITY_TEXT, RecentActivityPanel
 
 
+def _classification_bucket(classification: object) -> str:
+    cleaned = str(classification or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if cleaned in {"urgent", "reply_needed", "needs_reply"}:
+        return "need_reply"
+    if cleaned in {"no_response", "ignore", "skip"}:
+        return "no_reply"
+    if cleaned in {"automated", "auto", "auto_generated", "newsletter"}:
+        return "automated"
+    if cleaned == "spam":
+        return "spam"
+    return "unclassified"
+
+
+def _empty_activity_counts() -> dict[str, int]:
+    return {
+        "scanned": 0,
+        "need_reply": 0,
+        "no_reply": 0,
+        "automated": 0,
+        "spam": 0,
+        "unclassified": 0,
+        "drafts": 0,
+        "draft_previews": 0,
+        "already_handled": 0,
+        "filtered": 0,
+        "failed": 0,
+    }
+
+
+def _activity_summary(counts: dict[str, int]) -> str:
+    scanned = counts.get("scanned", 0)
+    pieces = [
+        f"{scanned} scanned",
+        f"{counts.get('need_reply', 0)} need reply",
+        f"{counts.get('no_reply', 0)} no reply",
+        f"{counts.get('automated', 0)} automated",
+    ]
+    if counts.get("spam", 0):
+        pieces.append(f"{counts.get('spam', 0)} spam")
+    if counts.get("unclassified", 0):
+        pieces.append(f"{counts.get('unclassified', 0)} unclassified")
+    drafts = counts.get("drafts", 0)
+    pieces.append(f"{drafts} reply drafted" if drafts == 1 else f"{drafts} replies drafted")
+    if counts.get("draft_previews", 0):
+        pieces.append(f"{counts.get('draft_previews', 0)} previews")
+    if counts.get("already_handled", 0):
+        pieces.append(f"{counts.get('already_handled', 0)} already handled")
+    if counts.get("filtered", 0):
+        pieces.append(f"{counts.get('filtered', 0)} filtered")
+    if counts.get("failed", 0):
+        pieces.append(f"{counts.get('failed', 0)} failed")
+    return " / ".join(pieces)
+
+
+def _add_classification_count(counts: dict[str, int], classification: object) -> None:
+    counts["scanned"] += 1
+    counts[_classification_bucket(classification)] += 1
+
+
+def _add_outcome_count(
+    counts: dict[str, int],
+    event: dict[str, Any],
+    *,
+    count_scan: bool,
+) -> None:
+    event_type = str(event.get("type") or "")
+    if count_scan and event_type in {
+        "draft_created",
+        "draft_ready",
+        "skipped_email",
+        "already_handled",
+        "user_replied",
+        "filtered_out",
+    }:
+        counts["scanned"] += 1
+    if event_type == "draft_created":
+        counts["drafts"] += 1
+    elif event_type == "draft_ready":
+        counts["draft_previews"] += 1
+    elif event_type == "skipped_email" and count_scan:
+        counts[_classification_bucket(event.get("classification"))] += 1
+    elif event_type in {"already_handled", "user_replied"}:
+        counts["already_handled"] += 1
+    elif event_type == "filtered_out":
+        counts["filtered"] += 1
+    elif event_type in {"error", "failed_pass"}:
+        counts["failed"] += 1
+
+
+def _activity_counts_from_events(
+    events: list[dict[str, Any]],
+    *,
+    cutoff: datetime | None,
+) -> dict[str, int]:
+    counts = _empty_activity_counts()
+    scoped_events = []
+    for event in events:
+        timestamp = _event_timestamp(event)
+        if cutoff is not None and (timestamp is None or timestamp < cutoff):
+            continue
+        scoped_events.append(event)
+    has_classification_events = any(
+        event.get("type") == "email_classified" for event in scoped_events
+    )
+    has_outcome_events = any(
+        event.get("type")
+        in {
+            "draft_created",
+            "draft_ready",
+            "skipped_email",
+            "already_handled",
+            "user_replied",
+            "filtered_out",
+        }
+        for event in scoped_events
+    )
+    for event in scoped_events:
+        if event.get("type") == "email_classified":
+            _add_classification_count(counts, event.get("classification"))
+        else:
+            _add_outcome_count(
+                counts,
+                event,
+                count_scan=not has_classification_events,
+            )
+    if not has_classification_events and not has_outcome_events:
+        for event in scoped_events:
+            if event.get("type") != "completed" or "draft_count" not in event:
+                continue
+            drafts = int(event.get("draft_count") or 0)
+            previews = int(event.get("draft_ready_count") or 0)
+            skipped = int(event.get("skipped_count") or 0)
+            already = int(event.get("already_handled_count") or 0)
+            filtered = int(event.get("filtered_out_count") or 0)
+            failed = int(event.get("failed_pass_count") or 0)
+            counts["drafts"] += drafts
+            counts["draft_previews"] += previews
+            counts["no_reply"] += skipped
+            counts["already_handled"] += already
+            counts["filtered"] += filtered
+            counts["failed"] += failed
+            counts["scanned"] += drafts + previews + skipped + already + filtered
+    return counts
+
+
+def _merge_activity_counts(target: dict[str, int], source: dict[str, int]) -> None:
+    for key, value in source.items():
+        target[key] = target.get(key, 0) + value
+
+
+def _event_timestamp(event: dict[str, Any]) -> datetime | None:
+    raw = str(event.get("timestamp") or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def system_boot_time_utc() -> datetime | None:
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+
+        uptime_ms = int(ctypes.windll.kernel32.GetTickCount64())
+    except Exception:
+        return None
+    return datetime.now(timezone.utc) - timedelta(milliseconds=uptime_ms)
+
+
 class BotControllerMixin:
     def _append_recent_activity(self, message: str) -> None:
         if not hasattr(self, "recent_activity"):
@@ -67,6 +242,11 @@ class BotControllerMixin:
             "filtered": 0,
             "updated_messages": 0,
             "current_index": 0,
+            "need_reply": 0,
+            "no_reply": 0,
+            "automated": 0,
+            "spam": 0,
+            "unclassified": 0,
         }
         self.bot_progress["current_detail"] = ""
 
@@ -84,8 +264,32 @@ class BotControllerMixin:
             if total:
                 return f"{current_index}/{total} scanned · {categorized} categorized"
             return f"{categorized} scanned · {categorized} categorized"
-        draft_total = drafts + draft_previews
-        return f"{checked} scanned / {draft_total} drafts"
+        need_reply = self.bot_progress.get("need_reply", 0)
+        no_reply = self.bot_progress.get("no_reply", 0)
+        automated = self.bot_progress.get("automated", 0)
+        spam = self.bot_progress.get("spam", 0)
+        unclassified = self.bot_progress.get("unclassified", 0)
+        classified_total = need_reply + no_reply + automated + spam + unclassified
+        counts = {
+            "scanned": max(int(checked or 0), int(classified_total or 0)),
+            "need_reply": int(need_reply or 0),
+            "no_reply": int(no_reply or 0),
+            "automated": int(automated or 0),
+            "spam": int(spam or 0),
+            "unclassified": int(unclassified or 0),
+            "drafts": int(drafts or 0),
+            "draft_previews": int(draft_previews or 0),
+            "already_handled": int(already_handled or 0),
+            "filtered": int(filtered or 0),
+            "failed": 0,
+        }
+        if not classified_total and skipped:
+            counts["no_reply"] = int(skipped or 0)
+        summary = _activity_summary(counts)
+        current_detail = str(self.bot_progress.get("current_detail") or "").strip()
+        if current_detail:
+            summary = f"{summary}; working on email dated {current_detail}"
+        return summary
 
     def _start_bot_heartbeat(self, action: str, provider: str, *, dry_run: bool = False) -> None:
         self.bot_action_started_at = time.monotonic()
@@ -169,15 +373,14 @@ class BotControllerMixin:
     def _refresh_summary_from_logs(self, log_paths: list[Path]) -> None:
         latest_pass = ""
         latest_failure = ""
-        history = {
-            "drafts": 0,
-            "dry_runs": 0,
-            "skipped": 0,
-            "failed": 0,
-        }
-        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+        boot_cutoff = system_boot_time_utc()
+        session_counts = _empty_activity_counts()
         for path in log_paths:
             events = read_bot_log_events(path)
+            _merge_activity_counts(
+                session_counts,
+                _activity_counts_from_events(events, cutoff=boot_cutoff),
+            )
             completed = next(
                 (event for event in reversed(events) if event.get("type") == "completed"),
                 None,
@@ -186,14 +389,6 @@ class BotControllerMixin:
                 (event for event in reversed(events) if event.get("type") == "error"),
                 None,
             )
-            history_event = completed or error or (events[-1] if events else None)
-            if history_event and self._event_is_recent(history_event, cutoff):
-                if error:
-                    history["failed"] += 1
-                if completed:
-                    history["drafts"] += int(completed.get("draft_count") or 0)
-                    history["dry_runs"] += int(completed.get("draft_ready_count") or 0)
-                    history["skipped"] += int(completed.get("skipped_count") or 0)
             if not latest_pass:
                 latest_completed_pass = (
                     completed if completed and "draft_count" in completed else None
@@ -218,22 +413,7 @@ class BotControllerMixin:
             self.last_pass_summary = latest_pass
         if latest_failure:
             self.last_failure_summary = latest_failure
-        self.activity_history_summary = (
-            f"{history['drafts']} drafts · {history['dry_runs']} previews · "
-            f"{history['skipped']} skipped · {history['failed']} failed"
-        )
-
-    def _event_is_recent(self, event: dict[str, Any], cutoff: datetime) -> bool:
-        raw = str(event.get("timestamp") or "").strip()
-        if not raw:
-            return False
-        try:
-            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        except ValueError:
-            return False
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed.astimezone(timezone.utc) >= cutoff
+        self.activity_history_summary = _activity_summary(session_counts)
 
     def _bot_log_selector_label(self, path: Path) -> str:
         events = read_bot_log_events(path)
@@ -486,6 +666,17 @@ class BotControllerMixin:
         elif event_type == "filtered_out":
             self.bot_progress["checked"] = self.bot_progress.get("checked", 0) + 1
             self.bot_progress["filtered"] = self.bot_progress.get("filtered", 0) + 1
+        elif event_type == "email_work_started":
+            message_time = event_day_time_label(event.get("message_timestamp"))
+            self.bot_progress["current_detail"] = message_time
+            provider = str(event.get("provider") or self.current_bot_provider or "provider").title()
+            action_label = "preview" if self.current_bot_action == "watch-once" else "auto-check"
+            self._append_recent_activity(
+                f"{provider} {action_label} working on email dated {message_time}."
+            )
+        elif event_type == "email_classified":
+            bucket = _classification_bucket(event.get("classification"))
+            self.bot_progress[bucket] = self.bot_progress.get(bucket, 0) + 1
         elif event_type in {
             "gmail_thread_labeled",
             "gmail_thread_label_preview",
@@ -625,6 +816,8 @@ class BotControllerMixin:
         self._stop_bot_heartbeat()
         finished_action = self.current_bot_action
         self.bot_process = None
+        if finished_action == "watch-loop" and hasattr(self, "_resume_background_scan_after_gui_test"):
+            self._resume_background_scan_after_gui_test()
         if hasattr(self, "stop_bot_button"):
             self.stop_bot_button.setEnabled(False)
         if exit_code != 0:

@@ -1060,6 +1060,15 @@ def test_review_bot_watch_loop_uses_polling_settings_and_counts_events(
 
     def fake_run_mock_watch_pass(**kwargs):
         call_count["value"] += 1
+        progress_callback = kwargs.get("progress_callback")
+        if call_count["value"] == 1 and callable(progress_callback):
+            progress_callback(
+                {
+                    "type": "email_work_started",
+                    "provider": "mock",
+                    "message_timestamp": "2026-04-24T11:31:00Z",
+                }
+            )
         if call_count["value"] == 1:
             return [
                 {
@@ -1106,6 +1115,19 @@ def test_review_bot_watch_loop_uses_polling_settings_and_counts_events(
     lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
     assert lines[0]["type"] == "started"
     assert any(line["type"] == "watch_pass_started" and line["pass_number"] == 1 for line in lines)
+    progress_lines = [line for line in lines if line["type"] == "email_work_started"]
+    assert progress_lines == [
+        {
+            "type": "email_work_started",
+            "action": "watch-loop",
+            "run_id": progress_lines[0]["run_id"],
+            "timestamp": progress_lines[0]["timestamp"],
+            "provider": "mock",
+            "message_timestamp": "2026-04-24T11:31:00Z",
+        }
+    ]
+    assert "subject" not in progress_lines[0]
+    assert "sender" not in progress_lines[0]
     assert any(line["type"] == "sleeping" and line["poll_seconds"] == 15 for line in lines)
     assert lines[-1]["type"] == "completed"
     assert lines[-1]["completed_passes"] == 2

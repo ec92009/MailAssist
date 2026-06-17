@@ -260,7 +260,7 @@ class MailAssistDesktopWindow(SettingsPagesMixin, BotControllerMixin, QMainWindo
         self.last_activity_summary = "Idle"
         self.last_pass_summary = ""
         self.last_failure_summary = ""
-        self.activity_history_summary = "No recent runs"
+        self.activity_history_summary = "No bot activity since reboot"
         self.ollama_health: tuple[str, str] = ("Checking...", "warn")
         self.provider_health: tuple[str, str] = ("", "warn")
         self.ollama_model_details: dict[str, dict[str, Any]] = {}
@@ -283,6 +283,8 @@ class MailAssistDesktopWindow(SettingsPagesMixin, BotControllerMixin, QMainWindo
         self.last_live_progress_summary = ""
         self.current_provider_ready = True
         self.current_provider_readiness_message = ""
+        self.background_scan_resume_pending = False
+        self.background_scan_task_available = False
         self.bot_progress: dict[str, int] = {}
         self.bot_action_started_at: float | None = None
         self.bot_busy_cursor_active = False
@@ -723,7 +725,7 @@ class MailAssistDesktopWindow(SettingsPagesMixin, BotControllerMixin, QMainWindo
                 ("Last activity", self.last_activity_label),
                 ("Last pass", self.last_pass_label),
                 ("Last failure", self.last_failure_label),
-                ("7-day activity", self.activity_history_label),
+                ("Since reboot", self.activity_history_label),
             )
         ):
             status_cards.addWidget(self._build_dashboard_card(label_text, widget), index // 4, index % 4)
@@ -1061,11 +1063,25 @@ class MailAssistDesktopWindow(SettingsPagesMixin, BotControllerMixin, QMainWindo
 
     def _refresh_bot_action_controls(self) -> None:
         busy = self.bot_process is not None
+        watch_loop_busy = busy and self.current_bot_action == "watch-loop"
         for control in self._bot_start_controls():
             control.setEnabled(not busy)
         if not busy:
             for control in self._main_bot_start_controls():
                 control.setEnabled(not self.settings_open)
+        if hasattr(self, "start_watch_loop_button"):
+            if watch_loop_busy:
+                self.start_watch_loop_button.setText("Stop test and resume background scan")
+                self.start_watch_loop_button.setEnabled(True)
+                self.start_watch_loop_button.setToolTip(_wrapped_tooltip(
+                    "Stop the dashboard auto-check test and restart the scheduled MailAssist background scan."
+                ))
+            else:
+                self.start_watch_loop_button.setText("Start Auto-Check")
+                self.start_watch_loop_button.setToolTip(_wrapped_tooltip(
+                    "Start a dashboard auto-check test. If the scheduled background scan is available, "
+                    "MailAssist pauses it first and resumes it when this test stops. It never sends email."
+                ))
         if hasattr(self, "stop_bot_button"):
             self.stop_bot_button.setEnabled(busy)
         self._set_bot_busy_cursor(busy)
@@ -1192,8 +1208,16 @@ class MailAssistDesktopWindow(SettingsPagesMixin, BotControllerMixin, QMainWindo
                 self.provider_health = ("gmail — sign-in pending", "warn")
             else:
                 self.provider_health = ("gmail — not configured", "warn")
+        elif provider == "outlook":
+            token_path = self.settings.outlook_token_file
+            if token_path and Path(token_path).exists():
+                self.provider_health = ("outlook — connected", "ok")
+            elif self.settings.outlook_client_id:
+                self.provider_health = ("outlook — sign-in pending", "warn")
+            else:
+                self.provider_health = ("outlook — not configured", "warn")
         else:
-            self.provider_health = (f"{provider} — not yet supported", "warn")
+            self.provider_health = (f"{provider} — not configured", "warn")
 
 
     def refresh_models(self, _checked: bool = False, *, silent: bool = False) -> None:
@@ -1455,9 +1479,83 @@ class MailAssistDesktopWindow(SettingsPagesMixin, BotControllerMixin, QMainWindo
             return
         self.run_bot_action("watch-once", provider="mock")
 
+    def _scheduled_task_command(self, command: str) -> subprocess.CompletedProcess[str]:
+        script = {
+            "pause": (
+                "$task = Get-ScheduledTask -TaskName 'MailAssist Bot' -ErrorAction SilentlyContinue; "
+                "if ($null -eq $task) { 'missing'; exit 0 }; "
+                "if ($task.State -eq 'Running') { "
+                "Stop-ScheduledTask -TaskName 'MailAssist Bot' -ErrorAction Stop; 'stopped' "
+                "} else { 'available' }"
+            ),
+            "resume": (
+                "$task = Get-ScheduledTask -TaskName 'MailAssist Bot' -ErrorAction SilentlyContinue; "
+                "if ($null -eq $task) { 'missing'; exit 0 }; "
+                "Start-ScheduledTask -TaskName 'MailAssist Bot' -ErrorAction Stop; 'started'"
+            ),
+        }[command]
+        return subprocess.run(
+            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+    def _suspend_background_scan_for_gui_test(self) -> str:
+        self.background_scan_resume_pending = False
+        self.background_scan_task_available = False
+        if sys.platform != "win32":
+            return ""
+        try:
+            result = self._scheduled_task_command("pause")
+        except Exception as exc:
+            return f"Could not pause the scheduled background scan: {exc}"
+        status = (result.stdout or "").strip().splitlines()[-1:] or [""]
+        state = status[0].strip().lower()
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "unknown error").strip()
+            return f"Could not pause the scheduled background scan: {detail}"
+        if state == "missing":
+            return ""
+        self.background_scan_task_available = True
+        self.background_scan_resume_pending = True
+        if state == "stopped":
+            return "Paused the scheduled background scan for this dashboard test."
+        return "Scheduled background scan will resume when this dashboard test stops."
+
+    def _resume_background_scan_after_gui_test(self) -> None:
+        if not self.background_scan_resume_pending:
+            return
+        self.background_scan_resume_pending = False
+        if sys.platform != "win32" or not self.background_scan_task_available:
+            return
+        try:
+            result = self._scheduled_task_command("resume")
+        except Exception as exc:
+            self._append_recent_activity(f"Could not resume scheduled background scan: {exc}")
+            self._set_banner(f"Could not resume scheduled background scan: {exc}", level="error")
+            return
+        state = ((result.stdout or "").strip().splitlines()[-1:] or [""])[0].strip().lower()
+        if result.returncode == 0 and state == "started":
+            self._append_recent_activity("Scheduled background scan resumed.")
+            self._set_banner("Scheduled background scan resumed.", level="info")
+            return
+        if state == "missing":
+            return
+        detail = (result.stderr or result.stdout or "unknown error").strip()
+        self._append_recent_activity(f"Could not resume scheduled background scan: {detail}")
+        self._set_banner(f"Could not resume scheduled background scan: {detail}", level="error")
+
     def start_watch_loop(self) -> None:
+        if self.bot_process is not None and self.current_bot_action == "watch-loop":
+            self.stop_bot_action()
+            return
         if self._main_bot_action_unavailable():
             return
+        service_message = self._suspend_background_scan_for_gui_test()
+        if service_message:
+            self._append_recent_activity(service_message)
         self._announce_long_action(
             "Starting auto-check. MailAssist will keep checking in the background; "
             "drafting can take a minute when the local model is needed."

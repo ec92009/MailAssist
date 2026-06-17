@@ -60,7 +60,7 @@ def event_day_time_label(value: object) -> str:
     elif (today - parsed.date()).days == 1:
         prefix = "Yesterday"
     else:
-        prefix = parsed.strftime("%b %-d")
+        prefix = f"{parsed.strftime('%b')} {parsed.day}"
     return f"{prefix} {parsed.strftime('%H:%M')}"
 
 
@@ -208,6 +208,11 @@ def event_human_message(event: dict[str, object]) -> str:
         return f'Already handled "{subject}".' if subject else "Already handled an email."
     if event_type == "skipped_email":
         return message or (f'Skipped "{subject}".' if subject else "Skipped an email.")
+    if event_type == "email_work_started":
+        return f"Working on email dated {event_day_time_label(event.get('message_timestamp'))}."
+    if event_type == "email_classified":
+        classification = humanize(str(event.get("classification") or "unclassified"))
+        return f"Classified an email as {classification}."
     if event_type == "filtered_out":
         reason = str(event.get("reason") or "filter")
         return f'Filtered out "{subject}" by {reason}.' if subject else f"Filtered out an email by {reason}."

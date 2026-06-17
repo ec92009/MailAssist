@@ -87,6 +87,70 @@ def test_mock_watch_pass_creates_one_provider_draft_and_skips_second_run(
     assert state["recent_activity"][-1]["type"] == "already_handled"
 
 
+def test_watch_pass_reports_email_work_timestamp_without_message_details(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_env_file(
+        tmp_path / ".env",
+        {
+            "MAILASSIST_USER_TONE": "brief_casual",
+            "MAILASSIST_USER_SIGNATURE": "Best,\\nTest",
+        },
+    )
+    progress_events = []
+
+    def fake_build_mock_threads():
+        return [item for item in build_mock_threads() if item.thread_id == "thread-008"]
+
+    def fake_generate_candidate_for_tone(*args, **kwargs):
+        return (
+            {
+                "candidate_id": "option-a",
+                "body": "Approved. Please limit access to the shared project folder only.\n\nBest,\nTest",
+                "generated_by": "mock-model",
+            },
+            "mock-model",
+            None,
+            "urgent",
+        )
+
+    monkeypatch.setattr("mailassist.background_bot.build_mock_threads", fake_build_mock_threads)
+    monkeypatch.setattr(
+        "mailassist.background_bot.generate_candidate_for_tone",
+        fake_generate_candidate_for_tone,
+    )
+
+    settings = load_settings()
+    provider = MockProvider(settings.mock_provider_drafts_dir)
+
+    events = run_watch_pass(
+        settings=settings,
+        provider=provider,
+        base_url="http://localhost:11434",
+        selected_model="mock-model",
+        progress_callback=progress_events.append,
+    )
+
+    assert events[0]["type"] == "draft_created"
+    assert progress_events == [
+        {
+            "type": "email_work_started",
+            "provider": "mock",
+            "message_timestamp": "2026-04-24T11:31:00Z",
+        },
+        {
+            "type": "email_classified",
+            "provider": "mock",
+            "classification": "urgent",
+        },
+    ]
+    for event in progress_events:
+        assert "thread_id" not in event
+        assert "subject" not in event
+        assert "sender" not in event
+
+
 def test_watch_pass_dry_run_never_creates_provider_draft(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
     write_env_file(

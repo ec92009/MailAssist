@@ -1,5 +1,6 @@
 import os
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -521,6 +522,26 @@ def test_watcher_filter_controls_persist_and_show_on_dashboard(monkeypatch, tmp_
         monkeypatch.delenv(key, raising=False)
 
 
+def test_outlook_provider_status_reflects_saved_token(monkeypatch, tmp_path) -> None:
+    token_file = tmp_path / "secrets" / "outlook-token.json"
+    token_file.parent.mkdir(parents=True)
+    token_file.write_text("{}", encoding="utf-8")
+
+    class Settings:
+        default_provider = "outlook"
+        outlook_token_file = token_file
+        outlook_client_id = "11111111-2222-3333-4444-555555555555"
+
+    class Window:
+        settings = Settings()
+        provider_health = ("", "warn")
+
+    window = Window()
+    MailAssistDesktopWindow._refresh_provider_health(window)
+
+    assert window.provider_health == ("outlook — connected", "ok")
+
+
 def test_provider_page_keeps_at_least_one_provider_checked() -> None:
     app = _app()
     window = MailAssistDesktopWindow()
@@ -833,6 +854,7 @@ def test_outlook_draft_preview_runs_safe_dry_run(monkeypatch) -> None:
 
 
 def test_watch_preview_heartbeat_reports_still_running(monkeypatch) -> None:
+    _app()
     window = MailAssistDesktopWindow()
     now = [1000.0]
 
@@ -861,7 +883,41 @@ def test_watch_preview_heartbeat_reports_still_running(monkeypatch) -> None:
     window.close()
 
 
+def test_watch_progress_reports_last_email_timestamp_without_subject(monkeypatch) -> None:
+    _app()
+    window = MailAssistDesktopWindow()
+    now = [1000.0]
+
+    monkeypatch.setattr(desktop_module.time, "monotonic", lambda: now[0])
+    window.current_bot_action = "watch-loop"
+    window.current_bot_provider = "outlook"
+    window.bot_action_started_at = now[0] - 45
+    window.bot_process = object()
+    window._reset_bot_progress()
+
+    window._handle_bot_event(
+        {
+            "type": "email_work_started",
+            "provider": "outlook",
+            "message_timestamp": "2026-04-24T20:31:00+00:00",
+            "subject": "Private tax matter",
+            "sender": "client@example.com",
+        }
+    )
+    window._append_bot_heartbeat()
+
+    activity = window.recent_activity.toPlainText()
+    assert "Outlook auto-check working on email dated" in activity
+    assert "0 scanned / 0 drafts; working on email dated" in activity
+    assert "Private tax matter" not in activity
+    assert "client@example.com" not in activity
+    assert "working on email dated" in window.banner.text()
+    window.bot_process = None
+    window.close()
+
+
 def test_watch_loop_heartbeat_reports_waiting_after_completed_pass(monkeypatch) -> None:
+    _app()
     window = MailAssistDesktopWindow()
     now = [1000.0]
 
@@ -887,6 +943,7 @@ def test_watch_loop_heartbeat_reports_waiting_after_completed_pass(monkeypatch) 
 
 
 def test_organizer_heartbeat_reports_categorized_progress(monkeypatch) -> None:
+    _app()
     window = MailAssistDesktopWindow()
     now = [1000.0]
 
@@ -906,6 +963,7 @@ def test_organizer_heartbeat_reports_categorized_progress(monkeypatch) -> None:
 
 
 def test_organizer_heartbeat_reports_current_setup_phase(monkeypatch) -> None:
+    _app()
     window = MailAssistDesktopWindow()
     now = [1000.0]
 

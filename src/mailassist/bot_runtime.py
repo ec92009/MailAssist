@@ -80,6 +80,12 @@ class BotEventReporter:
             handle.write(line + "\n")
 
 
+def _emit_watch_progress(reporter: BotEventReporter, event: dict[str, object]) -> None:
+    event_type = str(event.get("type") or "progress")
+    payload = {key: value for key, value in event.items() if key != "type"}
+    reporter.emit(event_type, **payload)
+
+
 def build_review_bot_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = subparsers.add_parser(
         "review-bot",
@@ -823,6 +829,7 @@ def command_review_bot(args: argparse.Namespace) -> int:
                 batch_size=max(1, int(getattr(args, "batch_size", 1) or 1)),
                 dry_run=bool(getattr(args, "dry_run", False)),
                 max_candidates=max(1, int(getattr(args, "limit", 10) or 10)),
+                progress_callback=lambda event: _emit_watch_progress(reporter, event),
             )
             draft_count = 0
             draft_ready_count = 0
@@ -899,6 +906,7 @@ def command_review_bot(args: argparse.Namespace) -> int:
                         force=bool(getattr(args, "force", False)),
                         batch_size=max(1, int(getattr(args, "batch_size", 1) or 1)),
                         dry_run=bool(getattr(args, "dry_run", False)),
+                        progress_callback=lambda event: _emit_watch_progress(reporter, event),
                     )
                     for event in events:
                         event_type = str(event.pop("type"))

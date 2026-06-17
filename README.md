@@ -182,6 +182,12 @@ It still does not send email.
 ./.venv/bin/mailassist desktop-gui
 ```
 
+On Windows, create Desktop and Start Menu shortcuts with:
+
+```powershell
+.\tools\install-mailassist-gui-shortcut.ps1
+```
+
 The desktop app is now a compact bot control panel with settings, bot controls, readable logs, and recent activity. Bot, provider, and Ollama states render as colored pills so a glance is enough. The dashboard also surfaces the last watch pass result and the most recent failure read straight from the bot logs. Settings include provider-specific watcher filters, a rich signature editor with bold/italic/underline/link controls, and optional MailAssist/Ollama/model attribution.
 
 Keyboard shortcuts:
@@ -203,6 +209,10 @@ Run the polling bot loop against the mock provider:
 ```
 
 If `--poll-seconds` is omitted, the loop uses `MAILASSIST_BOT_POLL_SECONDS`.
+
+On Windows, `tools/mailassist-bot-runner.ps1` can run the same loop with local
+service logs, and `tools/mailassist-bot-task.ps1` can install a Task Scheduler
+entry for logon or startup hosting. See `docs/windows-bot-service.md`.
 
 Run a Gmail watcher pass without creating drafts:
 

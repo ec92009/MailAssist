@@ -9,7 +9,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from mailassist.config import (
@@ -125,6 +125,7 @@ def run_watch_pass(
     batch_size: int = 1,
     dry_run: bool = False,
     max_candidates: int | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> list[dict[str, Any]]:
     state = load_bot_state(settings.root_dir)
     user_address = _resolve_account_email(state, provider)
@@ -207,6 +208,11 @@ def run_watch_pass(
 
         classification = fallback_classification_for_thread(thread)
         if classification in SET_ASIDE_CLASSIFICATIONS:
+            _emit_classification_progress(
+                progress_callback,
+                provider_name=provider.name,
+                classification=classification,
+            )
             provider_state[thread.thread_id] = _state_record(
                 thread=thread,
                 latest_message_id=latest_message_id,
@@ -234,6 +240,15 @@ def run_watch_pass(
     for chunk in _chunks(pending_threads, max(1, batch_size)):
         tone_key = settings.user_tone
         tone, guidance = tone_guidance(tone_key)
+        for thread, _ in chunk:
+            _emit_progress(
+                progress_callback,
+                {
+                    "type": "email_work_started",
+                    "provider": provider.name,
+                    "message_timestamp": _latest_message_timestamp(thread),
+                },
+            )
         if len(chunk) > 1:
             try:
                 generated = generate_batch_candidates_for_tone(
@@ -293,6 +308,11 @@ def run_watch_pass(
         for thread, latest_message_id in chunk:
             item = generated.get(thread.thread_id)
             if item is None:
+                _emit_classification_progress(
+                    progress_callback,
+                    provider_name=provider.name,
+                    classification="unclassified",
+                )
                 provider_state[thread.thread_id] = _state_record(
                     thread=thread,
                     latest_message_id=latest_message_id,
@@ -318,6 +338,11 @@ def run_watch_pass(
                 continue
 
             classification = str(item.get("classification", "unclassified"))
+            _emit_classification_progress(
+                progress_callback,
+                provider_name=provider.name,
+                classification=classification,
+            )
             body = str(item.get("body", "")).strip()
             generation_model = item.get("generation_model")
             generation_error = item.get("generation_error")
@@ -651,6 +676,36 @@ def _latest_sender(thread: EmailThread) -> str:
     if not thread.messages:
         return ""
     return thread.messages[-1].sender.strip().lower()
+
+
+def _latest_message_timestamp(thread: EmailThread) -> str:
+    if not thread.messages:
+        return ""
+    return str(thread.messages[-1].sent_at or "").strip()
+
+
+def _emit_progress(
+    callback: Callable[[dict[str, Any]], None] | None,
+    event: dict[str, Any],
+) -> None:
+    if callback is not None:
+        callback(event)
+
+
+def _emit_classification_progress(
+    callback: Callable[[dict[str, Any]], None] | None,
+    *,
+    provider_name: str,
+    classification: str,
+) -> None:
+    _emit_progress(
+        callback,
+        {
+            "type": "email_classified",
+            "provider": provider_name,
+            "classification": normalize_classification(classification),
+        },
+    )
 
 
 def _watch_thread_candidates_for_provider(provider: DraftProvider, settings: Settings) -> list[tuple[EmailThread, str | None]]:
