@@ -19,6 +19,7 @@ class BotActionRequest:
     apply_categories: bool = False
     days: int | None = None
     limit: int | None = None
+    max_passes: int | None = None
 
 
 def build_bot_action_args(request: BotActionRequest) -> list[str]:
@@ -48,6 +49,8 @@ def build_bot_action_args(request: BotActionRequest) -> list[str]:
         args.extend(["--days", str(max(1, int(request.days)))])
     if request.limit is not None:
         args.extend(["--limit", str(max(1, int(request.limit)))])
+    if request.max_passes is not None:
+        args.extend(["--max-passes", str(max(0, int(request.max_passes)))])
     if request.apply_labels:
         args.append("--apply-labels")
     if request.apply_categories:
@@ -59,4 +62,7 @@ def build_bot_process_environment(request: BotActionRequest) -> QProcessEnvironm
     process_env = QProcessEnvironment.systemEnvironment()
     if request.action == "watch-once" and request.dry_run:
         process_env.insert("MAILASSIST_OLLAMA_GENERATE_TIMEOUT_SECONDS", "110")
+    if request.action == "watch-loop":
+        process_env.insert("MAILASSIST_SCAN_SOURCE", "manual")
+        process_env.insert("MAILASSIST_SCAN_LOCK_WAIT_SECONDS", "360")
     return process_env

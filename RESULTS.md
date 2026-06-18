@@ -173,7 +173,7 @@ These were useful experiments, but the lighter product should not build on them 
 
 ## Latest Verified State
 
-- Latest visible version: `v62.15`.
+- Latest visible version: `v109.3`.
 - Latest focused test run: 80 passing tests on May 2, 2026.
 - Latest full suite remains 201 passing tests on May 2, 2026 after Python/SOP cleanup and Gmail prompt lab.
 - GitHub Actions now runs `uv sync --frozen` and the full test suite on push to `main` and pull requests across Ubuntu and macOS; the README badge surfaces that status outside local machines.

@@ -1,5 +1,6 @@
 import json
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -10,6 +11,7 @@ from mailassist.fixtures.graph import (
 from mailassist.live_filters import WatcherFilter
 from mailassist.models import DraftRecord
 from mailassist.providers.outlook import (
+    InMemoryOutlookGraphClient,
     MicrosoftGraphClient,
     OUTLOOK_GRAPH_SCOPES,
     OutlookGraphAuthError,
@@ -68,6 +70,8 @@ def test_outlook_graph_messages_group_into_email_threads() -> None:
     ]
     assert len(action.messages) == 2
     assert action.messages[0].text == "Can you confirm whether we should use the new W-9 for May invoices?"
+    assert action.messages[1].to == ["magali@example-cpa.com"]
+    assert action.messages[1].cc == ["bookkeeper@example-cpa.com"]
     assert action.messages[1].text == "Following up so we can close this before payroll."
 
 
@@ -79,6 +83,80 @@ def test_outlook_actionable_threads_apply_watcher_filter() -> None:
     )
 
     assert [thread.thread_id for thread in threads] == ["conv-action"]
+
+
+def _graph_message(index: int, *, received_at: str, is_read: bool = False) -> dict:
+    return {
+        "id": f"msg-{index}",
+        "conversationId": f"conv-{index}",
+        "subject": f"Message {index}",
+        "from": {"emailAddress": {"address": f"sender-{index}@example.com"}},
+        "toRecipients": [{"emailAddress": {"address": "magali@example-cpa.com"}}],
+        "receivedDateTime": received_at,
+        "bodyPreview": "Can you take a look?",
+        "isRead": is_read,
+    }
+
+
+def test_outlook_candidate_threads_fetch_beyond_first_25() -> None:
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    messages = [
+        _graph_message(index, received_at=now.isoformat().replace("+00:00", "Z"))
+        for index in range(30)
+    ]
+    provider = _provider(
+        InMemoryOutlookGraphClient(
+            me={"mail": "magali@example-cpa.com"},
+            messages=messages,
+        )
+    )
+
+    threads = provider.list_candidate_threads(
+        WatcherFilter(unread_only=False, max_age_seconds=7 * 24 * 60 * 60)
+    )
+
+    assert len(threads) == 30
+    assert threads[-1].thread_id == "conv-29"
+
+
+def test_outlook_candidate_threads_apply_recent_window_to_graph_listing() -> None:
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    recent = now.isoformat().replace("+00:00", "Z")
+    old = (now - timedelta(days=10)).isoformat().replace("+00:00", "Z")
+    provider = _provider(
+        InMemoryOutlookGraphClient(
+            me={"mail": "magali@example-cpa.com"},
+            messages=[
+                _graph_message(1, received_at=recent),
+                _graph_message(2, received_at=old),
+            ],
+        )
+    )
+
+    threads = provider.list_candidate_threads(
+        WatcherFilter(unread_only=False, max_age_seconds=7 * 24 * 60 * 60)
+    )
+
+    assert [thread.thread_id for thread in threads] == ["conv-1"]
+
+
+def test_outlook_candidate_threads_apply_cursor_to_graph_listing() -> None:
+    cursor = datetime(2026, 4, 24, 10, 0, tzinfo=timezone.utc)
+    provider = _provider(
+        InMemoryOutlookGraphClient(
+            me={"mail": "magali@example-cpa.com"},
+            messages=[
+                _graph_message(1, received_at="2026-04-24T10:01:00Z"),
+                _graph_message(2, received_at="2026-04-24T09:59:00Z"),
+            ],
+        )
+    )
+
+    threads = provider.list_candidate_threads(
+        WatcherFilter(unread_only=False, max_age_seconds=None, received_after=cursor)
+    )
+
+    assert [thread.thread_id for thread in threads] == ["conv-1"]
 
 
 def test_outlook_create_draft_maps_to_graph_reply_payload() -> None:

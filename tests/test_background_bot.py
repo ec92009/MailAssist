@@ -15,6 +15,7 @@ from mailassist.background_bot import (
     human_review_context_time,
     load_bot_state,
     parse_batch_candidate_response,
+    reply_cc_for_thread,
     reply_metadata_for_thread,
     reply_recipients_for_thread,
     run_watch_pass,
@@ -27,7 +28,88 @@ from mailassist.models import EmailMessage, EmailThread
 from mailassist.providers.mock import MockProvider
 
 
-def test_mock_watch_pass_creates_one_provider_draft_and_skips_second_run(
+def test_watch_pass_skips_without_provider_work_when_scan_lock_is_busy(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("mailassist.background_bot._try_lock_file", lambda handle: False)
+    progress_events = []
+
+    class LockedOutProvider:
+        name = "mock"
+
+        def list_candidate_threads(self, *args, **kwargs):
+            raise AssertionError("provider should not be queried while scan lock is busy")
+
+        def create_draft(self, draft):
+            raise AssertionError("draft should not be created while scan lock is busy")
+
+    events = run_watch_pass(
+        settings=load_settings(),
+        provider=LockedOutProvider(),
+        base_url="http://localhost:11434",
+        selected_model="mock-model",
+        progress_callback=progress_events.append,
+    )
+
+    assert events == [
+        {
+            "type": "scan_lock_busy",
+            "provider": "mock",
+            "reason": "another_scan_running",
+            "message": "Another MailAssist scan is already running; this pass skipped without drafting.",
+            "waited_seconds": 0,
+        }
+    ]
+    assert progress_events == []
+    assert not (tmp_path / "data" / "live-state.json").exists()
+
+
+def test_watch_pass_waits_for_scan_lock_before_processing(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    attempts = {"count": 0}
+    sleeps = []
+    progress_events = []
+
+    def fake_try_lock(_handle):
+        attempts["count"] += 1
+        return attempts["count"] > 1
+
+    class EmptyProvider:
+        name = "outlook"
+
+        def list_candidate_threads(self, *args, **kwargs):
+            return []
+
+    monkeypatch.setattr("mailassist.background_bot._try_lock_file", fake_try_lock)
+    monkeypatch.setattr("mailassist.background_bot.time.sleep", lambda seconds: sleeps.append(seconds))
+
+    events = run_watch_pass(
+        settings=load_settings(),
+        provider=EmptyProvider(),
+        base_url="http://localhost:11434",
+        selected_model="mock-model",
+        scan_lock_wait_seconds=5,
+        progress_callback=progress_events.append,
+    )
+
+    assert events == []
+    assert attempts["count"] == 2
+    assert sleeps == [2.0]
+    assert progress_events == [
+        {
+            "type": "scan_lock_waiting",
+            "provider": "outlook",
+            "reason": "another_scan_running",
+            "message": "Another MailAssist scan is already running; waiting for it to finish.",
+            "wait_seconds": 5,
+        }
+    ]
+
+
+def test_mock_watch_pass_creates_one_provider_draft_and_second_run_finds_nothing_new(
     monkeypatch, tmp_path: Path
 ) -> None:
     monkeypatch.chdir(tmp_path)
@@ -78,13 +160,18 @@ def test_mock_watch_pass_creates_one_provider_draft_and_skips_second_run(
 
     assert first_events[0]["type"] == "draft_created"
     assert first_events[0]["provider_draft_id"] == "mock-draft-thread-008"
-    assert second_events[0]["type"] == "already_handled"
+    assert second_events == []
     assert (tmp_path / "data" / "mock-provider-drafts" / "thread-008.json").exists()
     assert (tmp_path / "data" / "live-state.json").exists()
     state = load_bot_state(tmp_path)
     assert state["account_email"] is None
     assert state["providers"]["mock"]["threads"]["thread-008"]["action"] == "draft_created"
-    assert state["recent_activity"][-1]["type"] == "already_handled"
+    assert state["providers"]["mock"]["threads"]["thread-008"]["message_timestamp"] == "2026-04-24T11:31:00Z"
+    assert (
+        state["providers"]["mock"]["cursor"]["last_scanned_message_timestamp"]
+        == "2026-04-24T11:31:00Z"
+    )
+    assert state["recent_activity"][-1]["type"] == "draft_created"
 
 
 def test_watch_pass_reports_email_work_timestamp_without_message_details(
@@ -144,11 +231,102 @@ def test_watch_pass_reports_email_work_timestamp_without_message_details(
             "provider": "mock",
             "classification": "urgent",
         },
+        {
+            "type": "draft_created",
+            "provider": "mock",
+            "classification": "urgent",
+            "message_timestamp": "2026-04-24T11:31:00Z",
+            "provider_draft_id": "mock-draft-thread-008",
+            "generation_model": "mock-model",
+            "dry_run": False,
+        },
     ]
     for event in progress_events:
         assert "thread_id" not in event
         assert "subject" not in event
         assert "sender" not in event
+
+
+def test_watch_pass_processes_new_mail_oldest_first_for_cursor(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_env_file(
+        tmp_path / ".env",
+        {
+            "MAILASSIST_USER_SIGNATURE": "Best,\\nTest",
+        },
+    )
+    newest = EmailThread(
+        thread_id="thread-new",
+        subject="New",
+        participants=["new@example.com", "you@example.com"],
+        messages=[
+            EmailMessage(
+                message_id="msg-new",
+                sender="new@example.com",
+                to=["you@example.com"],
+                sent_at="2026-04-24T11:31:00Z",
+                text="Can you review this?",
+            )
+        ],
+    )
+    oldest = EmailThread(
+        thread_id="thread-old",
+        subject="Old",
+        participants=["old@example.com", "you@example.com"],
+        messages=[
+            EmailMessage(
+                message_id="msg-old",
+                sender="old@example.com",
+                to=["you@example.com"],
+                sent_at="2026-04-24T10:00:00Z",
+                text="Can you review this?",
+            )
+        ],
+    )
+    order = []
+
+    def fake_build_mock_threads():
+        return [newest, oldest]
+
+    def fake_generate_candidate_for_tone(thread, **_kwargs):
+        order.append(thread.thread_id)
+        return (
+            {
+                "candidate_id": "option-a",
+                "body": "Thanks, I am reviewing this.\n\nBest,\nTest",
+                "generated_by": "mock-model",
+            },
+            "mock-model",
+            None,
+            "reply_needed",
+        )
+
+    monkeypatch.setattr("mailassist.background_bot.build_mock_threads", fake_build_mock_threads)
+    monkeypatch.setattr(
+        "mailassist.background_bot.generate_candidate_for_tone",
+        fake_generate_candidate_for_tone,
+    )
+
+    settings = load_settings()
+    provider = MockProvider(settings.mock_provider_drafts_dir)
+
+    events = run_watch_pass(
+        settings=settings,
+        provider=provider,
+        base_url="http://localhost:11434",
+        selected_model="mock-model",
+        batch_size=1,
+    )
+
+    assert [event["thread_id"] for event in events] == ["thread-old", "thread-new"]
+    assert order == ["thread-old", "thread-new"]
+    state = load_bot_state(tmp_path)
+    assert (
+        state["providers"]["mock"]["cursor"]["last_scanned_message_timestamp"]
+        == "2026-04-24T11:31:00Z"
+    )
 
 
 def test_watch_pass_dry_run_never_creates_provider_draft(monkeypatch, tmp_path: Path) -> None:
@@ -200,6 +378,65 @@ def test_watch_pass_dry_run_never_creates_provider_draft(monkeypatch, tmp_path: 
     assert state["recent_activity"][-1]["type"] == "draft_ready"
 
 
+def test_watch_pass_does_not_advance_cursor_or_draft_when_model_unavailable(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_env_file(
+        tmp_path / ".env",
+        {
+            "MAILASSIST_USER_SIGNATURE": "Best,\\nTest",
+        },
+    )
+    calls = {"count": 0}
+
+    def fake_build_mock_threads():
+        return [item for item in build_mock_threads() if item.thread_id == "thread-008"]
+
+    def fake_generate_candidate_for_tone(*args, **kwargs):
+        calls["count"] += 1
+        return (
+            {
+                "candidate_id": "option-a",
+                "body": "Thanks, I am reviewing this.\n\nBest,\nTest",
+                "generated_by": "fallback",
+            },
+            "fallback",
+            "Unable to reach Ollama at http://localhost:11434. Is the server running?",
+            "reply_needed",
+        )
+
+    monkeypatch.setattr("mailassist.background_bot.build_mock_threads", fake_build_mock_threads)
+    monkeypatch.setattr(
+        "mailassist.background_bot.generate_candidate_for_tone",
+        fake_generate_candidate_for_tone,
+    )
+
+    settings = load_settings()
+    provider = MockProvider(settings.mock_provider_drafts_dir)
+
+    first_events = run_watch_pass(
+        settings=settings,
+        provider=provider,
+        base_url="http://localhost:11434",
+        selected_model="mock-model",
+    )
+    second_events = run_watch_pass(
+        settings=settings,
+        provider=provider,
+        base_url="http://localhost:11434",
+        selected_model="mock-model",
+    )
+
+    assert [event["type"] for event in first_events] == ["generation_failed"]
+    assert [event["type"] for event in second_events] == ["generation_failed"]
+    assert calls["count"] == 2
+    assert not (tmp_path / "data" / "mock-provider-drafts" / "thread-008.json").exists()
+    state = load_bot_state(tmp_path)
+    assert state["providers"]["mock"]["cursor"] == {}
+    assert "thread-008" not in state["providers"]["mock"]["threads"]
+
+
 def test_load_bot_state_migrates_legacy_bot_state_file(tmp_path: Path) -> None:
     legacy_path = tmp_path / "data" / "bot-state.json"
     legacy_path.parent.mkdir(parents=True, exist_ok=True)
@@ -221,7 +458,7 @@ def test_load_bot_state_migrates_legacy_bot_state_file(tmp_path: Path) -> None:
 
     assert state["account_email"] is None
     assert state["providers"]["mock"]["threads"]["thread-001"]["action"] == "draft_created"
-    assert state["providers"]["mock"]["cursor"] is None
+    assert state["providers"]["mock"]["cursor"] == {}
     assert not legacy_path.exists()
     assert (tmp_path / "data" / "live-state.json").exists()
 
@@ -237,6 +474,38 @@ def test_reply_recipients_for_thread_uses_discovered_account_email() -> None:
 
     assert reply_recipients_for_thread(thread, user_address="magali@example.com") == [
         "ops@harborhq.com"
+    ]
+
+
+def test_reply_all_ccs_other_visible_intro_recipients() -> None:
+    thread = EmailThread(
+        thread_id="intro-thread",
+        subject="Introduction to Eddie",
+        participants=[
+            "advisor@example.com",
+            "magali@example.com",
+            "eddie@example.com",
+            "assistant@example.com",
+        ],
+        messages=[
+            EmailMessage(
+                message_id="intro-msg",
+                sender="advisor@example.com",
+                to=["magali@example.com", "eddie@example.com"],
+                cc=["assistant@example.com"],
+                bcc=["hidden@example.com"],
+                sent_at="2026-06-17T10:00:00Z",
+                text="Magali, I wanted to connect you with my client, Eddie.",
+            )
+        ],
+    )
+
+    assert reply_recipients_for_thread(thread, user_address="magali@example.com") == [
+        "advisor@example.com"
+    ]
+    assert reply_cc_for_thread(thread, user_address="magali@example.com") == [
+        "eddie@example.com",
+        "assistant@example.com",
     ]
 
 
@@ -541,6 +810,10 @@ def test_build_batch_candidate_prompt_forbids_domain_company_names() -> None:
     assert "Do not turn email domains into company names" in prompt
     assert "Match the language and register of the thread" in prompt
     assert "informal French with `tu`" in prompt
+    assert "For referral or introduction emails" in prompt
+    assert "thank the introducer" in prompt
+    assert "greet the introduced contact by name" in prompt
+    assert "Do not claim availability, promise a call" in prompt
     assert "do not invent the user's decision" in prompt
     assert "Do not invent teams" in prompt
     assert "leave the final choice for the user to add" in prompt
@@ -626,7 +899,7 @@ def test_mock_watch_pass_batches_actionable_threads(monkeypatch, tmp_path: Path)
         return [item for item in build_mock_threads() if item.thread_id in {"thread-001", "thread-002"}]
 
     def fake_generate_batch_candidates_for_tone(threads, **kwargs):
-        assert [thread.thread_id for thread in threads] == ["thread-001", "thread-002"]
+        assert [thread.thread_id for thread in threads] == ["thread-002", "thread-001"]
         return {
             "thread-001": {
                 "body": "Alex,\n\nI will send the kickoff notes today.\n\nBest,\nTest",
@@ -732,7 +1005,8 @@ I am reviewing this.
 
     assert [event["type"] for event in events] == ["draft_created", "draft_created"]
     assert calls["single"] == ["thread-002"]
-    assert events[1]["generation_error"] == "Missing packed response block for thread-002."
+    missing_event = next(event for event in events if event["thread_id"] == "thread-002")
+    assert missing_event["generation_error"] == "Missing packed response block for thread-002."
 
 
 def test_mock_watch_pass_persists_provider_account_email_and_uses_it(monkeypatch, tmp_path: Path) -> None:
@@ -819,10 +1093,12 @@ def test_mock_watch_pass_skips_threads_when_latest_message_is_from_user(monkeypa
     assert events == [
         {
             "type": "user_replied",
+            "provider": "mock",
             "thread_id": "thread-001",
             "subject": "Project kickoff follow-up",
             "classification": "reply_needed",
             "reason": "latest_message_from_user",
+            "message_timestamp": "2026-04-24T08:55:00Z",
         }
     ]
     state = load_bot_state(tmp_path)
@@ -921,10 +1197,12 @@ def test_watch_pass_records_filtered_out_threads(monkeypatch, tmp_path: Path) ->
     assert events == [
         {
             "type": "filtered_out",
+            "provider": "gmail",
             "thread_id": "thread-008",
             "subject": thread.subject,
             "classification": "filtered",
             "reason": "unread",
+            "message_timestamp": "2026-04-24T11:31:00Z",
         }
     ]
     state = load_bot_state(tmp_path)

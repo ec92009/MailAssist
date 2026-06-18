@@ -70,6 +70,17 @@ testing.
 This is the "run whether the user is logged on or not" path. It should be used
 only after provider auth and Ollama are both available without interactive UI.
 
+Preferred service-style form:
+
+```powershell
+.\tools\mailassist-bot-task.ps1 -Action InstallStartupSystem -Provider outlook -PollSeconds 60
+```
+
+This registers the task as `LocalSystem`, so Windows can start it at boot before
+any user signs in. It still uses the repo `.env`, ignored Outlook token file,
+local Python environment, and local Ollama endpoint, so those resources must be
+available outside an interactive desktop session.
+
 Recommended credential-backed form:
 
 ```powershell
@@ -85,6 +96,9 @@ Passwordless S4U form:
 
 If S4U mode cannot see Outlook tokens, user-profile files, or Ollama models,
 reinstall with `-Credential`.
+
+If the S4U/user forms cannot launch on an AzureAD account, use
+`InstallStartupSystem` from an elevated PowerShell window.
 
 ## Manage The Task
 

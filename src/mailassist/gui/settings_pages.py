@@ -294,11 +294,11 @@ class SettingsPagesMixin:
         self.gmail_enabled.setChecked(gmail_checked)
         self.outlook_enabled.setChecked(self.settings.outlook_enabled)
 
-        self.gmail_watcher_unread_only_checkbox = QCheckBox("Only process unread threads")
+        self.gmail_watcher_unread_only_checkbox = QCheckBox("Restrict to unread only")
         self.gmail_watcher_unread_only_checkbox.setChecked(self.settings.gmail_watcher_unread_only)
         self.gmail_watcher_time_window_combo = _time_window_combo(self.settings.gmail_watcher_time_window)
 
-        self.outlook_watcher_unread_only_checkbox = QCheckBox("Only process unread threads")
+        self.outlook_watcher_unread_only_checkbox = QCheckBox("Restrict to unread only")
         self.outlook_watcher_unread_only_checkbox.setChecked(self.settings.outlook_watcher_unread_only)
         self.outlook_watcher_time_window_combo = _time_window_combo(self.settings.outlook_watcher_time_window)
 
@@ -358,7 +358,7 @@ class SettingsPagesMixin:
         layout.setContentsMargins(18, 16, 18, 16)
         layout.addWidget(enabled_checkbox)
         form = _configure_form(QFormLayout())
-        form.addRow("Unread", unread_checkbox)
+        form.addRow("Scope", unread_checkbox)
         form.addRow("Time window", time_window_combo)
         layout.addLayout(form)
         return group

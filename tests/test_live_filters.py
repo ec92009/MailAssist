@@ -62,6 +62,21 @@ def test_thread_passes_filter_rejects_threads_outside_time_window() -> None:
     assert reason == "time_window"
 
 
+def test_thread_passes_filter_rejects_threads_at_or_before_cursor() -> None:
+    passes, reason = thread_passes_filter(
+        _thread(sent_at="2026-04-27T10:00:00Z"),
+        WatcherFilter(
+            unread_only=False,
+            max_age_seconds=None,
+            received_after=datetime(2026, 4, 27, 10, 0, tzinfo=timezone.utc),
+        ),
+        now=datetime(2026, 4, 27, 12, 0, tzinfo=timezone.utc),
+    )
+
+    assert passes is False
+    assert reason == "caught_up"
+
+
 def test_thread_passes_filter_accepts_recent_unread_threads() -> None:
     passes, reason = thread_passes_filter(
         _thread(),

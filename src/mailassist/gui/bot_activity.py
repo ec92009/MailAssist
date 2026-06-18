@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import locale
+import platform
+from functools import lru_cache
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -47,7 +50,7 @@ def event_time_label(value: object) -> str:
     parsed = parse_event_timestamp(value)
     if parsed is None:
         return "--:--"
-    return parsed.strftime("%H:%M:%S")
+    return _format_system_time(parsed, include_seconds=True)
 
 
 def event_day_time_label(value: object) -> str:
@@ -61,7 +64,76 @@ def event_day_time_label(value: object) -> str:
         prefix = "Yesterday"
     else:
         prefix = f"{parsed.strftime('%b')} {parsed.day}"
-    return f"{prefix} {parsed.strftime('%H:%M')}"
+    return f"{prefix} {_format_system_time(parsed)}"
+
+
+def _format_system_time(value: datetime, *, include_seconds: bool = False) -> str:
+    if _system_uses_24_hour_clock():
+        return value.strftime("%H:%M:%S" if include_seconds else "%H:%M")
+    formatted = value.strftime("%I:%M:%S %p" if include_seconds else "%I:%M %p")
+    return formatted[1:] if formatted.startswith("0") else formatted
+
+
+@lru_cache(maxsize=1)
+def _system_uses_24_hour_clock() -> bool:
+    if platform.system() == "Windows":
+        pattern = _windows_locale_time_pattern(short=True)
+        if pattern:
+            stripped = _strip_windows_time_literals(pattern)
+            if "H" in stripped:
+                return True
+            if "h" in stripped:
+                return False
+    try:
+        time_format = locale.nl_langinfo(locale.T_FMT)
+    except (AttributeError, ValueError):
+        time_format = ""
+    normalized = time_format.lower()
+    if "%p" in normalized or "%i" in normalized:
+        return False
+    if "%h" in normalized or "%k" in normalized:
+        return True
+    return False
+
+
+def _windows_locale_time_pattern(*, short: bool) -> str:
+    try:
+        import ctypes
+    except Exception:
+        return ""
+    locale_sshorttime = 0x00000079
+    locale_stimeformat = 0x00001003
+    locale_type = locale_sshorttime if short else locale_stimeformat
+    try:
+        get_locale_info = ctypes.windll.kernel32.GetLocaleInfoEx
+        get_locale_info.argtypes = [
+            ctypes.c_wchar_p,
+            ctypes.c_uint,
+            ctypes.c_wchar_p,
+            ctypes.c_int,
+        ]
+        get_locale_info.restype = ctypes.c_int
+        size = get_locale_info(None, locale_type, None, 0)
+        if size <= 0:
+            return ""
+        buffer = ctypes.create_unicode_buffer(size)
+        if get_locale_info(None, locale_type, buffer, size) <= 0:
+            return ""
+        return buffer.value
+    except Exception:
+        return ""
+
+
+def _strip_windows_time_literals(pattern: str) -> str:
+    output = []
+    in_literal = False
+    for char in pattern:
+        if char == "'":
+            in_literal = not in_literal
+            continue
+        if not in_literal:
+            output.append(char)
+    return "".join(output)
 
 
 def short_duration_label(seconds: float) -> str:
@@ -216,6 +288,13 @@ def event_human_message(event: dict[str, object]) -> str:
     if event_type == "filtered_out":
         reason = str(event.get("reason") or "filter")
         return f'Filtered out "{subject}" by {reason}.' if subject else f"Filtered out an email by {reason}."
+    if event_type == "generation_failed":
+        error = str(event.get("generation_error") or event.get("message") or "").strip()
+        return f"Generation failed: {error}" if error else "Generation failed."
+    if event_type == "scan_lock_waiting":
+        return message or "Another MailAssist scan is already running; waiting for it to finish."
+    if event_type == "scan_lock_busy":
+        return message or "Another MailAssist scan is already running; this pass skipped without drafting."
     if event_type == "gmail_message_preview":
         sender = event.get("sender") or event.get("from") or "unknown sender"
         return f'Previewed Gmail message "{subject or event.get("snippet", "")}" from {sender}.'
@@ -224,6 +303,8 @@ def event_human_message(event: dict[str, object]) -> str:
         return f"Ollama replied: {result}" if result else "Ollama returned an empty reply."
     if event_type == "completed":
         return message or "Completed."
+    if event_type == "stop_requested":
+        return message or "Service stop requested; watch loop exiting."
     if event_type == "error":
         return message or "Error."
     if event.get("generation_error"):

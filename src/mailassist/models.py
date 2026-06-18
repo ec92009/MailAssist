@@ -16,6 +16,8 @@ class EmailMessage:
     to: List[str]
     sent_at: str
     text: str
+    cc: List[str] = field(default_factory=list)
+    bcc: List[str] = field(default_factory=list)
     rfc_message_id: str = ""
     references: List[str] = field(default_factory=list)
 
@@ -27,6 +29,8 @@ class EmailMessage:
             to=list(payload.get("to", [])),
             sent_at=payload["sent_at"],
             text=payload["text"],
+            cc=list(payload.get("cc", [])),
+            bcc=list(payload.get("bcc", [])),
             rfc_message_id=str(payload.get("rfc_message_id", "")),
             references=list(payload.get("references", [])),
         )

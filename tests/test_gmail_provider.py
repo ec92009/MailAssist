@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 from email import message_from_bytes
 from email.policy import default
 from types import ModuleType
@@ -170,7 +171,9 @@ def test_gmail_thread_parser_keeps_rfc_reply_headers() -> None:
                 "payload": {
                     "headers": [
                         {"name": "From", "value": "Sender <sender@example.com>"},
-                        {"name": "To", "value": "me@example.com"},
+                        {"name": "To", "value": "me@example.com, Client <client@example.com>"},
+                        {"name": "Cc", "value": "Assistant <assistant@example.com>"},
+                        {"name": "Bcc", "value": "Hidden <hidden@example.com>"},
                         {"name": "Subject", "value": "Question"},
                         {"name": "Message-ID", "value": "<gmail-rfc-1@example.com>"},
                         {"name": "References", "value": "<gmail-rfc-0@example.com>"},
@@ -186,6 +189,11 @@ def test_gmail_thread_parser_keeps_rfc_reply_headers() -> None:
 
     assert thread is not None
     assert thread.messages[0].message_id == "gmail-msg-1"
+    assert thread.messages[0].to == ["me@example.com", "client@example.com"]
+    assert thread.messages[0].cc == ["assistant@example.com"]
+    assert thread.messages[0].bcc == ["hidden@example.com"]
+    assert "assistant@example.com" in thread.participants
+    assert "hidden@example.com" not in thread.participants
     assert thread.messages[0].rfc_message_id == "<gmail-rfc-1@example.com>"
     assert thread.messages[0].references == ["<gmail-rfc-0@example.com>"]
 
@@ -330,6 +338,18 @@ def test_gmail_thread_query_reflects_unread_and_time_window() -> None:
     assert query == "is:unread newer_than:7d"
 
 
+def test_gmail_thread_query_includes_cursor_date() -> None:
+    query = _build_gmail_thread_query(
+        WatcherFilter(
+            unread_only=False,
+            max_age_seconds=7 * 24 * 60 * 60,
+            received_after=datetime(2026, 4, 24, 10, 15, tzinfo=timezone.utc),
+        )
+    )
+
+    assert query == "after:2026/04/24 newer_than:7d"
+
+
 def test_gmail_provider_lists_actionable_threads(monkeypatch, tmp_path: Path) -> None:
     captured = {}
 
@@ -351,11 +371,11 @@ def test_gmail_provider_lists_actionable_threads(monkeypatch, tmp_path: Path) ->
             return {
                 "id": "thread-1",
                 "messages": [
-                    {
-                        "id": "msg-1",
-                        "internalDate": "1777284000000",
-                        "labelIds": ["INBOX", "UNREAD"],
-                        "snippet": "Can you review this?",
+                        {
+                            "id": "msg-1",
+                            "internalDate": str(int(datetime.now(timezone.utc).timestamp() * 1000)),
+                            "labelIds": ["INBOX", "UNREAD"],
+                            "snippet": "Can you review this?",
                         "payload": {
                             "headers": [
                                 {"name": "From", "value": "Sender <sender@example.com>"},

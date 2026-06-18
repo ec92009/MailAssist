@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -12,7 +13,10 @@ from mailassist.background_bot import (
     build_batch_candidate_prompt,
     body_with_review_context,
     build_draft_body_html,
+    provider_caught_up_message_timestamp,
+    reply_cc_for_thread,
     reply_metadata_for_thread,
+    reply_recipients_for_thread,
     run_watch_pass,
     sanitized_controlled_thread,
     tone_guidance,
@@ -32,6 +36,117 @@ from mailassist.providers.factory import get_provider_for_settings
 
 MAILASSIST_GMAIL_PARENT_LABEL = "MailAssist"
 MAILASSIST_NO_CATEGORY = "NA"
+WATCH_PASS_OUTCOME_TYPES = {
+    "draft_created",
+    "draft_ready",
+    "skipped_email",
+    "already_handled",
+    "user_replied",
+    "filtered_out",
+    "generation_failed",
+}
+DEFAULT_MANUAL_SCAN_LOCK_WAIT_SECONDS = 360
+
+
+def _watch_pass_classification_bucket(classification: object) -> str:
+    cleaned = str(classification or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if cleaned in {"urgent", "reply_needed", "needs_reply"}:
+        return "need_reply_count"
+    if cleaned in {"no_response", "ignore", "skip"}:
+        return "no_reply_count"
+    if cleaned in {"automated", "auto", "auto_generated", "newsletter"}:
+        return "automated_count"
+    if cleaned == "spam":
+        return "spam_count"
+    return "unclassified_count"
+
+
+def _empty_watch_pass_counts() -> dict[str, int]:
+    return {
+        "scanned_count": 0,
+        "need_reply_count": 0,
+        "no_reply_count": 0,
+        "automated_count": 0,
+        "spam_count": 0,
+        "unclassified_count": 0,
+        "draft_count": 0,
+        "draft_ready_count": 0,
+        "already_handled_count": 0,
+        "user_replied_count": 0,
+        "filtered_out_count": 0,
+        "generation_failed_count": 0,
+    }
+
+
+def _add_watch_pass_event_count(
+    counts: dict[str, int],
+    event_type: str,
+    event: dict[str, object],
+) -> None:
+    if event_type in {"draft_created", "draft_ready", "skipped_email"}:
+        counts["scanned_count"] += 1
+        bucket = _watch_pass_classification_bucket(event.get("classification"))
+        counts[bucket] += 1
+    elif event_type == "filtered_out":
+        counts["filtered_out_count"] += 1
+    elif event_type == "already_handled":
+        counts["already_handled_count"] += 1
+    elif event_type == "user_replied":
+        counts["user_replied_count"] += 1
+    elif event_type == "generation_failed":
+        counts["generation_failed_count"] += 1
+    if event_type == "draft_created":
+        counts["draft_count"] += 1
+    elif event_type == "draft_ready":
+        counts["draft_ready_count"] += 1
+
+
+def _newer_message_timestamp(current: str, event: dict[str, object]) -> str:
+    raw = str(event.get("message_timestamp") or "").strip()
+    if not raw:
+        return current
+    if not current:
+        return raw
+    current_dt = _parse_event_datetime(current)
+    raw_dt = _parse_event_datetime(raw)
+    if current_dt is None or raw_dt is None:
+        return max(current, raw)
+    return raw if raw_dt >= current_dt else current
+
+
+def _parse_event_datetime(value: str) -> datetime | None:
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    if cleaned.endswith("Z"):
+        cleaned = cleaned[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(cleaned)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _service_stop_flag_path(root_dir: Path) -> Path:
+    return root_dir / "data" / "control" / "service-stop.flag"
+
+
+def _service_stop_requested(root_dir: Path, *, scan_source: str) -> bool:
+    return scan_source == "service" and _service_stop_flag_path(root_dir).exists()
+
+
+def _scan_lock_wait_seconds(*, scan_source: str) -> float:
+    raw_value = os.environ.get("MAILASSIST_SCAN_LOCK_WAIT_SECONDS", "").strip()
+    if raw_value:
+        try:
+            return max(0.0, float(raw_value))
+        except ValueError:
+            return 0.0
+    if scan_source == "manual":
+        return float(DEFAULT_MANUAL_SCAN_LOCK_WAIT_SECONDS)
+    return 0.0
 
 
 def _category_key(category: str) -> str:
@@ -63,6 +178,7 @@ class BotEventReporter:
     def __init__(self, logs_dir: Path, action: str) -> None:
         self.run_id = str(uuid4())
         self.action = action
+        self.scan_source = os.getenv("MAILASSIST_SCAN_SOURCE", "").strip().lower()
         self.log_path = logs_dir / f"bot-{action}-{self.run_id}.jsonl"
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -74,6 +190,8 @@ class BotEventReporter:
             "timestamp": utc_now_iso(),
             **payload,
         }
+        if self.scan_source:
+            event["scan_source"] = self.scan_source
         line = json.dumps(event, ensure_ascii=True)
         print(line, flush=True)
         with self.log_path.open("a", encoding="utf-8") as handle:
@@ -567,7 +685,7 @@ def command_review_bot(args: argparse.Namespace) -> int:
                 thread = next((item for item in threads if item.thread_id == selected_thread_id), None)
                 if thread is None:
                     raise RuntimeError(f"Outlook thread not found for controlled draft: {selected_thread_id}")
-                recipient = _safe_reply_recipient(thread, readiness.account_email)
+                user_address = readiness.account_email or ""
                 draft = DraftRecord(
                     draft_id=f"controlled-outlook-{thread.thread_id}",
                     thread_id=thread.thread_id,
@@ -578,8 +696,9 @@ def command_review_bot(args: argparse.Namespace) -> int:
                         "This draft validates Microsoft Graph write access and should be deleted."
                     ),
                     model="controlled-test",
-                    to=[recipient] if recipient else [],
-                    **reply_metadata_for_thread(thread, user_address=readiness.account_email or ""),
+                    to=reply_recipients_for_thread(thread, user_address=user_address),
+                    cc=reply_cc_for_thread(thread, user_address=user_address),
+                    **reply_metadata_for_thread(thread, user_address=user_address),
                 )
                 reference = provider.create_draft(draft)
                 draft_count = 1
@@ -837,8 +956,9 @@ def command_review_bot(args: argparse.Namespace) -> int:
             already_handled_count = 0
             user_replied_count = 0
             filtered_out_count = 0
+            generation_failed_count = 0
             for event in events:
-                event_type = str(event.pop("type"))
+                event_type = str(event.get("type"))
                 if event_type == "draft_created":
                     draft_count += 1
                 elif event_type == "draft_ready":
@@ -851,7 +971,8 @@ def command_review_bot(args: argparse.Namespace) -> int:
                     user_replied_count += 1
                 elif event_type == "filtered_out":
                     filtered_out_count += 1
-                reporter.emit(event_type, **event)
+                elif event_type == "generation_failed":
+                    generation_failed_count += 1
             reporter.emit(
                 "completed",
                 message="Watch pass completed.",
@@ -862,6 +983,7 @@ def command_review_bot(args: argparse.Namespace) -> int:
                 already_handled_count=already_handled_count,
                 user_replied_count=user_replied_count,
                 filtered_out_count=filtered_out_count,
+                generation_failed_count=generation_failed_count,
                 dry_run=bool(getattr(args, "dry_run", False)),
             )
             return 0
@@ -878,6 +1000,7 @@ def command_review_bot(args: argparse.Namespace) -> int:
             total_already_handled_count = 0
             total_user_replied_count = 0
             total_filtered_out_count = 0
+            total_generation_failed_count = 0
             failed_pass_count = 0
             retry_count = 0
             reporter.emit(
@@ -889,8 +1012,17 @@ def command_review_bot(args: argparse.Namespace) -> int:
             )
 
             while True:
+                if _service_stop_requested(settings.root_dir, scan_source=reporter.scan_source):
+                    reporter.emit(
+                        "stop_requested",
+                        provider=provider_name,
+                        message="Service stop requested; watch loop exiting before the next scan.",
+                    )
+                    break
                 completed_passes += 1
                 pass_failed = False
+                pass_counts = _empty_watch_pass_counts()
+                caught_up_message_timestamp = ""
                 reporter.emit(
                     "watch_pass_started",
                     provider=provider_name,
@@ -906,10 +1038,19 @@ def command_review_bot(args: argparse.Namespace) -> int:
                         force=bool(getattr(args, "force", False)),
                         batch_size=max(1, int(getattr(args, "batch_size", 1) or 1)),
                         dry_run=bool(getattr(args, "dry_run", False)),
+                        scan_lock_wait_seconds=_scan_lock_wait_seconds(
+                            scan_source=reporter.scan_source
+                        ),
                         progress_callback=lambda event: _emit_watch_progress(reporter, event),
                     )
                     for event in events:
-                        event_type = str(event.pop("type"))
+                        event_type = str(event.get("type"))
+                        _add_watch_pass_event_count(pass_counts, event_type, event)
+                        if event_type != "generation_failed":
+                            caught_up_message_timestamp = _newer_message_timestamp(
+                                caught_up_message_timestamp,
+                                event,
+                            )
                         if event_type == "draft_created":
                             total_draft_count += 1
                         elif event_type == "draft_ready":
@@ -922,11 +1063,21 @@ def command_review_bot(args: argparse.Namespace) -> int:
                             total_user_replied_count += 1
                         elif event_type == "filtered_out":
                             total_filtered_out_count += 1
+                        elif event_type == "generation_failed":
+                            total_generation_failed_count += 1
                         reporter.emit(event_type, **event)
+                    if not caught_up_message_timestamp:
+                        caught_up_message_timestamp = provider_caught_up_message_timestamp(
+                            settings.root_dir,
+                            provider_name,
+                        )
                     reporter.emit(
                         "watch_pass_completed",
                         provider=provider_name,
                         pass_number=completed_passes,
+                        poll_seconds=poll_seconds,
+                        caught_up_message_timestamp=caught_up_message_timestamp,
+                        **pass_counts,
                     )
                 except Exception as exc:
                     pass_failed = True
@@ -938,6 +1089,13 @@ def command_review_bot(args: argparse.Namespace) -> int:
                         message=str(exc),
                     )
                 if max_passes and completed_passes >= max_passes:
+                    break
+                if _service_stop_requested(settings.root_dir, scan_source=reporter.scan_source):
+                    reporter.emit(
+                        "stop_requested",
+                        provider=provider_name,
+                        message="Service stop requested; watch loop exiting.",
+                    )
                     break
                 if pass_failed:
                     retry_count += 1
@@ -965,6 +1123,7 @@ def command_review_bot(args: argparse.Namespace) -> int:
                 already_handled_count=total_already_handled_count,
                 user_replied_count=total_user_replied_count,
                 filtered_out_count=total_filtered_out_count,
+                generation_failed_count=total_generation_failed_count,
                 failed_pass_count=failed_pass_count,
                 retry_count=retry_count,
                 dry_run=bool(getattr(args, "dry_run", False)),
@@ -990,19 +1149,6 @@ def command_review_bot(args: argparse.Namespace) -> int:
     except Exception as exc:
         reporter.emit("error", message=str(exc))
         return 1
-
-
-def _safe_reply_recipient(thread, account_email: str | None) -> str:
-    account = str(account_email or "").strip().lower()
-    for message in reversed(thread.messages):
-        sender = str(message.sender or "").strip().lower()
-        if sender and sender != account:
-            return sender
-    for participant in thread.participants:
-        address = str(participant or "").strip().lower()
-        if address and address != account:
-            return address
-    return ""
 
 
 def _mailassist_labels_for_thread(thread) -> list[str]:

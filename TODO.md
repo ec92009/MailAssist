@@ -24,7 +24,7 @@ Mac/Gmail remains the proving ground because it is already working locally and e
 - Current baseline at handoff:
   - Last synchronized commit before this handoff commit: `3ce585c`
   - Handoff commit: reported in the final assistant response after commit/push
-  - Current visible version: `v62.15`
+  - Current visible version: `v109.3`
   - Local app/dev entrypoint: `./.venv/bin/mailassist desktop-gui`
   - Packaged app path: `/Applications/MailAssist.app`
 - Known open issue to continue:

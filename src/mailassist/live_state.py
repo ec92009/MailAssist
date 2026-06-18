@@ -79,13 +79,14 @@ def _normalize_provider_slots(providers: Any) -> dict[str, Any]:
         if isinstance(provider_payload, dict) and "threads" in provider_payload:
             slot = dict(provider_payload)
             slot["threads"] = dict(slot.get("threads", {}))
-            slot.setdefault("cursor", None)
+            if not isinstance(slot.get("cursor"), dict):
+                slot["cursor"] = {}
             normalized[str(provider_name)] = slot
             continue
 
         threads = dict(provider_payload) if isinstance(provider_payload, dict) else {}
         normalized[str(provider_name)] = {
-            "cursor": None,
+            "cursor": {},
             "threads": threads,
         }
     return normalized

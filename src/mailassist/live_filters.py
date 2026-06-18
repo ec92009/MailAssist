@@ -18,6 +18,7 @@ TIME_WINDOW_SECONDS = {
 class WatcherFilter:
     unread_only: bool
     max_age_seconds: int | None
+    received_after: datetime | None = None
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "WatcherFilter":
@@ -37,15 +38,22 @@ def thread_passes_filter(
     if watcher_filter.unread_only and not thread.unread:
         return False, "unread"
 
-    if watcher_filter.max_age_seconds is None:
-        return True, None
-
     if not thread.messages:
         return False, "time_window"
 
     latest_sent_at = _parse_sent_at(thread.messages[-1].sent_at)
     if latest_sent_at is None:
         return False, "time_window"
+
+    if watcher_filter.received_after is not None:
+        cursor = watcher_filter.received_after
+        if cursor.tzinfo is None:
+            cursor = cursor.replace(tzinfo=timezone.utc)
+        if latest_sent_at <= cursor.astimezone(timezone.utc):
+            return False, "caught_up"
+
+    if watcher_filter.max_age_seconds is None:
+        return True, None
 
     anchor = now if now.tzinfo is not None else now.replace(tzinfo=timezone.utc)
     cutoff = anchor - timedelta(seconds=watcher_filter.max_age_seconds)

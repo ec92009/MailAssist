@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import json
 import locale
+import os
 import platform
 import re
 import subprocess
+import time
+from contextlib import contextmanager
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator, TextIO
 from uuid import uuid4
 
 from mailassist.config import (
@@ -22,6 +25,7 @@ from mailassist.fixtures.mock_threads import build_mock_threads
 from mailassist.live_filters import WatcherFilter, thread_passes_filter
 from mailassist.live_state import load_live_state, save_live_state
 from mailassist.drafting import (
+    COMMON_DRAFTING_RULES,
     SET_ASIDE_CLASSIFICATIONS,
     append_signature_to_body,
     fallback_classification_for_thread,
@@ -63,6 +67,14 @@ TONE_OPTIONS = {
         "Brief and casual",
         "Keep it friendly, plainspoken, and brief without becoming sloppy.",
     ),
+}
+CURSOR_ADVANCING_EVENT_TYPES = {
+    "draft_created",
+    "draft_ready",
+    "skipped_email",
+    "already_handled",
+    "user_replied",
+    "filtered_out",
 }
 
 
@@ -114,7 +126,160 @@ def save_bot_state(root_dir: Path, state: dict[str, Any]) -> Path:
     return save_live_state(root_dir, state)
 
 
+def _scan_pass_lock_path(root_dir: Path, provider_name: str) -> Path:
+    safe_provider = re.sub(r"[^A-Za-z0-9_.-]+", "_", provider_name.strip().lower() or "provider")
+    return root_dir / "data" / "locks" / f"scan-{safe_provider}.lock"
+
+
+@contextmanager
+def _scan_pass_lock(root_dir: Path, provider_name: str) -> Iterator[bool]:
+    path = _scan_pass_lock_path(root_dir, provider_name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+", encoding="utf-8") as handle:
+        acquired = _try_lock_file(handle)
+        if not acquired:
+            yield False
+            return
+        try:
+            handle.seek(0)
+            handle.truncate()
+            handle.write(
+                json.dumps(
+                    {
+                        "provider": provider_name,
+                        "pid": os.getpid(),
+                        "locked_at": utc_now_iso(),
+                    },
+                    ensure_ascii=True,
+                )
+                + "\n"
+            )
+            handle.flush()
+            yield True
+        finally:
+            _unlock_file(handle)
+
+
+def _try_lock_file(handle: TextIO) -> bool:
+    handle.seek(0)
+    if platform.system() == "Windows":
+        try:
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            return True
+        except OSError:
+            return False
+    try:
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except (ImportError, OSError, BlockingIOError):
+        return False
+
+
+def _unlock_file(handle: TextIO) -> None:
+    handle.seek(0)
+    if platform.system() == "Windows":
+        try:
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+        return
+    try:
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    except (ImportError, OSError):
+        pass
+
+
+def _record_watch_event(
+    events: list[dict[str, Any]],
+    *,
+    settings: Settings,
+    state: dict[str, Any],
+    provider_slot: dict[str, Any] | None = None,
+    provider_name: str,
+    event: dict[str, Any],
+    advance_cursor: bool = False,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> None:
+    events.append(event)
+    _append_recent_activity(state, provider_name=provider_name, event=event)
+    if advance_cursor and provider_slot is not None:
+        _advance_provider_cursor(provider_slot, event)
+    state["updated_at"] = utc_now_iso()
+    save_bot_state(settings.root_dir, state)
+    _emit_progress(progress_callback, _safe_progress_event(event, provider_name=provider_name))
+
+
 def run_watch_pass(
+    *,
+    settings: Settings,
+    provider: DraftProvider,
+    base_url: str,
+    selected_model: str,
+    thread_id: str = "",
+    force: bool = False,
+    batch_size: int = 1,
+    dry_run: bool = False,
+    max_candidates: int | None = None,
+    scan_lock_wait_seconds: float = 0,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> list[dict[str, Any]]:
+    lock_wait_seconds = max(0.0, float(scan_lock_wait_seconds or 0))
+    wait_started_at = time.monotonic()
+    waiting_reported = False
+    while True:
+        with _scan_pass_lock(settings.root_dir, provider.name) as lock_acquired:
+            if lock_acquired:
+                return _run_watch_pass_unlocked(
+                    settings=settings,
+                    provider=provider,
+                    base_url=base_url,
+                    selected_model=selected_model,
+                    thread_id=thread_id,
+                    force=force,
+                    batch_size=batch_size,
+                    dry_run=dry_run,
+                    max_candidates=max_candidates,
+                    progress_callback=progress_callback,
+                )
+        elapsed = time.monotonic() - wait_started_at
+        if elapsed >= lock_wait_seconds:
+            event = {
+                "type": "scan_lock_busy",
+                "provider": provider.name,
+                "reason": "another_scan_running",
+                "message": "Another MailAssist scan is already running; this pass skipped without drafting.",
+                "waited_seconds": int(round(elapsed)),
+            }
+            return [event]
+
+        remaining = lock_wait_seconds - elapsed
+        if not waiting_reported:
+            _emit_progress(
+                progress_callback,
+                _safe_progress_event(
+                    {
+                        "type": "scan_lock_waiting",
+                        "provider": provider.name,
+                        "reason": "another_scan_running",
+                        "message": "Another MailAssist scan is already running; waiting for it to finish.",
+                        "wait_seconds": int(round(lock_wait_seconds)),
+                    },
+                    provider_name=provider.name,
+                ),
+            )
+            waiting_reported = True
+        time.sleep(min(2.0, max(0.1, remaining)))
+
+
+def _run_watch_pass_unlocked(
     *,
     settings: Settings,
     provider: DraftProvider,
@@ -131,17 +296,31 @@ def run_watch_pass(
     user_address = _resolve_account_email(state, provider)
     provider_slot = state.setdefault("providers", {}).setdefault(
         provider.name,
-        {"cursor": None, "threads": {}},
+        {"cursor": {}, "threads": {}},
     )
     provider_state = provider_slot.setdefault("threads", {})
+    use_cursor = not force and not thread_id
+    cursor_timestamp = _ensure_provider_cursor(
+        state,
+        provider_name=provider.name,
+        provider_slot=provider_slot,
+        settings=settings,
+    ) if use_cursor else None
+    advance_cursor = use_cursor and not dry_run
     events = []
     pending_threads: list[tuple[EmailThread, str]] = []
-    thread_candidates = _watch_thread_candidates_for_provider(provider, settings)
+    thread_candidates = _watch_thread_candidates_for_provider(
+        provider,
+        settings,
+        received_after=cursor_timestamp,
+    )
     if max_candidates is not None:
         thread_candidates = thread_candidates[: max(1, int(max_candidates))]
 
     for thread, filtered_reason in thread_candidates:
         if thread_id and thread.thread_id != thread_id:
+            continue
+        if filtered_reason == "caught_up":
             continue
         latest_message_id = _latest_message_id(thread)
         if filtered_reason:
@@ -151,19 +330,23 @@ def run_watch_pass(
                 classification="filtered",
                 action="filtered_out",
             )
-            events.append(
-                {
+            _record_watch_event(
+                events,
+                settings=settings,
+                state=state,
+                provider_slot=provider_slot,
+                provider_name=provider.name,
+                advance_cursor=advance_cursor,
+                progress_callback=progress_callback,
+                event={
                     "type": "filtered_out",
+                    "provider": provider.name,
                     "thread_id": thread.thread_id,
                     "subject": thread.subject,
                     "classification": "filtered",
                     "reason": filtered_reason,
-                }
-            )
-            _append_recent_activity(
-                state,
-                provider_name=provider.name,
-                event=events[-1],
+                    "message_timestamp": _latest_message_timestamp(thread),
+                },
             )
             continue
         if _latest_sender(thread) == user_address:
@@ -173,36 +356,44 @@ def run_watch_pass(
                 classification="reply_needed",
                 action="user_replied",
             )
-            events.append(
-                {
+            _record_watch_event(
+                events,
+                settings=settings,
+                state=state,
+                provider_slot=provider_slot,
+                provider_name=provider.name,
+                advance_cursor=advance_cursor,
+                progress_callback=progress_callback,
+                event={
                     "type": "user_replied",
+                    "provider": provider.name,
                     "thread_id": thread.thread_id,
                     "subject": thread.subject,
                     "classification": "reply_needed",
                     "reason": "latest_message_from_user",
-                }
-            )
-            _append_recent_activity(
-                state,
-                provider_name=provider.name,
-                event=events[-1],
+                    "message_timestamp": _latest_message_timestamp(thread),
+                },
             )
             continue
         previous = provider_state.get(thread.thread_id, {})
         if not force and previous.get("latest_message_id") == latest_message_id:
-            events.append(
-                {
+            _record_watch_event(
+                events,
+                settings=settings,
+                state=state,
+                provider_slot=provider_slot,
+                provider_name=provider.name,
+                advance_cursor=advance_cursor,
+                progress_callback=progress_callback,
+                event={
                     "type": "already_handled",
+                    "provider": provider.name,
                     "thread_id": thread.thread_id,
                     "subject": thread.subject,
                     "classification": previous.get("classification", "unclassified"),
                     "provider_draft_id": previous.get("provider_draft_id"),
-                }
-            )
-            _append_recent_activity(
-                state,
-                provider_name=provider.name,
-                event=events[-1],
+                    "message_timestamp": _latest_message_timestamp(thread),
+                },
             )
             continue
 
@@ -219,19 +410,23 @@ def run_watch_pass(
                 classification=classification,
                 action="skipped",
             )
-            events.append(
-                {
+            _record_watch_event(
+                events,
+                settings=settings,
+                state=state,
+                provider_slot=provider_slot,
+                provider_name=provider.name,
+                advance_cursor=advance_cursor,
+                progress_callback=progress_callback,
+                event={
                     "type": "skipped_email",
+                    "provider": provider.name,
                     "thread_id": thread.thread_id,
                     "subject": thread.subject,
                     "classification": classification,
                     "reason": "no_response_needed",
-                }
-            )
-            _append_recent_activity(
-                state,
-                provider_name=provider.name,
-                event=events[-1],
+                    "message_timestamp": _latest_message_timestamp(thread),
+                },
             )
             continue
 
@@ -320,20 +515,24 @@ def run_watch_pass(
                     action="skipped",
                     generation_error="Batch generation did not include this thread.",
                 )
-                events.append(
-                    {
+                _record_watch_event(
+                    events,
+                    settings=settings,
+                    state=state,
+                    provider_slot=provider_slot,
+                    provider_name=provider.name,
+                    advance_cursor=advance_cursor,
+                    progress_callback=progress_callback,
+                    event={
                         "type": "skipped_email",
+                        "provider": provider.name,
                         "thread_id": thread.thread_id,
                         "subject": thread.subject,
                         "classification": "unclassified",
                         "reason": "missing_batch_result",
                         "generation_error": "Batch generation did not include this thread.",
-                    }
-                )
-                _append_recent_activity(
-                    state,
-                    provider_name=provider.name,
-                    event=events[-1],
+                        "message_timestamp": _latest_message_timestamp(thread),
+                    },
                 )
                 continue
 
@@ -362,20 +561,47 @@ def run_watch_pass(
                     generation_model=generation_model,
                     generation_error=generation_error,
                 )
-                events.append(
-                    {
+                _record_watch_event(
+                    events,
+                    settings=settings,
+                    state=state,
+                    provider_slot=provider_slot,
+                    provider_name=provider.name,
+                    advance_cursor=advance_cursor,
+                    progress_callback=progress_callback,
+                    event={
                         "type": "skipped_email",
+                        "provider": provider.name,
                         "thread_id": thread.thread_id,
                         "subject": thread.subject,
                         "classification": classification,
                         "reason": "no_response_needed",
                         "generation_error": generation_error,
-                    }
+                        "message_timestamp": _latest_message_timestamp(thread),
+                    },
                 )
-                _append_recent_activity(
-                    state,
+                continue
+
+            if _fallback_generation_failed(generation_model, generation_error):
+                _record_watch_event(
+                    events,
+                    settings=settings,
+                    state=state,
+                    provider_slot=provider_slot,
                     provider_name=provider.name,
-                    event=events[-1],
+                    advance_cursor=False,
+                    progress_callback=progress_callback,
+                    event={
+                        "type": "generation_failed",
+                        "provider": provider.name,
+                        "thread_id": thread.thread_id,
+                        "subject": thread.subject,
+                        "classification": classification,
+                        "reason": "model_unavailable",
+                        "generation_model": generation_model,
+                        "generation_error": generation_error,
+                        "message_timestamp": _latest_message_timestamp(thread),
+                    },
                 )
                 continue
 
@@ -405,6 +631,7 @@ def run_watch_pass(
                 body_html=body_html,
                 model=generation_model_name,
                 to=reply_recipients_for_thread(thread, user_address=user_address),
+                cc=reply_cc_for_thread(thread, user_address=user_address),
                 **reply_metadata_for_thread(thread, user_address=user_address),
             )
             if dry_run:
@@ -423,8 +650,15 @@ def run_watch_pass(
                     generation_error=generation_error,
                     provider_draft_id=provider_draft_id,
                 )
-            events.append(
-                {
+            _record_watch_event(
+                events,
+                settings=settings,
+                state=state,
+                provider_slot=provider_slot,
+                provider_name=provider.name,
+                advance_cursor=advance_cursor,
+                progress_callback=progress_callback,
+                event={
                     "type": "draft_ready" if dry_run else "draft_created",
                     "thread_id": thread.thread_id,
                     "subject": thread.subject,
@@ -434,12 +668,8 @@ def run_watch_pass(
                     "generation_model": generation_model,
                     "generation_error": generation_error,
                     "dry_run": dry_run,
-                }
-            )
-            _append_recent_activity(
-                state,
-                provider_name=provider.name,
-                event=events[-1],
+                    "message_timestamp": _latest_message_timestamp(thread),
+                },
             )
 
     state["updated_at"] = utc_now_iso()
@@ -548,19 +778,8 @@ Classification rules:
 
 Drafting rules:
 - If classification is `automated`, `no_response`, or `spam`, leave `BODY:` empty.
-- If a reply is appropriate, write as the recipient of that specific thread.
-- Stay grounded in that thread only.
-- Match the language and register of the thread. If the sender writes in French, reply in French. If the sender uses informal French with `tu`, reply informally with `tu`; do not switch to formal `vous` unless the thread uses `vous` or a formal business register.
-- If thread-specific relationship guidance says the sender is on the user's Elders list, that guidance overrides the mirror-register rule: in French, use respectful `vous` for that sender even if the sender used `tu`.
-- Mirror the sender's level of formality without becoming sloppy. A short informal question should get a short informal answer.
-- Do not turn email domains into company names unless that company name appears explicitly in the thread.
-- If the email asks the user to approve, choose, confirm attendance, accept terms, authorize access, call someone, contact someone, check with another party, or make a business decision, do not invent the user's decision or promise the user will do the requested action. Draft a safe holding response that says the user is reviewing it, asks for missing detail, or leaves the action for the user to complete.
-- Do not invent teams, reviewers, calendars, availability, internal processes, vendors, companies, or people that are not explicitly named in the thread.
-- For choice requests like `Would you like us to hold an open house Saturday or Sunday?`, do not say the user will check with a team, decide availability, or confirm a future preference. Say the user is reviewing the options and leave the final choice for the user to add.
-- Avoid promise-shaped phrases like `I will follow up`, `I will let you know`, `I'll let you know`, `I will call`, `I will check`, `I will contact`, `I will update`, or `I will confirm` unless the user already made that exact commitment in the thread. Prefer current-state language like `I am reviewing this` or `I am looking over the details`.
-- If the thread uses relative timing like `today`, `tomorrow`, `this morning`, or `in the morning`, do not repeat that timing as a future promise.
+- {COMMON_DRAFTING_RULES.replace(chr(10), chr(10) + "- ")[2:]}
 - If classification is `urgent` or `reply_needed`, the body must contain at least one substantive sentence. Never return only a greeting, sign-off, or signature.
-- If information is missing, say so plainly instead of guessing.
 - Keep each draft under 140 words.
 - Signature rules:
 {signature_prompt_block(signature)}
@@ -666,6 +885,10 @@ def _combine_generation_errors(*errors: object) -> str | None:
     return "; ".join(cleaned)
 
 
+def _fallback_generation_failed(generation_model: object, generation_error: object) -> bool:
+    return bool(str(generation_error or "").strip()) and str(generation_model or "").strip() == "fallback"
+
+
 def _latest_message_id(thread: EmailThread) -> str:
     if not thread.messages:
         return ""
@@ -692,6 +915,28 @@ def _emit_progress(
         callback(event)
 
 
+def _safe_progress_event(event: dict[str, Any], *, provider_name: str) -> dict[str, Any]:
+    safe: dict[str, Any] = {
+        "type": str(event.get("type") or ""),
+        "provider": str(event.get("provider") or provider_name),
+    }
+    for key in (
+        "classification",
+        "reason",
+        "message_timestamp",
+        "provider_draft_id",
+        "generation_model",
+        "generation_error",
+        "dry_run",
+        "message",
+        "wait_seconds",
+        "waited_seconds",
+    ):
+        if key in event and event.get(key) is not None:
+            safe[key] = event[key]
+    return safe
+
+
 def _emit_classification_progress(
     callback: Callable[[dict[str, Any]], None] | None,
     *,
@@ -708,44 +953,217 @@ def _emit_classification_progress(
     )
 
 
-def _watch_thread_candidates_for_provider(provider: DraftProvider, settings: Settings) -> list[tuple[EmailThread, str | None]]:
-    watcher_filter = WatcherFilter.from_settings(settings)
+def provider_caught_up_message_timestamp(root_dir: Path, provider_name: str) -> str:
+    state = load_bot_state(root_dir)
+    provider_slot = state.get("providers", {}).get(provider_name, {})
+    if not isinstance(provider_slot, dict):
+        return ""
+    return _provider_cursor_timestamp(provider_slot)
+
+
+def _watch_thread_candidates_for_provider(
+    provider: DraftProvider,
+    settings: Settings,
+    *,
+    received_after: datetime | None = None,
+) -> list[tuple[EmailThread, str | None]]:
+    base_filter = WatcherFilter.from_settings(settings)
+    watcher_filter = WatcherFilter(
+        unread_only=base_filter.unread_only,
+        max_age_seconds=base_filter.max_age_seconds,
+        received_after=received_after,
+    )
     now = datetime.now(timezone.utc)
     if provider.name == "mock":
-        return [
+        return _oldest_first_candidates([
             (thread, thread_passes_filter(thread, watcher_filter, now=now)[1])
             for thread in build_mock_threads()
-        ]
+        ])
 
     lister = getattr(provider, "list_candidate_threads", None)
     if callable(lister):
         try:
-            return [
+            try:
+                listed = list(lister(watcher_filter))
+            except TypeError:
+                listed = list(lister())
+            return _oldest_first_candidates([
                 (thread, thread_passes_filter(thread, watcher_filter, now=now)[1])
-                for thread in list(lister())
-            ]
+                for thread in listed
+            ])
         except NotImplementedError:
             pass
 
     lister = getattr(provider, "list_actionable_threads", None)
     if callable(lister):
         try:
-            return [(thread, None) for thread in list(lister(watcher_filter))]
+            return _oldest_first_candidates([(thread, None) for thread in list(lister(watcher_filter))])
         except NotImplementedError:
             pass
 
-    return [
+    return _oldest_first_candidates([
         (thread, thread_passes_filter(thread, watcher_filter, now=now)[1])
         for thread in build_mock_threads()
-    ]
+    ])
+
+
+def _oldest_first_candidates(
+    candidates: list[tuple[EmailThread, str | None]]
+) -> list[tuple[EmailThread, str | None]]:
+    return sorted(candidates, key=lambda item: _message_sort_timestamp(item[0]))
+
+
+def _message_sort_timestamp(thread: EmailThread) -> datetime:
+    parsed = _parse_message_timestamp(_latest_message_timestamp(thread))
+    if parsed is None:
+        return datetime.max.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _ensure_provider_cursor(
+    state: dict[str, Any],
+    *,
+    provider_name: str,
+    provider_slot: dict[str, Any],
+    settings: Settings,
+) -> datetime | None:
+    timestamp = _provider_cursor_timestamp(provider_slot)
+    if not timestamp:
+        timestamp = _latest_known_provider_timestamp(state, provider_name=provider_name)
+        if timestamp:
+            _set_provider_cursor(provider_slot, timestamp)
+            state["updated_at"] = utc_now_iso()
+            save_bot_state(settings.root_dir, state)
+    return _parse_message_timestamp(timestamp)
+
+
+def _provider_cursor_timestamp(provider_slot: dict[str, Any]) -> str:
+    cursor = provider_slot.setdefault("cursor", {})
+    if not isinstance(cursor, dict):
+        cursor = {}
+        provider_slot["cursor"] = cursor
+    return str(cursor.get("last_scanned_message_timestamp", "") or "").strip()
+
+
+def _set_provider_cursor(provider_slot: dict[str, Any], timestamp: str) -> None:
+    cursor = provider_slot.setdefault("cursor", {})
+    if not isinstance(cursor, dict):
+        cursor = {}
+        provider_slot["cursor"] = cursor
+    cursor["last_scanned_message_timestamp"] = timestamp
+    cursor["updated_at"] = utc_now_iso()
+
+
+def _advance_provider_cursor(provider_slot: dict[str, Any], event: dict[str, Any]) -> None:
+    if str(event.get("type") or "") not in CURSOR_ADVANCING_EVENT_TYPES:
+        return
+    timestamp = str(event.get("message_timestamp", "") or "").strip()
+    if not timestamp:
+        return
+    current = _provider_cursor_timestamp(provider_slot)
+    if _is_newer_timestamp(timestamp, current):
+        _set_provider_cursor(provider_slot, _normalized_message_timestamp(timestamp))
+
+
+def _latest_known_provider_timestamp(
+    state: dict[str, Any],
+    *,
+    provider_name: str,
+) -> str:
+    provider_slot = state.get("providers", {}).get(provider_name, {})
+    candidates: list[str] = []
+    if isinstance(provider_slot, dict):
+        threads = provider_slot.get("threads", {})
+        if isinstance(threads, dict):
+            for record in threads.values():
+                if isinstance(record, dict):
+                    candidates.append(str(record.get("message_timestamp", "") or ""))
+    for event in state.get("recent_activity", []):
+        if not isinstance(event, dict):
+            continue
+        if str(event.get("provider", "") or "") == provider_name:
+            if str(event.get("type", "") or "") not in CURSOR_ADVANCING_EVENT_TYPES:
+                continue
+            candidates.append(str(event.get("message_timestamp", "") or ""))
+    newest = ""
+    for candidate in candidates:
+        if _is_newer_timestamp(candidate, newest):
+            newest = _normalized_message_timestamp(candidate)
+    return newest
+
+
+def _is_newer_timestamp(candidate: str, current: str) -> bool:
+    parsed_candidate = _parse_message_timestamp(candidate)
+    if parsed_candidate is None:
+        return False
+    parsed_current = _parse_message_timestamp(current)
+    if parsed_current is None:
+        return True
+    return parsed_candidate > parsed_current
+
+
+def _normalized_message_timestamp(value: str) -> str:
+    parsed = _parse_message_timestamp(value)
+    if parsed is None:
+        return value.strip()
+    return parsed.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _parse_message_timestamp(value: str) -> datetime | None:
+    cleaned = str(value or "").strip()
+    if not cleaned:
+        return None
+    if cleaned.endswith("Z"):
+        cleaned = f"{cleaned[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(cleaned)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def reply_recipients_for_thread(thread: EmailThread, user_address: str = "you@example.com") -> list[str]:
     if thread.messages:
-        latest_sender = thread.messages[-1].sender
-        if latest_sender and latest_sender != user_address:
+        latest_sender = _normalized_email_address(thread.messages[-1].sender)
+        if latest_sender and latest_sender != _normalized_email_address(user_address):
             return [latest_sender]
-    return [item for item in thread.participants if item != user_address]
+    return [
+        address
+        for address in _unique_email_addresses(thread.participants)
+        if address != _normalized_email_address(user_address)
+    ]
+
+
+def reply_cc_for_thread(thread: EmailThread, user_address: str = "you@example.com") -> list[str]:
+    if not thread.messages:
+        return []
+    latest = thread.messages[-1]
+    blocked = {
+        _normalized_email_address(user_address),
+        *reply_recipients_for_thread(thread, user_address=user_address),
+    }
+    return [
+        address
+        for address in _unique_email_addresses([*latest.to, *latest.cc])
+        if address and address not in blocked
+    ]
+
+
+def _normalized_email_address(address: object) -> str:
+    return str(address or "").strip().lower()
+
+
+def _unique_email_addresses(addresses: list[str] | tuple[str, ...]) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for address in addresses:
+        normalized = _normalized_email_address(address)
+        if normalized and normalized not in seen:
+            cleaned.append(normalized)
+            seen.add(normalized)
+    return cleaned
 
 
 def ensure_substantive_reply_body(thread: EmailThread, body: str, *, signature: str = "") -> str:
@@ -1019,6 +1437,7 @@ def _append_recent_activity(
             "classification": str(event.get("classification", "")),
             "reason": str(event.get("reason", "")) or None,
             "provider_draft_id": str(event.get("provider_draft_id", "")) or None,
+            "message_timestamp": str(event.get("message_timestamp", "")) or None,
         }
     )
     if len(recent_activity) > limit:
@@ -1131,6 +1550,7 @@ def _state_record(
         "thread_id": thread.thread_id,
         "subject": thread.subject,
         "latest_message_id": latest_message_id,
+        "message_timestamp": _latest_message_timestamp(thread),
         "classification": classification,
         "action": action,
         "generation_model": generation_model,

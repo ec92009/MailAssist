@@ -3,11 +3,11 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Protocol
 from urllib.error import HTTPError
-from urllib.parse import urlencode, quote
+from urllib.parse import quote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from mailassist.live_filters import WatcherFilter, thread_passes_filter
@@ -20,6 +20,7 @@ OUTLOOK_GRAPH_SCOPES = [
     "User.Read",
     "Mail.ReadWrite",
 ]
+OUTLOOK_WATCHER_FETCH_LIMIT = 500
 
 
 class OutlookGraphAuthError(RuntimeError):
@@ -39,7 +40,12 @@ class OutlookGraphClient(Protocol):
     def get_me(self) -> dict[str, Any]:
         ...
 
-    def list_messages(self, *, limit: int = 25) -> list[dict[str, Any]]:
+    def list_messages(
+        self,
+        *,
+        limit: int = 25,
+        received_after: datetime | None = None,
+    ) -> list[dict[str, Any]]:
         ...
 
     def create_reply_draft(self, *, message_id: str, draft: DraftRecord) -> dict[str, Any]:
@@ -68,9 +74,22 @@ class InMemoryOutlookGraphClient:
         self.authenticate()
         return self.me
 
-    def list_messages(self, *, limit: int = 25) -> list[dict[str, Any]]:
+    def list_messages(
+        self,
+        *,
+        limit: int = 25,
+        received_after: datetime | None = None,
+    ) -> list[dict[str, Any]]:
         self.authenticate()
-        return list(self.messages)[:limit]
+        messages = list(self.messages)
+        if received_after is not None:
+            cutoff = received_after.astimezone(timezone.utc)
+            messages = [
+                message
+                for message in messages
+                if (parsed := _message_datetime(message)) is None or parsed >= cutoff
+            ]
+        return messages[:limit]
 
     def create_reply_draft(self, *, message_id: str, draft: DraftRecord) -> dict[str, Any]:
         self.authenticate()
@@ -171,20 +190,37 @@ class MicrosoftGraphClient:
     def get_me(self) -> dict[str, Any]:
         return self._graph_request("GET", "/me")
 
-    def list_messages(self, *, limit: int = 25) -> list[dict[str, Any]]:
-        safe_limit = max(1, min(100, int(limit or 25)))
+    def list_messages(
+        self,
+        *,
+        limit: int = 25,
+        received_after: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        target_limit = max(1, int(limit or 25))
+        page_size = min(100, target_limit)
         params = urlencode(
             {
-                "$top": str(safe_limit),
+                "$top": str(page_size),
                 "$orderby": "receivedDateTime desc",
                 "$select": (
                     "id,conversationId,subject,from,toRecipients,ccRecipients,bccRecipients,"
                     "receivedDateTime,sentDateTime,body,bodyPreview,isRead,categories"
                 ),
+                **(
+                    {"$filter": f"receivedDateTime ge {_graph_datetime(received_after)}"}
+                    if received_after is not None
+                    else {}
+                ),
             }
         )
-        payload = self._graph_request("GET", f"/me/mailFolders/inbox/messages?{params}")
-        return list(payload.get("value", []))
+        path = f"/me/mailFolders/inbox/messages?{params}"
+        messages: list[dict[str, Any]] = []
+        while path and len(messages) < target_limit:
+            payload = self._graph_request("GET", path)
+            messages.extend(list(payload.get("value", [])))
+            next_link = str(payload.get("@odata.nextLink") or "").strip()
+            path = _graph_next_path(next_link)
+        return messages[:target_limit]
 
     def create_reply_draft(self, *, message_id: str, draft: DraftRecord) -> dict[str, Any]:
         created = self._graph_request(
@@ -344,7 +380,8 @@ class MicrosoftGraphClient:
         }
         if data is not None:
             headers["Content-Type"] = "application/json"
-        return self.transport(method, f"https://graph.microsoft.com/v1.0{path}", headers, data)
+        url = path if path.lower().startswith("https://") else f"https://graph.microsoft.com/v1.0{path}"
+        return self.transport(method, url, headers, data)
 
     def _scope_text(self) -> str:
         return " ".join(self.scopes)
@@ -488,7 +525,12 @@ class OutlookProvider(DraftProvider):
             raise NotImplementedError(
                 "Outlook thread listing is planned next. The provider contract is ready for Microsoft Graph."
             )
-        return _graph_messages_to_email_threads(self.graph_client.list_messages())
+        return _graph_messages_to_email_threads(
+            self.graph_client.list_messages(
+                limit=OUTLOOK_WATCHER_FETCH_LIMIT,
+                received_after=_received_after_from_watcher_filter(watcher_filter),
+            )
+        )
 
     def list_recent_threads(self, *, limit: int = 25) -> list[EmailThread]:
         if self.graph_client is None:
@@ -503,7 +545,7 @@ class OutlookProvider(DraftProvider):
         source_message_id = (draft.reply_to_message_id or "").strip()
         if not source_message_id:
             source_message_id = _latest_message_id_for_conversation(
-                self.graph_client.list_messages(),
+                self.graph_client.list_messages(limit=OUTLOOK_WATCHER_FETCH_LIMIT),
                 draft.thread_id,
             )
         if not source_message_id:
@@ -598,16 +640,22 @@ def _graph_messages_to_email_threads(messages: list[dict[str, Any]]) -> list[Ema
         subject = ""
         for raw in ordered:
             sender = _recipient_address(raw.get("from", {}))
-            recipients = [
+            to_recipients = [
                 address
-                for address in [
-                    *_recipient_addresses(raw.get("toRecipients", [])),
-                    *_recipient_addresses(raw.get("ccRecipients", [])),
-                    *_recipient_addresses(raw.get("bccRecipients", [])),
-                ]
+                for address in _recipient_addresses(raw.get("toRecipients", []))
                 if address
             ]
-            for participant in [sender, *recipients]:
+            cc_recipients = [
+                address
+                for address in _recipient_addresses(raw.get("ccRecipients", []))
+                if address
+            ]
+            bcc_recipients = [
+                address
+                for address in _recipient_addresses(raw.get("bccRecipients", []))
+                if address
+            ]
+            for participant in [sender, *to_recipients, *cc_recipients]:
                 if participant and participant not in participants:
                     participants.append(participant)
             if not subject:
@@ -616,9 +664,11 @@ def _graph_messages_to_email_threads(messages: list[dict[str, Any]]) -> list[Ema
                 EmailMessage(
                     message_id=str(raw.get("id", "")),
                     sender=sender,
-                    to=recipients,
+                    to=to_recipients,
                     sent_at=str(raw.get("receivedDateTime", "") or raw.get("sentDateTime", "")),
                     text=_message_text(raw),
+                    cc=cc_recipients,
+                    bcc=bcc_recipients,
                 )
             )
         latest = ordered[-1]
@@ -632,6 +682,57 @@ def _graph_messages_to_email_threads(messages: list[dict[str, Any]]) -> list[Ema
             )
         )
     return threads
+
+
+def _received_after_from_watcher_filter(watcher_filter: WatcherFilter | None) -> datetime | None:
+    if watcher_filter is None:
+        return None
+    candidates: list[datetime] = []
+    if watcher_filter.max_age_seconds is not None:
+        candidates.append(
+            datetime.now(timezone.utc) - timedelta(seconds=max(1, watcher_filter.max_age_seconds))
+        )
+    if watcher_filter.received_after is not None:
+        received_after = watcher_filter.received_after
+        if received_after.tzinfo is None:
+            received_after = received_after.replace(tzinfo=timezone.utc)
+        candidates.append(received_after.astimezone(timezone.utc))
+    if not candidates:
+        return None
+    return max(candidates)
+
+
+def _graph_datetime(value: datetime) -> str:
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _graph_next_path(next_link: str) -> str:
+    if not next_link:
+        return ""
+    parsed = urlparse(next_link)
+    if not parsed.scheme:
+        return next_link
+    path = parsed.path
+    marker = "/v1.0"
+    if path.startswith(marker):
+        path = path[len(marker) :]
+    query = f"?{parsed.query}" if parsed.query else ""
+    return f"{path}{query}"
+
+
+def _message_datetime(message: dict[str, Any]) -> datetime | None:
+    raw = str(message.get("receivedDateTime", "") or message.get("sentDateTime", "") or "").strip()
+    if not raw:
+        return None
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _message_sort_key(message: dict[str, Any]) -> str:

@@ -1,12 +1,15 @@
 import argparse
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from mailassist.bot_runtime import (
+    DEFAULT_MANUAL_SCAN_LOCK_WAIT_SECONDS,
     MAILASSIST_GMAIL_LABELS,
     MAILASSIST_GMAIL_PARENT_LABEL,
     _mailassist_category_for_thread,
     _mailassist_labels_for_thread,
+    _scan_lock_wait_seconds,
     command_review_bot,
 )
 from mailassist.config import write_env_file
@@ -418,7 +421,7 @@ def test_mailassist_gmail_label_classifier_assigns_one_best_bin() -> None:
                 message_id="msg-1",
                 sender="sender@example.com",
                 to=["me@example.com"],
-                sent_at="2026-04-28T10:00:00Z",
+                                sent_at=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
                 text="Please review and renew your license. Payment is due Friday.",
             )
         ],
@@ -445,7 +448,7 @@ def test_mailassist_gmail_label_classifier_accepts_ollama_category() -> None:
                 message_id="msg-1",
                 sender="sender@example.com",
                 to=["me@example.com"],
-                sent_at="2026-04-28T10:00:00Z",
+                sent_at=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
                 text="Your invoice is attached.",
             )
         ],
@@ -476,7 +479,7 @@ def test_mailassist_category_classifier_guards_needs_reply_for_automated_threads
                 message_id="msg-1",
                 sender="azure@promomail.microsoft.com",
                 to=["me@example.com"],
-                sent_at="2026-04-28T10:00:00Z",
+                sent_at=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
                 text="Review these automated recommendations for your Azure account.",
             )
         ],
@@ -508,7 +511,7 @@ def test_mailassist_gmail_label_classifier_accepts_ollama_no_category() -> None:
                 message_id="msg-1",
                 sender="sender@example.com",
                 to=["me@example.com"],
-                sent_at="2026-04-28T10:00:00Z",
+                sent_at=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
                 text="A thing happened.",
             )
         ],
@@ -550,7 +553,7 @@ def test_review_bot_gmail_populate_labels_applies_recent_thread_bins(
                             message_id="msg-1",
                             sender="sender@example.com",
                             to=["me@example.com"],
-                            sent_at="2026-04-28T10:00:00Z",
+                            sent_at=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
                             text="Unsubscribe from this newsletter",
                         )
                     ],
@@ -663,7 +666,7 @@ def test_review_bot_outlook_populate_categories_previews_without_writes(
                             message_id="msg-1",
                             sender="sender@example.com",
                             to=["me@example.com"],
-                            sent_at="2026-04-28T10:00:00Z",
+                            sent_at=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
                             text="Unsubscribe from this newsletter",
                         )
                     ],
@@ -768,7 +771,7 @@ def test_review_bot_outlook_populate_categories_can_apply(
                             message_id="msg-1",
                             sender="sender@example.com",
                             to=["me@example.com"],
-                            sent_at="2026-04-28T10:00:00Z",
+                            sent_at=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
                             text="Your invoice is attached.",
                         )
                     ],
@@ -851,13 +854,13 @@ def test_review_bot_outlook_smoke_test_reads_ready_provider(
                 EmailThread(
                     thread_id="conv-1",
                     subject="Question",
-                    participants=["sender@example.com", "me@example.com"],
+                    participants=["sender@example.com", "me@example.com", "client@example.com"],
                     messages=[
                         EmailMessage(
                             message_id="msg-1",
                             sender="sender@example.com",
-                            to=["me@example.com"],
-                            sent_at="2026-04-28T10:00:00Z",
+                            to=["me@example.com", "client@example.com"],
+                            sent_at=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
                             text="Can you confirm?",
                         )
                     ],
@@ -977,13 +980,13 @@ def test_review_bot_outlook_smoke_can_create_controlled_draft(
                 EmailThread(
                     thread_id="conv-1",
                     subject="Question",
-                    participants=["sender@example.com", "me@example.com"],
+                    participants=["sender@example.com", "me@example.com", "client@example.com"],
                     messages=[
                         EmailMessage(
                             message_id="msg-1",
                             sender="sender@example.com",
-                            to=["me@example.com"],
-                            sent_at="2026-04-28T10:00:00Z",
+                            to=["me@example.com", "client@example.com"],
+                            sent_at=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
                             text="Can you confirm?",
                         )
                     ],
@@ -994,6 +997,7 @@ def test_review_bot_outlook_smoke_can_create_controlled_draft(
         def create_draft(self, draft):
             self.drafts.append(draft)
             assert draft.to == ["sender@example.com"]
+            assert draft.cc == ["client@example.com"]
             assert draft.from_address == "me@example.com"
             assert draft.reply_to_message_id == "msg-1"
 
@@ -1077,6 +1081,7 @@ def test_review_bot_watch_loop_uses_polling_settings_and_counts_events(
                     "subject": "First",
                     "classification": "urgent",
                     "provider_draft_id": "draft-1",
+                    "message_timestamp": "2026-04-24T11:31:00Z",
                 }
             ]
         return [
@@ -1086,6 +1091,7 @@ def test_review_bot_watch_loop_uses_polling_settings_and_counts_events(
                 "subject": "First",
                 "classification": "urgent",
                 "provider_draft_id": "draft-1",
+                "message_timestamp": "2026-04-24T11:31:00Z",
             }
         ]
 
@@ -1115,6 +1121,18 @@ def test_review_bot_watch_loop_uses_polling_settings_and_counts_events(
     lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
     assert lines[0]["type"] == "started"
     assert any(line["type"] == "watch_pass_started" and line["pass_number"] == 1 for line in lines)
+    completed_pass_lines = [line for line in lines if line["type"] == "watch_pass_completed"]
+    assert completed_pass_lines[0]["pass_number"] == 1
+    assert completed_pass_lines[0]["poll_seconds"] == 15
+    assert completed_pass_lines[0]["scanned_count"] == 1
+    assert completed_pass_lines[0]["need_reply_count"] == 1
+    assert completed_pass_lines[0]["draft_count"] == 1
+    assert completed_pass_lines[0]["caught_up_message_timestamp"] == "2026-04-24T11:31:00Z"
+    assert completed_pass_lines[1]["pass_number"] == 2
+    assert completed_pass_lines[1]["scanned_count"] == 0
+    assert completed_pass_lines[1]["need_reply_count"] == 0
+    assert completed_pass_lines[1]["already_handled_count"] == 1
+    assert completed_pass_lines[1]["caught_up_message_timestamp"] == "2026-04-24T11:31:00Z"
     progress_lines = [line for line in lines if line["type"] == "email_work_started"]
     assert progress_lines == [
         {
@@ -1133,6 +1151,166 @@ def test_review_bot_watch_loop_uses_polling_settings_and_counts_events(
     assert lines[-1]["completed_passes"] == 2
     assert lines[-1]["draft_count"] == 1
     assert lines[-1]["already_handled_count"] == 1
+
+
+def test_review_bot_watch_loop_reports_cursor_when_pass_has_no_new_messages(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_env_file(
+        tmp_path / ".env",
+        {
+            "MAILASSIST_BOT_POLL_SECONDS": "15",
+        },
+    )
+
+    class FakeProvider:
+        name = "mock"
+
+    monkeypatch.setattr(
+        "mailassist.bot_runtime.get_provider_for_settings",
+        lambda settings, provider_name: FakeProvider(),
+    )
+    monkeypatch.setattr("mailassist.bot_runtime.run_watch_pass", lambda **kwargs: [])
+    monkeypatch.setattr(
+        "mailassist.bot_runtime.provider_caught_up_message_timestamp",
+        lambda root_dir, provider_name: "2026-04-24T11:31:00Z",
+    )
+
+    args = argparse.Namespace(
+        command="review-bot",
+        action="watch-loop",
+        thread_id=None,
+        prompt=None,
+        base_url=None,
+        selected_model=None,
+        provider="mock",
+        batch_size=1,
+        limit=10,
+        force=False,
+        poll_seconds=0,
+        max_passes=1,
+    )
+
+    exit_code = command_review_bot(args)
+
+    assert exit_code == 0
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
+    completed_pass = next(line for line in lines if line["type"] == "watch_pass_completed")
+    assert completed_pass["scanned_count"] == 0
+    assert completed_pass["caught_up_message_timestamp"] == "2026-04-24T11:31:00Z"
+
+
+def test_scan_lock_wait_seconds_prefers_manual_runs(monkeypatch) -> None:
+    monkeypatch.delenv("MAILASSIST_SCAN_LOCK_WAIT_SECONDS", raising=False)
+
+    assert _scan_lock_wait_seconds(scan_source="service") == 0.0
+    assert _scan_lock_wait_seconds(scan_source="manual") == float(DEFAULT_MANUAL_SCAN_LOCK_WAIT_SECONDS)
+
+    monkeypatch.setenv("MAILASSIST_SCAN_LOCK_WAIT_SECONDS", "12.5")
+    assert _scan_lock_wait_seconds(scan_source="manual") == 12.5
+    assert _scan_lock_wait_seconds(scan_source="service") == 12.5
+
+
+def test_review_bot_service_watch_loop_exits_when_stop_flag_exists(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MAILASSIST_SCAN_SOURCE", "service")
+    stop_flag = tmp_path / "data" / "control" / "service-stop.flag"
+    stop_flag.parent.mkdir(parents=True)
+    stop_flag.write_text("stop requested", encoding="utf-8")
+
+    class FakeProvider:
+        name = "mock"
+
+    monkeypatch.setattr(
+        "mailassist.bot_runtime.get_provider_for_settings",
+        lambda settings, provider_name: FakeProvider(),
+    )
+
+    def fail_if_scanned(**kwargs):
+        raise AssertionError("service stop flag should prevent scan passes")
+
+    monkeypatch.setattr("mailassist.bot_runtime.run_watch_pass", fail_if_scanned)
+
+    args = argparse.Namespace(
+        command="review-bot",
+        action="watch-loop",
+        thread_id=None,
+        prompt=None,
+        base_url=None,
+        selected_model=None,
+        provider="mock",
+        batch_size=1,
+        limit=10,
+        force=False,
+        poll_seconds=0,
+        max_passes=0,
+    )
+
+    exit_code = command_review_bot(args)
+
+    assert exit_code == 0
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
+    assert any(line["type"] == "stop_requested" for line in lines)
+    assert not any(line["type"] == "watch_pass_started" for line in lines)
+    assert lines[-1]["type"] == "completed"
+    assert lines[-1]["completed_passes"] == 0
+
+
+def test_review_bot_watch_loop_counts_generation_failures_without_catching_up(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    class FakeProvider:
+        name = "mock"
+
+    monkeypatch.setattr(
+        "mailassist.bot_runtime.get_provider_for_settings",
+        lambda settings, provider_name: FakeProvider(),
+    )
+    monkeypatch.setattr(
+        "mailassist.bot_runtime.run_watch_pass",
+        lambda **kwargs: [
+            {
+                "type": "generation_failed",
+                "provider": "mock",
+                "classification": "reply_needed",
+                "generation_model": "fallback",
+                "generation_error": "Unable to reach Ollama.",
+                "message_timestamp": "2026-04-24T11:31:00Z",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "mailassist.bot_runtime.provider_caught_up_message_timestamp",
+        lambda root_dir, provider_name: "",
+    )
+
+    args = argparse.Namespace(
+        command="review-bot",
+        action="watch-loop",
+        thread_id=None,
+        prompt=None,
+        base_url=None,
+        selected_model=None,
+        provider="mock",
+        batch_size=1,
+        limit=10,
+        force=False,
+        poll_seconds=1,
+        max_passes=1,
+    )
+
+    exit_code = command_review_bot(args)
+
+    assert exit_code == 0
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
+    completed_pass = next(line for line in lines if line["type"] == "watch_pass_completed")
+    assert completed_pass["generation_failed_count"] == 1
+    assert completed_pass["caught_up_message_timestamp"] == ""
 
 
 def test_review_bot_watch_loop_emits_failed_and_retry_events(

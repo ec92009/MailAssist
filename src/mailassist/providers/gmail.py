@@ -523,6 +523,12 @@ def _build_gmail_thread_query(watcher_filter: WatcherFilter) -> str:
     if watcher_filter.unread_only:
         parts.append("is:unread")
 
+    received_after = watcher_filter.received_after
+    if received_after is not None:
+        if received_after.tzinfo is None:
+            received_after = received_after.replace(tzinfo=timezone.utc)
+        parts.append(f"after:{received_after.astimezone(timezone.utc).strftime('%Y/%m/%d')}")
+
     if watcher_filter.max_age_seconds == 24 * 60 * 60:
         parts.append("newer_than:1d")
     elif watcher_filter.max_age_seconds == 7 * 24 * 60 * 60:
@@ -585,23 +591,23 @@ def _gmail_thread_to_email_thread(payload: dict[str, Any]) -> EmailThread | None
     for raw_message in raw_messages:
         headers = _gmail_headers(raw_message)
         sender = _first_email_from_header(headers.get("from", ""))
-        recipients = _emails_from_header_values(
-            headers.get("to", ""),
-            headers.get("cc", ""),
-            headers.get("bcc", ""),
-        )
+        to_recipients = _emails_from_header_values(headers.get("to", ""))
+        cc_recipients = _emails_from_header_values(headers.get("cc", ""))
+        bcc_recipients = _emails_from_header_values(headers.get("bcc", ""))
         if not subject:
             subject = str(headers.get("subject", "")).strip()
-        for participant in [sender, *recipients]:
+        for participant in [sender, *to_recipients, *cc_recipients]:
             if participant and participant not in participants:
                 participants.append(participant)
         messages.append(
             EmailMessage(
                 message_id=str(raw_message.get("id", "")),
                 sender=sender,
-                to=recipients,
+                to=to_recipients,
                 sent_at=_gmail_message_sent_at(raw_message, headers.get("date", "")),
                 text=_gmail_message_text(raw_message),
+                cc=cc_recipients,
+                bcc=bcc_recipients,
                 rfc_message_id=_normalize_message_id(headers.get("message-id", "")),
                 references=_message_id_references(
                     headers.get("references", ""),

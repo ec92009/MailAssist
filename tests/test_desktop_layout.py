@@ -1,5 +1,6 @@
 import os
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from mailassist.config import read_env_file, write_env_file
+from mailassist.gui import bot_process as bot_process_module
 from mailassist.gui import desktop as desktop_module
 from mailassist.gui.desktop import MailAssistDesktopWindow, _app_icon_path
 from mailassist.system_resources import memory_recommendation_message, recommended_model_names
@@ -750,13 +752,189 @@ def test_dashboard_shows_since_reboot_activity_history(monkeypatch, tmp_path: Pa
     assert "Since reboot" in [
         label.text() for label in window.findChildren(QLabel)
     ]
-    assert "7 scanned" in window.activity_history_label.text()
+    assert "6 scanned" in window.activity_history_label.text()
     assert "3 no reply" in window.activity_history_label.text()
-    assert "1 automated" in window.activity_history_label.text()
     assert "2 replies drafted" in window.activity_history_label.text()
     assert "1 previews" in window.activity_history_label.text()
     assert "1 already handled" in window.activity_history_label.text()
     assert "8 replies drafted" not in window.activity_history_label.text()
+    window.close()
+
+
+def test_dashboard_since_reboot_uses_unique_live_state_counts(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _app()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "mailassist.gui.bot_controller.system_boot_time_utc",
+        lambda: datetime(2026, 6, 17, 9, 0, tzinfo=timezone.utc),
+    )
+    window = MailAssistDesktopWindow()
+    state_path = tmp_path / "data" / "live-state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "account_email": "magali@example.com",
+                "provider_accounts": {"outlook": "magali@example.com"},
+                "providers": {
+                    "outlook": {
+                        "cursor": None,
+                        "threads": {
+                            "conv-1": {
+                                "thread_id": "conv-1",
+                                "latest_message_id": "msg-1",
+                                "classification": "reply_needed",
+                                "action": "draft_created",
+                                "provider_draft_id": "draft-1",
+                                "updated_at": "2026-06-17T10:00:00+00:00",
+                            },
+                            "conv-2": {
+                                "thread_id": "conv-2",
+                                "latest_message_id": "msg-2",
+                                "classification": "automated",
+                                "action": "skipped",
+                                "updated_at": "2026-06-17T10:05:00+00:00",
+                            },
+                            "conv-3": {
+                                "thread_id": "conv-3",
+                                "latest_message_id": "msg-3",
+                                "classification": "reply_needed",
+                                "action": "user_replied",
+                                "updated_at": "2026-06-17T10:10:00+00:00",
+                            },
+                            "old-conv": {
+                                "thread_id": "old-conv",
+                                "latest_message_id": "old-msg",
+                                "classification": "reply_needed",
+                                "action": "draft_created",
+                                "provider_draft_id": "old-draft",
+                                "updated_at": "2026-06-17T08:00:00+00:00",
+                            },
+                        },
+                    }
+                },
+                "recent_activity": [],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    log_path = window.settings.bot_logs_dir / "bot-watch-loop-noisy.jsonl"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    repeated = [
+        {
+            "type": "already_handled",
+            "action": "watch-loop",
+            "timestamp": "2026-06-17T10:20:00+00:00",
+            "provider": "outlook",
+            "classification": "reply_needed",
+        }
+        for _index in range(200)
+    ]
+    repeated.append(
+        {
+            "type": "failed_pass",
+            "action": "watch-loop",
+            "timestamp": "2026-06-17T10:21:00+00:00",
+            "provider": "outlook",
+        }
+    )
+    log_path.write_text(
+        "\n".join(json.dumps(event) for event in repeated) + "\n",
+        encoding="utf-8",
+    )
+
+    window.refresh_service_activity_summary()
+
+    activity = window.activity_history_label.text()
+    assert "2 scanned" in activity
+    assert "1 need reply" in activity
+    assert "1 automated" in activity
+    assert "1 reply drafted" in activity
+    assert "1 already handled" in activity
+    assert "1 failed" in activity
+    assert "200 already handled" not in activity
+    window.close()
+
+
+def test_service_activity_refresh_updates_dashboard_without_subjects(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _app()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "mailassist.gui.bot_controller.system_boot_time_utc",
+        lambda: datetime(2026, 5, 2, 9, 0, tzinfo=timezone.utc),
+    )
+    window = MailAssistDesktopWindow()
+    log_path = window.settings.bot_logs_dir / "bot-watch-loop-service.jsonl"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(
+        "\n".join(
+            json.dumps(event)
+            for event in (
+                {
+                    "type": "started",
+                    "action": "watch-loop",
+                    "timestamp": "2026-05-02T10:00:00+00:00",
+                    "provider": "outlook",
+                },
+                {
+                    "type": "already_handled",
+                    "action": "watch-loop",
+                    "timestamp": "2026-05-02T10:00:05+00:00",
+                    "provider": "outlook",
+                    "subject": "Private client tax matter",
+                    "classification": "reply_needed",
+                },
+                {
+                    "type": "watch_pass_completed",
+                    "action": "watch-loop",
+                    "timestamp": "2026-05-02T10:00:07+00:00",
+                    "provider": "outlook",
+                    "pass_number": 3,
+                },
+                {
+                    "type": "sleeping",
+                    "action": "watch-loop",
+                    "timestamp": "2026-05-02T10:00:08+00:00",
+                    "provider": "outlook",
+                    "poll_seconds": 60,
+                },
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    window.refresh_service_activity_summary()
+
+    assert "0 scanned" in window.activity_history_label.text()
+    assert "0 need reply" in window.activity_history_label.text()
+    assert "1 already handled" in window.activity_history_label.text()
+    assert "Outlook pass 3 completed" in window.last_pass_label.text()
+    assert "0 scanned / 0 need reply" in window.last_pass_label.text()
+    assert "service agent finished" in window.last_activity_label.text()
+    assert "0 scanned / 0 need reply" in window.last_activity_label.text()
+    assert "+00:00" not in window.last_activity_label.text()
+    assert "Z" not in window.last_activity_label.text()
+    assert "Private client tax matter" not in window.last_activity_label.text()
+    assert "service agent finished" in window.recent_activity.toPlainText()
+    assert "0 scanned / 0 need reply" in window.recent_activity.toPlainText()
+    assert "Private client tax matter" not in window.recent_activity.toPlainText()
+    window.close()
+
+
+def test_recent_service_log_marks_bot_as_background_scan() -> None:
+    _app()
+    window = MailAssistDesktopWindow()
+    window.background_scan_last_seen_at = datetime.now(timezone.utc)
+    window.refresh_dashboard()
+
+    assert window.bot_status_label.text() == "Background scan"
     window.close()
 
 
@@ -960,12 +1138,43 @@ def test_watch_progress_reports_last_email_timestamp_without_subject(monkeypatch
     window._append_bot_heartbeat()
 
     activity = window.recent_activity.toPlainText()
-    assert "Outlook auto-check working on email dated" in activity
+    assert "Manual scan: Outlook working on message dated" in activity
     assert "1 scanned / 1 need reply / 0 no reply / 0 automated" in activity
-    assert "0 replies drafted; working on email dated" in activity
+    assert "0 replies drafted; working on message dated" in activity
     assert "Private tax matter" not in activity
     assert "client@example.com" not in activity
-    assert "working on email dated" in window.banner.text()
+    assert "working on message dated" in window.banner.text()
+    window.bot_process = None
+    window.close()
+
+
+def test_watch_loop_outcome_activity_uses_local_time_without_subject() -> None:
+    _app()
+    window = MailAssistDesktopWindow()
+    window.current_bot_action = "watch-loop"
+    window.current_bot_provider = "outlook"
+    window.bot_process = object()
+    window._reset_bot_progress()
+
+    window._handle_bot_event(
+        {
+            "type": "draft_created",
+            "provider": "outlook",
+            "timestamp": "2026-06-17T10:02:00+00:00",
+            "message_timestamp": "2026-06-17T09:59:00+00:00",
+            "classification": "reply_needed",
+            "subject": "Private tax matter",
+            "sender": "client@example.com",
+        }
+    )
+
+    activity = window.recent_activity.toPlainText()
+    assert "manual agent scanned email dated" in activity
+    assert "outcome: Reply Needed; reply drafted." in activity
+    assert "2026-06-17T" not in activity
+    assert "+00:00" not in activity
+    assert "Private tax matter" not in activity
+    assert "client@example.com" not in activity
     window.bot_process = None
     window.close()
 
@@ -983,15 +1192,52 @@ def test_watch_loop_heartbeat_reports_waiting_after_completed_pass(monkeypatch) 
     window._reset_bot_progress()
     window.bot_progress["checked"] = 25
 
-    window._handle_bot_event({"type": "watch_pass_completed", "provider": "gmail"})
+    window._handle_bot_event(
+        {
+            "type": "watch_pass_completed",
+            "provider": "gmail",
+            "timestamp": "2026-06-17T10:00:00+00:00",
+        }
+    )
     window._append_bot_heartbeat()
 
     activity = window.recent_activity.toPlainText()
-    assert "Gmail auto-check pass completed: 25 scanned / 0 need reply / 0 no reply / 0 automated" in activity
-    assert "Ollama is not drafting" in activity
-    assert "Gmail auto-check idle for 20 seconds. Last pass: 25 scanned / 0 need reply" not in activity
-    assert "Gmail auto-check idle for 20 seconds. Last pass: 25 scanned / 0 need reply" in window.banner.text()
+    assert "manual agent finished: 25 scanned / 0 need reply / 0 no reply / 0 automated" in activity
+    assert "Manual scan: Gmail waiting after 20 seconds. Last pass: 25 scanned / 0 need reply" not in activity
+    assert "Manual scan: Gmail waiting after 20 seconds. Last pass: 25 scanned / 0 need reply" in window.banner.text()
     assert "auto-check still running" not in activity
+    window.bot_process = None
+    window.close()
+
+
+def test_watch_loop_completion_uses_pass_count_payload() -> None:
+    _app()
+    window = MailAssistDesktopWindow()
+    window.current_bot_action = "watch-loop"
+    window.current_bot_provider = "outlook"
+    window.bot_process = object()
+    window._reset_bot_progress()
+
+    window._handle_bot_event(
+        {
+            "type": "watch_pass_completed",
+            "provider": "outlook",
+            "timestamp": "2026-06-17T10:00:00+00:00",
+            "poll_seconds": 60,
+            "scanned_count": 50,
+            "need_reply_count": 7,
+            "no_reply_count": 13,
+            "automated_count": 30,
+            "draft_count": 3,
+        }
+    )
+
+    activity = window.recent_activity.toPlainText()
+    assert "manual agent finished" in activity
+    assert "50 scanned / 7 need reply / 13 no reply / 30 automated" in activity
+    assert "3 replies drafted" in activity
+    window.refresh_dashboard()
+    assert window.bot_status_label.text() == "Waiting"
     window.bot_process = None
     window.close()
 
@@ -1204,6 +1450,7 @@ def test_watch_preview_heartbeat_starts_immediately_and_sets_timeout(monkeypatch
 
 
 def test_preview_bot_action_sets_shorter_ollama_timeout(monkeypatch) -> None:
+    _app()
     window = MailAssistDesktopWindow()
     monkeypatch.setattr(window, "_start_bot_heartbeat", lambda *args, **kwargs: None)
     monkeypatch.setattr(desktop_module.QProcess, "start", lambda self, *args: None)
@@ -1212,6 +1459,17 @@ def test_preview_bot_action_sets_shorter_ollama_timeout(monkeypatch) -> None:
 
     assert window.bot_process.processEnvironment().value("MAILASSIST_OLLAMA_GENERATE_TIMEOUT_SECONDS") == "110"
     window.bot_process = None
+    window.close()
+
+
+def test_gui_bot_action_uses_venv_console_python() -> None:
+    _app()
+    window = MailAssistDesktopWindow()
+    scripts_dir = "Scripts" if os.name == "nt" else "bin"
+    executable_name = "python.exe" if os.name == "nt" else "python"
+    expected = window.settings.root_dir / ".venv" / scripts_dir / executable_name
+
+    assert window._bot_python_executable() == (str(expected) if expected.exists() else sys.executable)
     window.close()
 
 
@@ -1475,16 +1733,102 @@ def test_start_auto_check_warns_in_recent_activity_before_running(monkeypatch) -
     monkeypatch.setattr(
         window,
         "_suspend_background_scan_for_gui_test",
-        lambda: "Paused the scheduled background scan for this dashboard test.",
+        lambda: "service-paused",
     )
     monkeypatch.setattr(window, "run_bot_action", lambda action, **kwargs: called.append((action, kwargs)))
 
     window.start_watch_loop()
 
-    assert called == [("watch-loop", {"provider": window._selected_provider()})]
-    assert "Paused the scheduled background scan" in window.recent_activity.toPlainText()
-    assert "Starting auto-check" in window.recent_activity.toPlainText()
-    assert "drafting can take a minute" in window.recent_activity.toPlainText()
+    assert called == [("watch-loop", {"provider": window._selected_provider(), "max_passes": 1})]
+    assert "service agent suspended; manual agent started" in window.recent_activity.toPlainText()
+    assert "Manual scan starting" in window.banner.text()
+    assert "drafting can take a minute" in window.banner.text()
+    window.close()
+
+
+def test_suspend_background_scan_treats_killed_child_chain_as_paused(monkeypatch) -> None:
+    _app()
+    window = MailAssistDesktopWindow()
+
+    class Result:
+        returncode = 0
+        stdout = "stopped:4\n"
+        stderr = ""
+
+    monkeypatch.setattr(desktop_module.sys, "platform", "win32")
+    monkeypatch.setattr(window, "_scheduled_task_command", lambda command: Result())
+
+    message = window._suspend_background_scan_for_gui_test()
+
+    assert message == "service-paused"
+    assert window.background_scan_task_available is True
+    assert window.background_scan_resume_pending is True
+    window.close()
+
+
+def test_suspend_background_scan_timeout_message_is_concise(monkeypatch) -> None:
+    _app()
+    window = MailAssistDesktopWindow()
+
+    def timeout(_command):
+        raise desktop_module.subprocess.TimeoutExpired(
+            cmd=["powershell.exe", "-Command", "very long script"],
+            timeout=desktop_module.SCHEDULED_TASK_COMMAND_TIMEOUT_SECONDS,
+        )
+
+    monkeypatch.setattr(desktop_module.sys, "platform", "win32")
+    monkeypatch.setattr(window, "_scheduled_task_command", timeout)
+
+    message = window._suspend_background_scan_for_gui_test()
+
+    assert "Windows did not finish the pause command" in message
+    assert "very long script" not in message
+    assert "powershell.exe" not in message
+    window.close()
+
+
+def test_resume_background_scan_reports_manual_to_service_transition(monkeypatch) -> None:
+    _app()
+    window = MailAssistDesktopWindow()
+
+    class Result:
+        returncode = 0
+        stdout = "started\n"
+        stderr = ""
+
+    monkeypatch.setattr(desktop_module.sys, "platform", "win32")
+    monkeypatch.setattr(window, "_scheduled_task_command", lambda command: Result())
+    window.background_scan_resume_pending = True
+    window.background_scan_task_available = True
+
+    window._resume_background_scan_after_gui_test()
+
+    activity = window.recent_activity.toPlainText()
+    assert "service agent started" in activity
+    window.close()
+
+
+def test_resume_background_scan_timeout_message_is_concise(monkeypatch) -> None:
+    _app()
+    window = MailAssistDesktopWindow()
+
+    def timeout(_command):
+        raise desktop_module.subprocess.TimeoutExpired(
+            cmd=["powershell.exe", "-Command", "very long script"],
+            timeout=desktop_module.SCHEDULED_TASK_COMMAND_TIMEOUT_SECONDS,
+        )
+
+    monkeypatch.setattr(desktop_module.sys, "platform", "win32")
+    monkeypatch.setattr(window, "_scheduled_task_command", timeout)
+    window.background_scan_resume_pending = True
+    window.background_scan_task_available = True
+
+    window._resume_background_scan_after_gui_test()
+
+    activity = window.recent_activity.toPlainText()
+    assert "Windows did not finish the resume command" in activity
+    assert "very long script" not in activity
+    assert "powershell.exe" not in activity
     window.close()
 
 
@@ -1765,6 +2109,67 @@ def test_auto_check_button_becomes_stop_and_resume_during_watch_loop(monkeypatch
     window.close()
 
 
+def test_auto_check_button_ignores_immediate_repeat_click(monkeypatch) -> None:
+    _app()
+    window = MailAssistDesktopWindow()
+    stopped = []
+
+    class FakeProcess:
+        pass
+
+    monkeypatch.setattr(desktop_module.time, "monotonic", lambda: 100.0)
+    monkeypatch.setattr(window, "stop_bot_action", lambda: stopped.append(True))
+    window.bot_process = FakeProcess()
+    window.current_bot_action = "watch-loop"
+    window.watch_loop_stop_guard_until = 103.0
+
+    window.refresh_dashboard()
+    window.start_watch_loop()
+
+    assert stopped == []
+    assert window.start_watch_loop_button.text() == "Starting Auto-Check"
+    assert "Stop will enable shortly" in window.banner.text()
+    window.bot_process = None
+    window.watch_loop_stop_guard_until = 0.0
+    window.refresh_dashboard()
+    window.close()
+
+
+def test_manual_scan_uses_fast_refresh_then_restores_service_interval() -> None:
+    _app()
+    window = MailAssistDesktopWindow()
+    window.bot_process = object()
+    window.current_bot_action = "watch-loop"
+
+    assert window.service_activity_timer.interval() == desktop_module.SERVICE_SCAN_REFRESH_INTERVAL_MS
+
+    window._start_bot_heartbeat("watch-loop", "outlook")
+
+    assert window.service_activity_timer.interval() == desktop_module.SERVICE_SCAN_REFRESH_INTERVAL_MS
+    assert window.bot_heartbeat_timer.interval() == desktop_module.MANUAL_SCAN_REFRESH_INTERVAL_MS
+
+    window._stop_bot_heartbeat()
+
+    assert window.service_activity_timer.interval() == desktop_module.SERVICE_SCAN_REFRESH_INTERVAL_MS
+    assert window.bot_heartbeat_timer.interval() == desktop_module.BOT_HEARTBEAT_INTERVAL_MS
+    window.bot_process = None
+    window.close()
+
+
+def test_gui_watch_loop_marks_scan_source_manual() -> None:
+    request = bot_process_module.BotActionRequest(
+        action="watch-loop",
+        base_url="http://localhost:11434",
+        selected_model="gemma4:12b-it-qat",
+        provider="outlook",
+    )
+
+    env = bot_process_module.build_bot_process_environment(request)
+
+    assert env.value("MAILASSIST_SCAN_SOURCE") == "manual"
+    assert env.value("MAILASSIST_SCAN_LOCK_WAIT_SECONDS") == "360"
+
+
 def test_watch_loop_finish_resumes_background_scan(monkeypatch) -> None:
     _app()
     window = MailAssistDesktopWindow()
@@ -1782,6 +2187,77 @@ def test_watch_loop_finish_resumes_background_scan(monkeypatch) -> None:
 
     assert resumed == [True]
     assert window.current_bot_action == ""
+    window.close()
+
+
+def test_stop_bot_action_kills_gui_process_tree(monkeypatch) -> None:
+    _app()
+    window = MailAssistDesktopWindow()
+    stopped = []
+
+    class FakeProcess:
+        def processId(self):
+            return 12345
+
+        def terminate(self):
+            raise AssertionError("process tree stop should handle Windows GUI tests")
+
+    monkeypatch.setattr(window, "_stop_windows_process_tree", lambda pid: stopped.append(pid))
+    window.bot_process = FakeProcess()
+    window.current_bot_action = "watch-loop"
+
+    window.stop_bot_action()
+
+    assert stopped == [12345]
+    assert window.watch_loop_stop_requested is True
+    window.bot_process = None
+    window.close()
+
+
+def test_watch_loop_early_clean_exit_reports_before_resuming(monkeypatch) -> None:
+    _app()
+    window = MailAssistDesktopWindow()
+    resumed = []
+
+    class FakeProcess:
+        def readAllStandardOutput(self):
+            return b""
+
+    window.bot_process = FakeProcess()
+    window.current_bot_action = "watch-loop"
+    window.watch_loop_stop_requested = False
+    window.watch_loop_pass_completed = False
+    monkeypatch.setattr(window, "_resume_background_scan_after_gui_test", lambda: resumed.append(True))
+
+    window._handle_bot_finished(0, None)
+
+    assert resumed == [True]
+    assert "manual agent finished before completing a pass" in window.recent_activity.toPlainText()
+    assert window.current_bot_action == ""
+    window.close()
+
+
+def test_watch_loop_user_stop_reports_manual_suspended_before_resuming(monkeypatch) -> None:
+    _app()
+    window = MailAssistDesktopWindow()
+    resumed = []
+
+    class FakeProcess:
+        def readAllStandardOutput(self):
+            return b""
+
+    window.bot_process = FakeProcess()
+    window.current_bot_action = "watch-loop"
+    window.watch_loop_stop_requested = True
+    window.watch_loop_pass_completed = False
+    monkeypatch.setattr(window, "_resume_background_scan_after_gui_test", lambda: resumed.append(True))
+
+    window._handle_bot_finished(1, None)
+
+    assert resumed == [True]
+    assert "manual agent suspended" in window.recent_activity.toPlainText()
+    assert window.current_bot_action == ""
+    assert window.last_bot_state != "error"
     window.close()
 
 

@@ -244,6 +244,10 @@ def test_build_review_candidates_prompt_includes_full_contract() -> None:
     assert "Do not turn email domains into company names" in prompt
     assert "Match the language and register of the thread" in prompt
     assert "informal French with `tu`" in prompt
+    assert "For referral or introduction emails" in prompt
+    assert "thank the introducer" in prompt
+    assert "greet the introduced contact by name" in prompt
+    assert "Do not claim availability, promise a call" in prompt
     assert "do not invent the user's decision" in prompt
     assert "Do not invent teams" in prompt
     assert "leave the final choice for the user to add" in prompt
@@ -270,6 +274,10 @@ def test_build_single_review_candidate_prompt_requests_one_alternative() -> None
     assert "Do not turn email domains into company names" in prompt
     assert "Match the language and register of the thread" in prompt
     assert "informal French with `tu`" in prompt
+    assert "For referral or introduction emails" in prompt
+    assert "thank the introducer" in prompt
+    assert "greet the introduced contact by name" in prompt
+    assert "Do not claim availability, promise a call" in prompt
     assert "do not invent the user's decision" in prompt
     assert "Do not invent teams" in prompt
     assert "leave the final choice for the user to add" in prompt

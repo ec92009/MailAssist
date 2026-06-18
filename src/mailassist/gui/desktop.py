@@ -63,7 +63,7 @@ from mailassist.version import load_visible_version
 from mailassist.models import utc_now_iso
 from mailassist.llm.ollama import OllamaClient
 from mailassist.providers.gmail import GmailProvider
-from mailassist.gui.bot_activity import short_duration_label
+from mailassist.gui.bot_activity import event_day_time_label, short_duration_label
 from mailassist.gui.bot_controller import BotControllerMixin
 from mailassist.gui.confirmations import confirm_action
 from mailassist.gui.recent_activity import RecentActivityPanel
@@ -84,6 +84,15 @@ from mailassist.system_resources import (
     model_size_bytes,
     system_memory_snapshot,
 )
+
+BOT_HEARTBEAT_INTERVAL_MS = 10000
+MANUAL_SCAN_REFRESH_INTERVAL_MS = 2000
+SERVICE_SCAN_REFRESH_INTERVAL_MS = 60000
+SCHEDULED_TASK_COMMAND_TIMEOUT_SECONDS = 45
+
+
+def _activity_now_label() -> str:
+    return event_day_time_label(datetime.now(timezone.utc))
 
 
 def _configure_form(form: QFormLayout) -> QFormLayout:
@@ -285,13 +294,18 @@ class MailAssistDesktopWindow(SettingsPagesMixin, BotControllerMixin, QMainWindo
         self.current_provider_readiness_message = ""
         self.background_scan_resume_pending = False
         self.background_scan_task_available = False
+        self.background_scan_last_seen_at: datetime | None = None
+        self.service_activity_recent_event_key = ""
+        self.watch_loop_stop_guard_until = 0.0
+        self.watch_loop_stop_requested = False
+        self.watch_loop_pass_completed = False
         self.bot_progress: dict[str, int] = {}
         self.bot_action_started_at: float | None = None
         self.bot_busy_cursor_active = False
         self.last_removed_mailassist_category: tuple[str, int] | None = None
         self.last_removed_elder_contact: tuple[ElderContact, int] | None = None
         self.bot_heartbeat_timer = QTimer(self)
-        self.bot_heartbeat_timer.setInterval(10000)
+        self.bot_heartbeat_timer.setInterval(BOT_HEARTBEAT_INTERVAL_MS)
         self.bot_heartbeat_timer.timeout.connect(self._append_bot_heartbeat)
         self.bot_timeout_timer = QTimer(self)
         self.bot_timeout_timer.setSingleShot(True)
@@ -301,6 +315,9 @@ class MailAssistDesktopWindow(SettingsPagesMixin, BotControllerMixin, QMainWindo
         self.ollama_test_countdown_timer = QTimer(self)
         self.ollama_test_countdown_timer.setInterval(1000)
         self.ollama_test_countdown_timer.timeout.connect(self._refresh_ollama_test_countdown)
+        self.service_activity_timer = QTimer(self)
+        self.service_activity_timer.setInterval(SERVICE_SCAN_REFRESH_INTERVAL_MS)
+        self.service_activity_timer.timeout.connect(self.refresh_service_activity_summary)
 
         self.setWindowTitle(f"MailAssist v{load_visible_version(self.settings.root_dir)}")
         icon_path = _app_icon_path(self.settings.root_dir)
@@ -313,6 +330,7 @@ class MailAssistDesktopWindow(SettingsPagesMixin, BotControllerMixin, QMainWindo
         self.refresh_models()
         self.refresh_bot_logs()
         self.refresh_dashboard()
+        self.service_activity_timer.start()
 
     def _install_shortcuts(self) -> None:
         shortcuts = (
@@ -1014,6 +1032,23 @@ class MailAssistDesktopWindow(SettingsPagesMixin, BotControllerMixin, QMainWindo
         self._paint_status_pill(self.bot_status_label, "running" if state == "running" else state)
         self.last_bot_state = state
 
+    def _bot_python_executable(self) -> str:
+        scripts_dir = self.settings.root_dir / ".venv" / ("Scripts" if sys.platform == "win32" else "bin")
+        executable_name = "python.exe" if sys.platform == "win32" else "python"
+        candidate = scripts_dir / executable_name
+        if candidate.exists():
+            return str(candidate)
+        return sys.executable
+
+    def _background_scan_recent(self) -> bool:
+        last_seen = self.background_scan_last_seen_at
+        if last_seen is None:
+            return False
+        if last_seen.tzinfo is None:
+            last_seen = last_seen.replace(tzinfo=timezone.utc)
+        age_seconds = (datetime.now(timezone.utc) - last_seen.astimezone(timezone.utc)).total_seconds()
+        return age_seconds <= 180
+
     def _short_bot_error_label(self, failure: str, *, provider: str = "") -> str:
         normalized = " ".join(failure.split()).lower()
         provider_key = provider.strip().lower()
@@ -1071,11 +1106,23 @@ class MailAssistDesktopWindow(SettingsPagesMixin, BotControllerMixin, QMainWindo
                 control.setEnabled(not self.settings_open)
         if hasattr(self, "start_watch_loop_button"):
             if watch_loop_busy:
-                self.start_watch_loop_button.setText("Stop test and resume background scan")
-                self.start_watch_loop_button.setEnabled(True)
-                self.start_watch_loop_button.setToolTip(_wrapped_tooltip(
-                    "Stop the dashboard auto-check test and restart the scheduled MailAssist background scan."
-                ))
+                guard_seconds = self.watch_loop_stop_guard_until - time.monotonic()
+                if guard_seconds > 0:
+                    self.start_watch_loop_button.setText("Starting Auto-Check")
+                    self.start_watch_loop_button.setEnabled(False)
+                    self.start_watch_loop_button.setToolTip(_wrapped_tooltip(
+                        "MailAssist is starting the dashboard auto-check test. The stop control will enable shortly."
+                    ))
+                    QTimer.singleShot(
+                        max(100, int(guard_seconds * 1000)),
+                        self._refresh_bot_action_controls,
+                    )
+                else:
+                    self.start_watch_loop_button.setText("Stop test and resume background scan")
+                    self.start_watch_loop_button.setEnabled(True)
+                    self.start_watch_loop_button.setToolTip(_wrapped_tooltip(
+                        "Stop the dashboard auto-check test and restart the scheduled MailAssist background scan."
+                    ))
             else:
                 self.start_watch_loop_button.setText("Start Auto-Check")
                 self.start_watch_loop_button.setToolTip(_wrapped_tooltip(
@@ -1092,6 +1139,15 @@ class MailAssistDesktopWindow(SettingsPagesMixin, BotControllerMixin, QMainWindo
         self._set_banner("A bot action is already running.", level="error")
         self._refresh_bot_action_controls()
         return True
+
+    def _set_manual_scan_refresh_active(self, active: bool) -> None:
+        heartbeat_interval = (
+            MANUAL_SCAN_REFRESH_INTERVAL_MS if active else BOT_HEARTBEAT_INTERVAL_MS
+        )
+        if hasattr(self, "service_activity_timer"):
+            self.service_activity_timer.setInterval(SERVICE_SCAN_REFRESH_INTERVAL_MS)
+        if hasattr(self, "bot_heartbeat_timer"):
+            self.bot_heartbeat_timer.setInterval(heartbeat_interval)
 
     def _bot_action_blocked_by_settings(self) -> bool:
         if not self.settings_open:
@@ -1142,9 +1198,14 @@ class MailAssistDesktopWindow(SettingsPagesMixin, BotControllerMixin, QMainWindo
         self.activity_history_label.setText(self.activity_history_summary)
 
         if self.bot_process is not None:
-            self._set_bot_state("running")
+            if self.current_bot_action == "watch-loop" and self.current_bot_phase == "waiting":
+                self._set_bot_state("running", "Waiting")
+            else:
+                self._set_bot_state("running")
         elif self.last_bot_state == "error":
             self._set_bot_state("error")
+        elif self._background_scan_recent():
+            self._set_bot_state("running", "Background scan")
         else:
             self._set_bot_state("idle")
         self._refresh_bot_action_controls()
@@ -1152,7 +1213,7 @@ class MailAssistDesktopWindow(SettingsPagesMixin, BotControllerMixin, QMainWindo
     def _watcher_filter_label(self) -> str:
         provider = self._selected_provider()
         unread_only, time_window = self._watcher_filter_values(provider)
-        pieces = ["unread only" if unread_only else "read and unread"]
+        pieces = ["unread only" if unread_only else "unanswered target"]
         window_labels = {
             "24h": "last 24 hours",
             "7d": "last 7 days",
@@ -1480,18 +1541,60 @@ class MailAssistDesktopWindow(SettingsPagesMixin, BotControllerMixin, QMainWindo
         self.run_bot_action("watch-once", provider="mock")
 
     def _scheduled_task_command(self, command: str) -> subprocess.CompletedProcess[str]:
+        root_dir = str(self.settings.root_dir).replace("'", "''")
+        service_stop_flag = (
+            f"$serviceStopFlag = Join-Path '{root_dir}' 'data\\control\\service-stop.flag'; "
+            "$serviceControlDir = Split-Path -Parent $serviceStopFlag; "
+        )
+        stop_watch_loop_children = r"""
+$all = @(Get-CimInstance Win32_Process)
+$rootPatterns = @(('mailassist-bot-' + 'hidden.vbs'), ('mailassist-bot-' + 'runner.ps1'))
+$roots = @($all | Where-Object {
+    $_.ProcessId -ne $PID -and
+    $_.Name -in @('wscript.exe','powershell.exe') -and
+    $_.CommandLine -and
+    (
+        $_.CommandLine -like ('*' + $rootPatterns[0] + '*') -or
+        $_.CommandLine -like ('*' + $rootPatterns[1] + '*')
+    )
+})
+$ids = New-Object 'System.Collections.Generic.HashSet[int]'
+$queue = New-Object 'System.Collections.Generic.Queue[int]'
+foreach ($root in $roots) {
+    if ($ids.Add([int]$root.ProcessId)) { $queue.Enqueue([int]$root.ProcessId) }
+}
+while ($queue.Count -gt 0) {
+    $parent = $queue.Dequeue()
+    foreach ($child in @($all | Where-Object { [int]$_.ParentProcessId -eq $parent })) {
+        if ($ids.Add([int]$child.ProcessId)) { $queue.Enqueue([int]$child.ProcessId) }
+    }
+}
+$orderedIds = @($ids) | Sort-Object -Descending
+foreach ($id in $orderedIds) {
+    Stop-Process -Id $id -Force -ErrorAction SilentlyContinue
+}
+$killed = $orderedIds.Count
+"""
         script = {
             "pause": (
                 "$task = Get-ScheduledTask -TaskName 'MailAssist Bot' -ErrorAction SilentlyContinue; "
                 "if ($null -eq $task) { 'missing'; exit 0 }; "
-                "if ($task.State -eq 'Running') { "
-                "Stop-ScheduledTask -TaskName 'MailAssist Bot' -ErrorAction Stop; 'stopped' "
-                "} else { 'available' }"
+                + service_stop_flag
+                + "New-Item -ItemType Directory -Force -Path $serviceControlDir | Out-Null; "
+                "Set-Content -Path $serviceStopFlag -Value \"stop requested $(Get-Date -Format o)\" -Encoding UTF8; "
+                "$wasRunning = ($task.State -eq 'Running'); "
+                "if ($wasRunning) { Stop-ScheduledTask -TaskName 'MailAssist Bot' -ErrorAction Stop; "
+                "Start-Sleep -Milliseconds 500 }; "
+                + stop_watch_loop_children
+                + "if ($wasRunning -or $killed -gt 0) { \"stopped:$killed\" } else { 'available' }"
             ),
             "resume": (
                 "$task = Get-ScheduledTask -TaskName 'MailAssist Bot' -ErrorAction SilentlyContinue; "
                 "if ($null -eq $task) { 'missing'; exit 0 }; "
-                "Start-ScheduledTask -TaskName 'MailAssist Bot' -ErrorAction Stop; 'started'"
+                + service_stop_flag
+                + "Remove-Item -LiteralPath $serviceStopFlag -Force -ErrorAction SilentlyContinue; "
+                + stop_watch_loop_children
+                + "Start-ScheduledTask -TaskName 'MailAssist Bot' -ErrorAction Stop; 'started'"
             ),
         }[command]
         return subprocess.run(
@@ -1499,7 +1602,7 @@ class MailAssistDesktopWindow(SettingsPagesMixin, BotControllerMixin, QMainWindo
             check=False,
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=SCHEDULED_TASK_COMMAND_TIMEOUT_SECONDS,
         )
 
     def _suspend_background_scan_for_gui_test(self) -> str:
@@ -1509,6 +1612,11 @@ class MailAssistDesktopWindow(SettingsPagesMixin, BotControllerMixin, QMainWindo
             return ""
         try:
             result = self._scheduled_task_command("pause")
+        except subprocess.TimeoutExpired:
+            return (
+                "Could not pause the scheduled background scan: Windows did not finish "
+                f"the pause command within {SCHEDULED_TASK_COMMAND_TIMEOUT_SECONDS} seconds."
+            )
         except Exception as exc:
             return f"Could not pause the scheduled background scan: {exc}"
         status = (result.stdout or "").strip().splitlines()[-1:] or [""]
@@ -1520,9 +1628,9 @@ class MailAssistDesktopWindow(SettingsPagesMixin, BotControllerMixin, QMainWindo
             return ""
         self.background_scan_task_available = True
         self.background_scan_resume_pending = True
-        if state == "stopped":
-            return "Paused the scheduled background scan for this dashboard test."
-        return "Scheduled background scan will resume when this dashboard test stops."
+        if state.startswith("stopped"):
+            return "service-paused"
+        return "service-available"
 
     def _resume_background_scan_after_gui_test(self) -> None:
         if not self.background_scan_resume_pending:
@@ -1532,14 +1640,23 @@ class MailAssistDesktopWindow(SettingsPagesMixin, BotControllerMixin, QMainWindo
             return
         try:
             result = self._scheduled_task_command("resume")
+        except subprocess.TimeoutExpired:
+            message = (
+                "Could not resume scheduled background scan: Windows did not finish "
+                f"the resume command within {SCHEDULED_TASK_COMMAND_TIMEOUT_SECONDS} seconds."
+            )
+            self._append_recent_activity(message)
+            self._set_banner(message, level="error")
+            return
         except Exception as exc:
             self._append_recent_activity(f"Could not resume scheduled background scan: {exc}")
             self._set_banner(f"Could not resume scheduled background scan: {exc}", level="error")
             return
         state = ((result.stdout or "").strip().splitlines()[-1:] or [""])[0].strip().lower()
         if result.returncode == 0 and state == "started":
-            self._append_recent_activity("Scheduled background scan resumed.")
-            self._set_banner("Scheduled background scan resumed.", level="info")
+            message = f"{_activity_now_label()}: service agent started."
+            self._append_recent_activity(message)
+            self._set_banner(message, level="info")
             return
         if state == "missing":
             return
@@ -1547,28 +1664,79 @@ class MailAssistDesktopWindow(SettingsPagesMixin, BotControllerMixin, QMainWindo
         self._append_recent_activity(f"Could not resume scheduled background scan: {detail}")
         self._set_banner(f"Could not resume scheduled background scan: {detail}", level="error")
 
+    def _stop_windows_process_tree(self, root_pid: int) -> None:
+        if sys.platform != "win32" or root_pid <= 0:
+            return
+        script = """
+$root = [int]$args[0]
+$all = @(Get-CimInstance Win32_Process)
+$ids = New-Object 'System.Collections.Generic.HashSet[int]'
+$queue = New-Object 'System.Collections.Generic.Queue[int]'
+if ($ids.Add($root)) { $queue.Enqueue($root) }
+while ($queue.Count -gt 0) {
+    $parent = $queue.Dequeue()
+    foreach ($child in @($all | Where-Object { [int]$_.ParentProcessId -eq $parent })) {
+        if ($ids.Add([int]$child.ProcessId)) { $queue.Enqueue([int]$child.ProcessId) }
+    }
+}
+foreach ($id in (@($ids) | Sort-Object -Descending)) {
+    Stop-Process -Id $id -Force -ErrorAction SilentlyContinue
+}
+"""
+        subprocess.run(
+            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script, str(root_pid)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+
     def start_watch_loop(self) -> None:
         if self.bot_process is not None and self.current_bot_action == "watch-loop":
+            if time.monotonic() < self.watch_loop_stop_guard_until:
+                self._set_banner("Auto-check is still starting. Stop will enable shortly.", level="info")
+                return
+            self.watch_loop_stop_requested = True
             self.stop_bot_action()
             return
         if self._main_bot_action_unavailable():
             return
         service_message = self._suspend_background_scan_for_gui_test()
-        if service_message:
+        if service_message == "service-paused":
+            self._append_recent_activity(
+                f"{_activity_now_label()}: service agent suspended; manual agent started."
+            )
+        elif service_message == "service-available":
+            self._append_recent_activity(
+                f"{_activity_now_label()}: manual agent started."
+            )
+        elif service_message:
             self._append_recent_activity(service_message)
-        self._announce_long_action(
-            "Starting auto-check. MailAssist will keep checking in the background; "
-            "drafting can take a minute when the local model is needed."
+        self._set_banner(
+            "Manual scan starting. MailAssist will run one catch-up pass from the dashboard; "
+            "drafting can take a minute when the local model is needed.",
+            level="info",
         )
-        self.run_bot_action("watch-loop", provider=self._selected_provider())
+        self.last_pass_summary = f"Manual scan starting from {self._watcher_filter_label()}."
+        self.run_bot_action("watch-loop", provider=self._selected_provider(), max_passes=1)
 
     def stop_bot_action(self) -> None:
         if self.bot_process is None:
             return
+        if self.current_bot_action == "watch-loop":
+            self.watch_loop_stop_requested = True
         self._set_banner("Stopping bot action...", level="info")
-        self.bot_process.terminate()
-        if not self.bot_process.waitForFinished(1500):
-            self.bot_process.kill()
+        process_id = 0
+        try:
+            process_id = int(self.bot_process.processId())
+        except (AttributeError, TypeError, ValueError):
+            process_id = 0
+        if process_id:
+            self._stop_windows_process_tree(process_id)
+        else:
+            self.bot_process.terminate()
+            if not self.bot_process.waitForFinished(1500):
+                self.bot_process.kill()
 
     def stop_ollama_action(self) -> None:
         confirmation = self._confirm_action(
